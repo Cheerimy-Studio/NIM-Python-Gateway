@@ -632,6 +632,15 @@
   .acu-models-banner .mb-detail:hover { background:rgba(56,189,248,.16); }
 
   /* ===== Footer ===== */
+  /* ===== 开源仓库横幅（内页通用，小条不喧宾夺主） ===== */
+  .repo-banner { display: flex; align-items: center; gap: 10px; margin: 26px 0 8px;
+    border: 1px dashed rgba(245,158,11,.45); background: linear-gradient(160deg, rgba(245,158,11,.08), transparent 60%);
+    border-radius: 12px; padding: 12px 16px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+  .repo-banner svg { width: 16px; height: 16px; flex: none; }
+  .repo-banner b { color: var(--text); }
+  .repo-banner a.repo-link { color: #f59e0b; font-weight: 700; text-decoration: none; white-space: nowrap; }
+  .repo-banner a.repo-link:hover { text-decoration: underline; }
+
   footer { text-align: center; color: var(--muted); font-size: 13px; padding: 40px 20px 32px;
     border-top: 1px solid var(--border); margin-top: 40px; }
 
@@ -1005,6 +1014,11 @@ resp = client.chat.completions.create(
         <a class="mb-detail" href="#/model/acu%2Fdeepseek-v4-flash" onclick="event.stopPropagation()">能力详情<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></a>
       </div>
     </div>
+    <div class="repo-banner">
+      <svg viewBox="0 0 24 24" fill="#f59e0b" stroke="#f59e0b" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.9 6.26L21.5 9.27l-4.75 4.63 1.12 6.53L12 17.77l-5.87 3.09 1.12-6.53L2.5 9.27l6.6-1.01L12 2z"/></svg>
+      <span><b>AQUA 完全开源</b>（网关 + 前台全量源码，托管于 Gitee）—— 喜欢就给作者点个 Star 吧</span>
+      <a class="repo-link" href="https://gitee.com/xiaosu4610/aqua-rust-workers" target="_blank" rel="noopener">gitee.com/xiaosu4610/aqua-rust-workers ⭐</a>
+    </div>
     <div class="filter-row">
       <span class="flabel">平台</span>
       <div class="filters" id="platform-filter">
@@ -1059,6 +1073,11 @@ resp = client.chat.completions.create(
         <h1><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 20 7v10l-8 5-8-5V7l8-5z"/><path d="M12 12v8"/><path d="m4 7 8 5 8-5"/><path d="M12 2v8"/></svg></span>模型能力总览</h1>
         <p>浏览所有模型的「能力卡片」——上下文 / 参数量 / 平台 / 类型一目了然。点击任意卡片可进入该模型专属详情页（含上下文知识库、支持与不支持参数、使用示例等）。</p>
       </div>
+      <div class="repo-banner">
+        <svg viewBox="0 0 24 24" fill="#f59e0b" stroke="#f59e0b" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.9 6.26L21.5 9.27l-4.75 4.63 1.12 6.53L12 17.77l-5.87 3.09 1.12-6.53L2.5 9.27l6.6-1.01L12 2z"/></svg>
+        <span><b>AQUA 完全开源</b>——本项目全部源码托管于 Gitee，可自部署、可二开，觉得有用就点个 Star 支持一下</span>
+        <a class="repo-link" href="https://gitee.com/xiaosu4610/aqua-rust-workers" target="_blank" rel="noopener">gitee.com/xiaosu4610/aqua-rust-workers ⭐</a>
+      </div>
       <div class="cap-stats" id="cap-stats"></div>
       <div class="filter-row">
         <span class="flabel">筛选</span>
@@ -1091,6 +1110,11 @@ resp = client.chat.completions.create(
     <div class="api-page">
       <h1><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>API 文档</h1>
       <p class="intro">AQUA 网关完整兼容 OpenAI 协议，所有端点均可直接用 OpenAI SDK 调用。统一入口见「首页」，以下为各端点的详细说明、调用示例与错误码。API Key 加 QQ 频道（频道号 pd57362562）获取，模型列表请以「模型列表」页为准（实时同步）。</p>
+      <div class="repo-banner">
+        <svg viewBox="0 0 24 24" fill="#f59e0b" stroke="#f59e0b" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.9 6.26L21.5 9.27l-4.75 4.63 1.12 6.53L12 17.77l-5.87 3.09 1.12-6.53L2.5 9.27l6.6-1.01L12 2z"/></svg>
+        <span><b>AQUA 完全开源</b>——你正在看的这份网关与文档页面，源码全部托管于 Gitee，欢迎自部署与二开，点个 Star 支持作者</span>
+        <a class="repo-link" href="https://gitee.com/xiaosu4610/aqua-rust-workers" target="_blank" rel="noopener">gitee.com/xiaosu4610/aqua-rust-workers ⭐</a>
+      </div>
 
       <div class="api-card api-anchor">
         <h2><span class="api-method">GET</span><span class="api-endpoint">/v1/models</span></h2>
