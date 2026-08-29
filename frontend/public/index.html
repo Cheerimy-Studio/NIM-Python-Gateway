@@ -725,6 +725,7 @@
     padding: 14px 16px; margin-bottom: 12px; }
   .tool-ai-box b { color: var(--accent); display: block; margin-bottom: 6px; font-size: 13px; }
   .tool-ai-box .tool-ai-text { font-size: 13.5px; line-height: 1.8; color: var(--text); white-space: pre-wrap; }
+  .dev-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
 
   /* ===== 棋类游戏 ===== */
   .tt-board { display: grid; grid-template-columns: repeat(3, 86px); grid-auto-rows: 86px; gap: 6px;
@@ -2330,7 +2331,83 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     if (name === "guess") return renderToolGuess(el);
     if (name === "idiom") return renderToolIdiom(el);
     if (name === "textstats") return renderToolTextStats(el);
+    if (name === "devkit") return renderToolDevkit(el);
     el.innerHTML = '<div class="model-empty">该工具正在建设中，敬请期待</div>';
+  }
+
+  /* ---- 工具：开发者工具箱（UUID/时间戳/Base64/URL/JSON，纯算法） ---- */
+  function renderToolDevkit(el) {
+    el.innerHTML = toolShell("开发者工具箱",
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;vertical-align:-4px;color:var(--accent);"><path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/></svg>',
+      "/v1/tools/*",
+      '<p class="tool-intro">常用开发小工具合集，纯算法本地运行零延迟。对应 API：<code>GET /v1/tools/uuid</code>、<code>GET/POST /v1/tools/timestamp</code>、<code>POST /v1/tools/base64</code>。</p>' +
+      '<div class="dev-tabs"><button class="pill active" data-dev="uuid">UUID</button><button class="pill" data-dev="ts">时间戳</button><button class="pill" data-dev="b64">Base64</button><button class="pill" data-dev="url">URL</button><button class="pill" data-dev="json">JSON</button></div>' +
+      '<div id="dev-body"></div>');
+    var body = document.getElementById("dev-body");
+    function kvRow(k, v) { return '<div class="pg-hrow"><span>' + esc(k) + "</span><b>" + esc(v) + "</b></div>"; }
+    function showUuid() {
+      var u = crypto.randomUUID ? crypto.randomUUID() : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) { var r = Math.random() * 16 | 0; return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16); });
+      body.innerHTML = '<div class="tool-io"><div class="tool-btns"><input id="dev-out" readonly value="' + u + '" style="flex:1;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-family:var(--mono);font-size:13px;"><button class="btn tool-run" id="dev-gen">生成</button></div></div>';
+      document.getElementById("dev-gen").addEventListener("click", showUuid);
+    }
+    function showTs() {
+      body.innerHTML = '<div class="tool-io"><div class="tool-btns"><input id="dev-ts" placeholder="输入秒级时间戳，留空显示当前" style="flex:1;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px;"><button class="btn tool-run" id="dev-ts-go">转换</button></div></div><div id="dev-ts-out" class="tool-kv"></div>';
+      function conv() {
+        var v = document.getElementById("dev-ts").value.trim();
+        var ts = v ? parseInt(v, 10) : Math.floor(Date.now() / 1000);
+        var d = new Date(ts * 1000);
+        var local = isNaN(d.getTime()) ? "无效时间戳" : d.toLocaleString();
+        document.getElementById("dev-ts-out").innerHTML =
+          kvRow("时间戳（秒）", ts) + kvRow("时间戳（毫秒）", ts * 1000) + kvRow("本地时间", local) + kvRow("UTC", d.toUTCString());
+      }
+      document.getElementById("dev-ts-go").addEventListener("click", conv);
+      conv();
+    }
+    function showB64() {
+      body.innerHTML = '<div class="tool-io"><textarea id="dev-b64-in" rows="4" placeholder="输入文本…"></textarea>' +
+        '<div class="tool-btns"><button class="btn tool-run" id="dev-b64-enc">编码</button><button class="btn tool-run" id="dev-b64-dec">解码</button></div>' +
+        '<textarea id="dev-b64-out" rows="4" readonly placeholder="结果…"></textarea></div>';
+      document.getElementById("dev-b64-enc").addEventListener("click", function () {
+        try { document.getElementById("dev-b64-out").value = btoa(unescape(encodeURIComponent(document.getElementById("dev-b64-in").value))); }
+        catch (e) { document.getElementById("dev-b64-out").value = "编码失败"; }
+      });
+      document.getElementById("dev-b64-dec").addEventListener("click", function () {
+        try { document.getElementById("dev-b64-out").value = decodeURIComponent(escape(atob(document.getElementById("dev-b64-in").value.trim()))); }
+        catch (e) { document.getElementById("dev-b64-out").value = "解码失败：不是有效的 Base64"; }
+      });
+    }
+    function showUrl() {
+      body.innerHTML = '<div class="tool-io"><textarea id="dev-url-in" rows="4" placeholder="输入文本…"></textarea>' +
+        '<div class="tool-btns"><button class="btn tool-run" id="dev-url-enc">编码</button><button class="btn tool-run" id="dev-url-dec">解码</button></div>' +
+        '<textarea id="dev-url-out" rows="4" readonly placeholder="结果…"></textarea></div>';
+      document.getElementById("dev-url-enc").addEventListener("click", function () {
+        document.getElementById("dev-url-out").value = encodeURIComponent(document.getElementById("dev-url-in").value);
+      });
+      document.getElementById("dev-url-dec").addEventListener("click", function () {
+        try { document.getElementById("dev-url-out").value = decodeURIComponent(document.getElementById("dev-url-in").value.trim()); }
+        catch (e) { document.getElementById("dev-url-out").value = "解码失败"; }
+      });
+    }
+    function showJson() {
+      body.innerHTML = '<div class="tool-io"><textarea id="dev-json-in" rows="8" placeholder="粘贴 JSON…"></textarea>' +
+        '<div class="tool-btns"><button class="btn tool-run" id="dev-json-go">格式化</button><button class="btn tool-run" id="dev-json-min">压缩</button></div>' +
+        '<textarea id="dev-json-out" rows="8" readonly placeholder="结果…"></textarea></div>';
+      function fmt(min) {
+        try { document.getElementById("dev-json-out").value = JSON.stringify(JSON.parse(document.getElementById("dev-json-in").value), null, min ? 0 : 2); }
+        catch (e) { document.getElementById("dev-json-out").value = "JSON 解析失败：" + e.message; }
+      }
+      document.getElementById("dev-json-go").addEventListener("click", function () { fmt(false); });
+      document.getElementById("dev-json-min").addEventListener("click", function () { fmt(true); });
+    }
+    var views = { uuid: showUuid, ts: showTs, b64: showB64, url: showUrl, json: showJson };
+    Array.prototype.forEach.call(el.querySelectorAll(".dev-tabs .pill"), function (btn) {
+      btn.addEventListener("click", function () {
+        el.querySelectorAll(".dev-tabs .pill").forEach(function (b) { b.classList.remove("active"); });
+        btn.classList.add("active");
+        views[btn.getAttribute("data-dev")]();
+      });
+    });
+    showUuid();
   }
 
   /* ---- 工具：文本统计（纯算法，实时计算） ---- */
