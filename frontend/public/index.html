@@ -736,6 +736,19 @@
   .tt-cell.taken { cursor: default; }
   .tt-cell.taken:hover { background: var(--card); }
 
+  /* ===== 五子棋 ===== */
+  .gk-board { display: grid; grid-template-columns: repeat(9, 34px); grid-auto-rows: 34px; gap: 2px;
+    max-width: 326px; margin: 4px 0 14px; background: var(--card2); padding: 6px; border-radius: 10px; border: 1px solid var(--border); }
+  .gk-cell { border: 1px solid var(--border); border-radius: 4px; background: var(--card);
+    display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .gk-cell:hover { background: rgba(103,232,249,.1); }
+  .gk-cell.taken { cursor: default; }
+  .gk-cell.taken:hover { background: var(--card); }
+  .gk-black, .gk-white { width: 22px; height: 22px; border-radius: 50%; display: block; }
+  .gk-black { background: #1e293b; border: 1px solid #0f172a; }
+  [data-theme="light"] .gk-black { background: #111827; }
+  .gk-white { background: #f8fafc; border: 1px solid #cbd5e1; }
+
   footer { text-align: center; color: var(--muted); font-size: 13px; padding: 40px 20px 32px;
     border-top: 1px solid var(--border); margin-top: 40px; }
 
@@ -2313,7 +2326,171 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     if (name === "translate") return renderToolTranslate(el);
     if (name === "summary") return renderToolSummary(el);
     if (name === "tictactoe") return renderToolTicTacToe(el);
+    if (name === "gomoku") return renderToolGomoku(el);
     el.innerHTML = '<div class="model-empty">该工具正在建设中，敬请期待</div>';
+  }
+
+  /* ---- 游戏：五子棋 9×9（评分引擎 / LLM 落子可切换） ---- */
+  function renderToolGomoku(el) {
+    var chatOpts = models.filter(pgModelOk).map(function (m) { return '<option value="' + esc(m) + '">' + esc(m) + "</option>"; }).join("");
+    el.innerHTML = toolShell("五子棋对弈",
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;vertical-align:-4px;color:var(--accent);"><circle cx="7" cy="7" r="3"/><circle cx="17" cy="17" r="3"/><circle cx="17" cy="7" r="3" fill="currentColor"/><circle cx="7" cy="17" r="3" fill="currentColor"/></svg>',
+      "评分引擎 / LLM 落子",
+      '<p class="tool-intro">9×9 棋盘，五连即胜。你是黑棋先手。「算法」对手基于活/冲棋型评分即时应对；「LLM 落子」模式把棋盘交给大模型解析（解析失败自动回退算法）。</p>' +
+      '<div class="tool-btns" style="margin-bottom:14px;flex-wrap:wrap;align-items:center;">' +
+      '<span style="align-self:center;">对手</span>' +
+      '<select id="gk-mode" style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;">' +
+      '<option value="algo">评分算法</option><option value="llm">LLM 落子</option></select>' +
+      '<select id="gk-llm-model" style="display:none;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;max-width:300px;">' + chatOpts + "</select>" +
+      '<button class="btn tool-run" id="gk-restart">重新开始</button>' +
+      '<span id="gk-status" style="align-self:center;color:var(--accent);font-weight:600;"></span></div>' +
+      '<div class="gk-board" id="gk-board"></div>' +
+      '<div id="gk-result" class="tool-result"></div>');
+    var N = 9;
+    var board = [];
+    var over = false;
+    function reset() { board = []; for (var i = 0; i < N * N; i++) board.push(0); over = false; }
+    function idx(r, c) { return r * N + c; }
+    function checkWin(p) {
+      var dirs = [[0,1],[1,0],[1,1],[1,-1]];
+      for (var r = 0; r < N; r++) for (var c = 0; c < N; c++) {
+        if (board[idx(r,c)] !== p) continue;
+        for (var d = 0; d < 4; d++) {
+          var cnt = 1;
+          for (var k = 1; k < 5; k++) {
+            var rr = r + dirs[d][0]*k, cc = c + dirs[d][1]*k;
+            if (rr < 0 || rr >= N || cc < 0 || cc >= N || board[idx(rr,cc)] !== p) break;
+            cnt++;
+          }
+          if (cnt >= 5) return true;
+        }
+      }
+      return false;
+    }
+    function lineScore(b, r, c, dr, dc, p) {
+      var mine = 0, openEnds = 0;
+      for (var k = 1; k < 5; k++) {
+        var rr = r + dr*k, cc = c + dc*k;
+        if (rr < 0 || rr >= N || cc < 0 || cc >= N) break;
+        if (b[idx(rr,cc)] === p) mine++;
+        else { if (b[idx(rr,cc)] === 0) openEnds++; break; }
+        if (k === 4) { var er = r + dr*5, ec = c + dc*5; if (er >= 0 && er < N && ec >= 0 && ec < N && b[idx(er,ec)] === 0) openEnds++; }
+      }
+      if (mine >= 4) return 100000;
+      if (mine === 3) return openEnds === 2 ? 5000 : (openEnds === 1 ? 500 : 0);
+      if (mine === 2) return openEnds === 2 ? 200 : (openEnds === 1 ? 20 : 0);
+      if (mine === 1) return openEnds === 2 ? 20 : (openEnds === 1 ? 4 : 0);
+      return 0;
+    }
+    function evalPoint(b, r, c, p) {
+      var s = 0;
+      var dirs = [[0,1],[1,0],[1,1],[1,-1]];
+      for (var d = 0; d < 4; d++) s += lineScore(b, r, c, dirs[d][0], dirs[d][1], p) + lineScore(b, r, c, dirs[d][0], dirs[d][1], 3 - p) * 0.9;
+      return s;
+    }
+    function bestMoveAlgo() {
+      var best = -1, bestS = -1;
+      for (var r = 0; r < N; r++) for (var c = 0; c < N; c++) {
+        if (board[idx(r,c)]) continue;
+        board[idx(r,c)] = 2;
+        var winNow = checkWin(2);
+        board[idx(r,c)] = 0;
+        if (winNow) return [r, c];
+        board[idx(r,c)] = 1;
+        var blockNow = checkWin(1);
+        board[idx(r,c)] = 0;
+        if (blockNow) return [r, c];
+        var s = evalPoint(board, r, c, 2);
+        if (s > bestS) { bestS = s; best = [r, c]; }
+      }
+      if (bestS <= 0) {
+        var mid = idx(4,4);
+        if (!board[mid]) return [4,4];
+        for (var i = 0; i < N * N; i++) if (!board[i]) return [Math.floor(i / N), i % N];
+      }
+      return best;
+    }
+    function draw() {
+      var el = document.getElementById("gk-board");
+      var html = "";
+      for (var i = 0; i < N * N; i++) {
+        var v = board[i];
+        html += '<div class="gk-cell' + (v ? " taken" : "") + '" data-i="' + i + '">' +
+          (v === 1 ? '<span class="gk-black"></span>' : v === 2 ? '<span class="gk-white"></span>' : "") + "</div>";
+      }
+      el.innerHTML = html;
+      Array.prototype.forEach.call(el.querySelectorAll(".gk-cell"), function (cell) {
+        cell.addEventListener("click", function () { onCell(+cell.getAttribute("data-i")); });
+      });
+    }
+    function setStatus(t) { document.getElementById("gk-status").textContent = t; }
+    function finish(msg) {
+      over = true;
+      setStatus(msg);
+      document.getElementById("gk-result").innerHTML = '<div class="tool-ai-box"><b>对局结束</b><div class="tool-ai-text">' + msg + "</div></div>";
+    }
+    function afterAiMove() {
+      if (checkWin(2)) return finish("💥 对手获胜");
+      setStatus("轮到你了（黑棋）");
+    }
+    function aiMoveAlgo() {
+      var mv = bestMoveAlgo();
+      board[idx(mv[0], mv[1])] = 2; draw();
+      afterAiMove();
+    }
+    function aiMoveLlm() {
+      var model = document.getElementById("gk-llm-model").value;
+      var rows = [];
+      for (var r = 0; r < N; r++) {
+        var line = [];
+        for (var c = 0; c < N; c++) line.push(board[idx(r,c)] === 0 ? "." : board[idx(r,c)] === 1 ? "X" : "O");
+        rows.push(line.join(" "));
+      }
+      setStatus("LLM 思考中…");
+      fetch(GATEWAY + "/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer sk-playground-demo" },
+        body: JSON.stringify({
+          model: model, temperature: 0.2, max_tokens: 30, stream: false,
+          messages: [
+            { role: "system", content: "你在下五子棋（9×9），执白棋 O，人类执黑棋 X。坐标格式为「行,列」（0-8）。只输出一个坐标如 4,4，不要输出其他内容。优先连五取胜，其次阻挡黑棋四连/活三。" },
+            { role: "user", content: "当前棋盘（. 为空）：\n" + rows.join("\n") + "\n轮到你（O）落子，输出坐标。" }
+          ],
+        }),
+      }).then(function (r) { return r.json(); }).then(function (j) {
+        var out = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+        var mv = null;
+        if (out) {
+          var m = String(out).match(/(\d)\D+(\d)/);
+          if (m) { var rr = +m[1], cc = +m[2]; if (rr < N && cc < N && !board[idx(rr,cc)]) mv = [rr, cc]; }
+        }
+        if (!mv) mv = bestMoveAlgo();
+        board[idx(mv[0], mv[1])] = 2; draw();
+        afterAiMove();
+      }).catch(function () {
+        setStatus("LLM 调用失败，回退算法对手");
+        aiMoveAlgo();
+      });
+    }
+    function onCell(i) {
+      if (over || board[i]) return;
+      board[i] = 1; draw();
+      if (checkWin(1)) return finish("🎉 你赢了！");
+      setStatus("对手思考中…");
+      setTimeout(function () {
+        var mode = document.getElementById("gk-mode").value;
+        if (mode === "llm") aiMoveLlm(); else aiMoveAlgo();
+      }, 300);
+    }
+    document.getElementById("gk-mode").addEventListener("change", function () {
+      document.getElementById("gk-llm-model").style.display = this.value === "llm" ? "" : "none";
+    });
+    document.getElementById("gk-restart").addEventListener("click", function () {
+      reset();
+      document.getElementById("gk-result").innerHTML = "";
+      draw(); setStatus("轮到你了（黑棋）");
+    });
+    reset(); draw(); setStatus("轮到你了（黑棋）");
   }
 
   /* ---- 游戏：井字棋（minimax 算法 / LLM 对手可切换） ---- */
