@@ -3086,19 +3086,14 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
   }
 
   /* ---- 工具：文本内容审核 ---- */
-  var TOOL_MOD_MODELS = ["Qwen3Guard-Gen-0.6B", "nonescape-v0", "Security-semantic-filtering", "nsfw-classifier"];
+  var TOOL_MOD_MODEL = "Security-semantic-filtering";  // 上游实测唯一支持文本审核的模型
   function renderToolModeration(el) {
-    var options = TOOL_MOD_MODELS.filter(function (m) { return models.indexOf(m) !== -1; });
-    var modelSel = options.length
-      ? '<select id="mod-model">' + options.map(function (m) { return '<option value="' + esc(m) + '">' + esc(m) + "</option>"; }).join("") + "</select>"
-      : '<select id="mod-model"><option value="Qwen3Guard-Gen-0.6B">Qwen3Guard-Gen-0.6B</option></select>';
     el.innerHTML = toolShell("文本内容审核",
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;vertical-align:-4px;color:var(--accent);"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>',
-      "/v1/moderations",
-      '<p class="tool-intro">输入任意文本，检测是否包含违规、有害或敏感内容；AI 会进一步解释风险点并给出改写建议。</p>' +
+      "/v1/moderations · Security-semantic-filtering",
+      '<p class="tool-intro">输入任意文本，检测是否包含涉政、色情、辱骂、暴力等风险内容；AI 会进一步解释风险点并给出改写建议。</p>' +
       '<div class="tool-io"><textarea id="mod-input" rows="5" placeholder="粘贴待检测的文本内容…"></textarea>' +
-      '<div class="tool-btns"><span style="align-self:center;">模型</span>' + modelSel +
-      '<button class="btn tool-run" id="mod-run">开始检测</button><button class="btn tool-ai" id="mod-ai" style="display:none;">AI 解读</button></div></div>' +
+      '<div class="tool-btns"><button class="btn tool-run" id="mod-run">开始检测</button><button class="btn tool-ai" id="mod-ai" style="display:none;">AI 解读</button></div></div>' +
       '<div id="mod-result" class="tool-result"></div>');
     var run = document.getElementById("mod-run");
     var ai = document.getElementById("mod-ai");
@@ -3106,7 +3101,6 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     var lastInput = "";
     run.addEventListener("click", function () {
       var text = document.getElementById("mod-input").value.trim();
-      var model = document.getElementById("mod-model").value;
       var box = document.getElementById("mod-result");
       if (!text) { box.innerHTML = '<div class="tool-empty">请先输入待检测的文本。</div>'; return; }
       box.innerHTML = '<div class="tool-loading">检测中…</div>';
@@ -3114,7 +3108,7 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
       fetch(GATEWAY + "/moderations", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": "Bearer sk-playground-demo" },
-        body: JSON.stringify({ model: model, input: text }),
+        body: JSON.stringify({ model: TOOL_MOD_MODEL, input: text }),
       }).then(function (r) { return r.json(); }).then(function (j) {
         lastData = j;
         var flat = [];
@@ -3126,7 +3120,7 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
             else flat.push([key, String(v)]);
           });
         })(j, "");
-        if (!flat.length) { box.innerHTML = '<div class="tool-empty">接口未返回有效数据，请稍后重试或换一个风控模型。</div>'; return; }
+        if (!flat.length) { box.innerHTML = '<div class="tool-empty">接口未返回有效数据，请稍后重试。</div>'; return; }
         box.innerHTML = '<div class="tool-kv">' + flat.map(function (p) {
           return '<div class="pg-hrow"><span>' + esc(p[0]) + "</span><b>" + esc(p[1]) + "</b></div>";
         }).join("") + "</div>";
@@ -3138,7 +3132,7 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     ai.addEventListener("click", function () {
       if (!lastData) return;
       var box = document.getElementById("mod-result");
-      var prompt = "以下是一段用户文本和内容审核接口返回的 JSON 结果。请用中文分析：1) 该文本是否存在风险，风险点是什么；2) 如果有风险，如何改写可以降低风险。共 3-4 句话，通俗易懂。\n\n【用户文本】\n" + lastInput + "\n\n【审核结果 JSON】\n" + JSON.stringify(lastData);
+      var prompt = "以下是一段用户文本和内容审核接口返回的 JSON 结果（类别含 politic/porn/insult/violence）。请用中文分析：1) 该文本是否存在风险，风险点是什么；2) 如果有风险，如何改写可以降低风险。共 3-4 句话，通俗易懂。\n\n【用户文本】\n" + lastInput + "\n\n【审核结果 JSON】\n" + JSON.stringify(lastData);
       toolAiExplain(prompt, box);
     });
   }
