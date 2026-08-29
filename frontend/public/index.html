@@ -1388,6 +1388,22 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
         <h3>健康评分（<code>health.score</code>）</h3>
         <p class="desc">每个模型附带近 100 次调用的健康评分（0-100，由成功率 / 延迟 / 稳定性加权计算）。<code>90+</code> 优秀、<code>70-89</code> 良好、<code>50-69</code> 一般、<code>&lt;50</code> 较差，可作为选择稳定模型的参考。</p>
       </div>
+
+      <div class="api-card api-anchor">
+        <h2>工具 API（/v1/tools/*）</h2>
+        <p class="desc">不只 AI——网关同时开放纯算法工具 API（不消耗上游额度），鉴权与主 API 相同。工具箱页面的全部能力都可编程调用：</p>
+        <div class="md-table-wrap"><table class="md-table">
+          <thead><tr><th>端点</th><th>方法</th><th>请求体</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>/v1/tools/text-stats</code></td><td>POST</td><td><code>{"text":"..."}</code></td><td>字数/中文字数/词频 Top10/阅读时长</td></tr>
+            <tr><td><code>/v1/tools/dice</code></td><td>POST</td><td><code>{"sides":6,"count":1}</code></td><td>随机骰子（sides 2-1000，count 1-20）</td></tr>
+            <tr><td><code>/v1/tools/uuid</code></td><td>GET</td><td>—</td><td>生成 UUID v4</td></tr>
+            <tr><td><code>/v1/tools/timestamp</code></td><td>GET/POST</td><td>POST: <code>{"timestamp":123}</code></td><td>当前时间戳 / 时间戳转日期（ISO/UTC）</td></tr>
+            <tr><td><code>/v1/tools/base64</code></td><td>POST</td><td><code>{"action":"encode","text":"..."}</code></td><td>Base64 编解码（action: encode/decode）</td></tr>
+          </tbody>
+        </table></div>
+        <p class="desc" style="margin-top:8px;">示例：<code>curl https://你的网关/v1/tools/uuid -H "Authorization: Bearer sk-****"</code></p>
+      </div>
     </div>
   </section>
 

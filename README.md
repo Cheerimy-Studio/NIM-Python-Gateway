@@ -38,6 +38,16 @@ AQUA 把 **Nvidia NIM、Gitee AI、SiliconFlow、智谱 GLM、讯飞星火、Clo
 
 模型名带前缀自动路由到对应上游；不带前缀的走静态模型目录识别，未识别的兜底到 Nvidia。
 
+## 工具箱与游戏（网页 + API 双形态）
+
+网关不只是 AI 代理，还内置了一套「工具 API」与配套网页应用（部署前台后访问「工具箱」/「在线体验」页）：
+
+- **AI 对弈游戏**：井字棋（minimax 必不败引擎 / 可选 LLM 对手）、五子棋 9×9（棋型评分引擎 / LLM 落子）、猜数字 1A2B（人猜 AI / LLM 挑战模式）、成语接龙（LLM 驱动 + 首尾字校验）
+- **AI 赋能工具**：IP 归属地查询（AI 解读）、文本内容审核（AI 风险分析）、AI 翻译、AI 摘要
+- **纯算法工具**：文本统计、UUID、时间戳互转、Base64/URL 编解码、JSON 格式化
+
+所有工具能力同时以 REST API 开放（`/v1/tools/*` 命名空间），鉴权与主 API 一致——**我们不只提供 AI API，也提供工具 API**。
+
 ## API 端点（OpenAI 兼容）
 
 | 端点 | 方法 | 说明 |
@@ -52,6 +62,11 @@ AQUA 把 **Nvidia NIM、Gitee AI、SiliconFlow、智谱 GLM、讯飞星火、Clo
 | `/v1/audio/speech` | POST | 语音合成 TTS |
 | `/v1/audio/transcriptions` | POST | 语音识别 ASR（multipart 上传） |
 | `/v1/ip_location` | POST | IP 归属地查询 |
+| `/v1/tools/text-stats` | POST | 文本统计（字数/词频/阅读时长，纯算法） |
+| `/v1/tools/dice` | POST | 随机骰子（可指定面数与数量） |
+| `/v1/tools/uuid` | GET | 生成 UUID v4 |
+| `/v1/tools/timestamp` | GET/POST | 当前时间戳查询 / 时间戳互转 |
+| `/v1/tools/base64` | POST | Base64 编解码 |
 | `/assets/*` | GET | 生成图片的 R2 缓存（24h 自动清理） |
 
 所有错误响应为 OpenAI 兼容结构，并附带 `help` 字段（官网、QQ 频道/群引导），方便客户端直接展示排障信息。
