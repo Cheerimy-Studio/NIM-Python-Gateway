@@ -2329,7 +2329,49 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     if (name === "gomoku") return renderToolGomoku(el);
     if (name === "guess") return renderToolGuess(el);
     if (name === "idiom") return renderToolIdiom(el);
+    if (name === "textstats") return renderToolTextStats(el);
     el.innerHTML = '<div class="model-empty">该工具正在建设中，敬请期待</div>';
+  }
+
+  /* ---- 工具：文本统计（纯算法，实时计算） ---- */
+  function renderToolTextStats(el) {
+    el.innerHTML = toolShell("文本统计",
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;vertical-align:-4px;color:var(--accent);"><path d="M4 7V5h16v2"/><path d="M12 5v14"/><path d="M9 19h6"/></svg>',
+      "/v1/tools/text-stats",
+      '<p class="tool-intro">纯算法实时统计：边输入边出结果，不经任何 AI，零额度消耗。同样能力可通过 <code>POST /v1/tools/text-stats</code> 调用。</p>' +
+      '<div class="tool-io"><textarea id="ts-input" rows="8" placeholder="粘贴或输入任意文本，实时统计…"></textarea></div>' +
+      '<div id="ts-result" class="tool-result"></div>');
+    var input = document.getElementById("ts-input");
+    function render() {
+      var text = input.value;
+      var box = document.getElementById("ts-result");
+      if (!text) { box.innerHTML = '<div class="tool-empty">等待输入…</div>'; return; }
+      var chars = text.length;
+      var noSpace = text.replace(/\s/g, "").length;
+      var cjk = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+      var words = (text.toLowerCase().match(/[a-z0-9]+(?:'[a-z]+)?/g) || []);
+      var lines = text.split(/\n/).length;
+      var sentences = (text.match(/[.!?。！？]+/g) || []).length || 1;
+      var readMin = Math.max(1, Math.round((cjk + words.length) / 400));
+      var freq = {};
+      words.forEach(function (w) { if (w.length > 2) freq[w] = (freq[w] || 0) + 1; });
+      var top = Object.keys(freq).sort(function (a, b) { return freq[b] - freq[a]; }).slice(0, 10);
+      var html = '<div class="tool-kv">' +
+        '<div class="pg-hrow"><span>总字符（含空格换行）</span><b>' + chars + "</b></div>" +
+        '<div class="pg-hrow"><span>净字符（去空白）</span><b>' + noSpace + "</b></div>" +
+        '<div class="pg-hrow"><span>中文字数</span><b>' + cjk + "</b></div>" +
+        '<div class="pg-hrow"><span>英文单词数</span><b>' + words.length + "</b></div>" +
+        '<div class="pg-hrow"><span>行数 / 句数</span><b>' + lines + " / " + sentences + "</b></div>" +
+        '<div class="pg-hrow"><span>预计阅读时长</span><b>约 ' + readMin + " 分钟</b></div>" +
+        "</div>";
+      if (top.length) {
+        html += '<div class="tool-kv"><div class="pg-hrow"><span>英文词频 Top10</span><b>次数</b></div>' +
+          top.map(function (w) { return '<div class="pg-hrow"><span>' + esc(w) + "</span><b>" + freq[w] + "</b></div>"; }).join("") + "</div>";
+      }
+      box.innerHTML = html;
+    }
+    input.addEventListener("input", render);
+    render();
   }
 
   /* ---- 游戏：成语接龙（LLM 驱动 + 首尾字校验） ---- */
