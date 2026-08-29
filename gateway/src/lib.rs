@@ -1154,7 +1154,21 @@ async fn handle_ip_location(mut req: Request, env: Env) -> Result<Response> {
         Ok(b) => b.to_vec(),
         Err(_) => return err_res(400, "Bad Request"),
     };
-    direct_forward(&env, "gitee", "/ip_location", &body, 60000).await
+    // 上游 Gitee AI 的 ip_location 是 GET 接口（?ip=xxx），这里解析请求体后转为查询串转发
+    let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap_or(serde_json::json!({}));
+    let ip = parsed.get("ip").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let qs = if ip.is_empty() { String::new() } else { format!("?ip={}", ip) };
+    let Some(cfg) = provider_cfg(&env, "gitee") else {
+        return err_res(502, "该模型的上游通道暂不可用，请稍后重试");
+    };
+    let upstream = build_upstream_req(
+        &format!("{}{}{}", cfg.base, "/ip_location", qs),
+        Some(&format!("Bearer {}", cfg.key)),
+        None,
+        &[],
+        Method::Get,
+    )?;
+    forward(upstream, 60000).await
 }
 
 // ---------------------------------------------------------------------------
