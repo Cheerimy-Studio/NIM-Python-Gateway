@@ -1,18 +1,33 @@
 //! AQUA API Gateway — Cloudflare Worker (Rust → Wasm)
 //!
-//! 路由：
+//! ## 路由总览
 //! - GET  /v1/models                   模型列表（静态目录 + D1 健康评分 + DO 状态）
 //! - POST /v1/chat/completions         对话补全（多供应商代理 + 密钥池重试）
 //! - POST /v1/audio/speech             TTS（workers-ai-tts / gitee）
 //! - POST /v1/audio/transcriptions     ASR
 //! - POST /v1/embeddings               向量化
+//! - POST /v1/rerank                   重排序
 //! - POST /v1/moderations              内容安全
 //! - POST /v1/images/generations       文生图（zhipu cogview）
 //! - POST /v1/videos/generations       文生视频（zhipu cogvideox）
-//! - POST /v1/ip_location              IP 定位
+//! - POST /v1/ip_location              IP 定位（上游实为 GET 接口，网关代转查询串）
+//! - POST /v1/tools/text-stats|dice|base64    纯算法工具（零上游消耗）
+//! - GET  /v1/tools/uuid|timestamp            纯算法工具
+//! - POST /v1/tools/timestamp                 时间戳互转
 //! - GET  /assets/*                    R2 图片缓存
 //!
-//! 性能要点：模型列表使用编译期静态目录，不依赖上游实时查询，
+//! ## 二次开发指引（详见仓库 DEVELOPMENT.md）
+//! - 新增模型：在 MODEL_CATALOG 追加 (ID, owned_by)，重编译部署即生效
+//! - 新增供应商：provider_cfg 加一条 (BASE 变量, 默认值, KEY 变量)，
+//!   provider_of 加前缀匹配，handle_chat 的 match 里加转发分支
+//! - 新增工具 API：写 handler → main 的 router 注册路由即可
+//!
+//! ## 错误响应约定
+//! 所有错误统一为 OpenAI 兼容结构，并附带 help 引导字段：
+//! `{ "error": { "message": "中文原因", "code": 400, "help": { site, qq_guild, ... } } }`
+//!
+//! ## 性能要点
+//! 模型列表使用编译期静态目录，不依赖上游实时查询，
 //! 每次请求仅做 D1 健康聚合（窗口函数 ~130ms）+ 缓存，消除冷启动 60s+。
 
 use std::collections::HashMap;
@@ -27,6 +42,10 @@ mod workers_ai;
 // ---------------------------------------------------------------------------
 // 静态模型目录：(模型 ID, 供应商 owned_by)。编译期打入二进制，保证
 // /v1/models 即时返回；新增模型在重新部署时自动收录。
+//
+// 【二次开发】新增模型只需在此追加一行 (完整模型 ID, 供应商标签)：
+//   - 供应商标签决定路由归属（gitee-ai → Gitee 通道，其余非前缀模型 → Nvidia）
+//   - 前缀模型（zhipu/xxx、workers-ai/xxx 等）无需登记，自动按前缀路由
 // ---------------------------------------------------------------------------
 const MODEL_CATALOG: &[(&str, &str)] = &[
     ("01-ai/yi-large", "01-ai"),
@@ -231,7 +250,8 @@ fn provider_cfg(env: &Env, provider: &str) -> Option<ProviderCfg> {
     Some(ProviderCfg { base, key })
 }
 
-/// 供应商标签（owned_by → 路由）
+/// 供应商标签（owned_by / 模型前缀 → 上游路由）
+/// 路由优先级：显式前缀（zhipu/ 等）> 静态目录查询 > 兜底 Nvidia
 fn provider_of(model: &str) -> &'static str {
     if model.starts_with("zhipu/") {
         return "zhipu";
@@ -809,9 +829,9 @@ async fn proxy_acu_chat(env: &Env, model: &str, body_bytes: &[u8]) -> Result<Res
     // 模型名转换：acu/deepseek-v4-flash → deepseek-v4-flash（去掉 acu/ 前缀）
     let mut body: serde_json::Value = match serde_json::from_slice(body_bytes) {
         Ok(v) => v,
-        Err(_) => {
+        Err(e) => {
             release_acu(acu_stub).await;
-            return err_res(400, "Bad Request");
+            return err_res(400, &format!("请求体不是合法 JSON：{}", e));
         }
     };
     let upstream_model = model.strip_prefix("acu/").unwrap_or(model);
@@ -900,7 +920,7 @@ async fn proxy_workers_ai_chat(env: &Env, model: &str, body_bytes: &[u8]) -> Res
     // 需要 max_tokens（Workers AI 要求）
     let mut body: serde_json::Value = match serde_json::from_slice(body_bytes) {
         Ok(v) => v,
-        Err(_) => return err_res(400, "Bad Request"),
+        Err(e) => return err_res(400, &format!("请求体不是合法 JSON：{}", e)),
     };
     if body.get("max_tokens").is_none() {
         body["max_tokens"] = serde_json::json!(1024);
@@ -959,15 +979,15 @@ async fn handle_chat(mut req: Request, env: Env) -> Result<Response> {
     let started = now_ts();
     let body_bytes = match req.bytes().await {
         Ok(b) => b.to_vec(),
-        Err(_) => return err_res(400, "Bad Request"),
+        Err(_) => return err_res(400, "请求体读取失败，请检查网络后重试"),
     };
     let parsed: serde_json::Value = match serde_json::from_slice(&body_bytes) {
         Ok(v) => v,
-        Err(_) => return err_res(400, "Bad Request"),
+        Err(e) => return err_res(400, &format!("请求体不是合法 JSON：{}", e)),
     };
     let model = parsed.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string();
     if model.is_empty() {
-        return err_res(400, "Bad Request: model required");
+        return err_res(400, "缺少 model 字段：请求体必须包含 \"model\": \"<模型 ID>\"，可先 GET /v1/models 查看可用模型");
     }
 
     let provider = provider_of(&model);
@@ -1102,13 +1122,16 @@ async fn handle_embeddings(mut req: Request, env: Env) -> Result<Response> {
 async fn handle_moderations(mut req: Request, env: Env) -> Result<Response> {
     let body = match req.bytes().await {
         Ok(b) => b.to_vec(),
-        Err(_) => return err_res(400, "Bad Request"),
+        Err(_) => return err_res(400, "请求体读取失败，请检查网络后重试"),
     };
     let parsed: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
-        Err(_) => return err_res(400, "Bad Request"),
+        Err(e) => return err_res(400, &format!("请求体不是合法 JSON：{}", e)),
     };
     let model = parsed.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if model.is_empty() {
+        return err_res(400, "缺少 model 字段：文本审核请使用 \"Security-semantic-filtering\"（上游唯一支持文本输入的审核模型）");
+    }
     let provider = provider_of(&model);
     match provider {
         "gitee" => direct_forward(&env, "gitee", "/moderations", &body, 60000).await,
@@ -1155,7 +1178,7 @@ async fn handle_videos(mut req: Request, env: Env) -> Result<Response> {
 async fn handle_ip_location(mut req: Request, env: Env) -> Result<Response> {
     let body = match req.bytes().await {
         Ok(b) => b.to_vec(),
-        Err(_) => return err_res(400, "Bad Request"),
+        Err(_) => return err_res(400, "请求体读取失败，请检查网络后重试"),
     };
     // 上游 Gitee AI 的 ip_location 是 GET 接口（?ip=xxx），这里解析请求体后转为查询串转发
     let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap_or(serde_json::json!({}));
