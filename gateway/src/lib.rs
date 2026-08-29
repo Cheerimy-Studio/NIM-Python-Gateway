@@ -1180,13 +1180,15 @@ async fn handle_assets(req: Request, env: Env) -> Result<Response> {
 // ---------------------------------------------------------------------------
 // 入口
 // ---------------------------------------------------------------------------
-/// 401 无效密钥响应（中文提示 + 引导加群）
+/// 401 无效密钥响应（中文提示 + 引导加 QQ 频道/群）
 fn err_invalid_key() -> Result<Response> {
     let v = serde_json::json!({
         "error": {
-            "message": "API 密钥无效或已过期。本站已启用固定密钥制，请加入官方 QQ 群（群号 1103667832）获取最新密钥后重试。",
+            "message": "API 密钥无效或已过期。请加入 AQUA 开源社区 QQ 频道（频道号 pd57362562，链接 https://pd.qq.com/s/e4ktxw1b8 ）获取最新密钥后重试。",
             "type": "invalid_api_key",
             "code": 401,
+            "qq_guild": "pd57362562",
+            "qq_guild_url": "https://pd.qq.com/s/e4ktxw1b8",
             "qq_group": 1103667832,
         }
     });
@@ -1227,6 +1229,17 @@ fn key_valid(env: &Env, key: &str) -> bool {
         .any(|k| k == key)
 }
 
+/// 鉴权模式（环境变量 AUTH_MODE）：
+///   "key"  = 指定密钥制：仅 GATEWAY_KEYS 中的密钥可用（防滥用，默认）
+///   "open" = 开放模式：任意非空密钥均可使用（个人自部署 / 公益开放）
+/// 其他取值一律按 "key" 处理（安全兜底）。
+fn auth_mode(env: &Env) -> &'static str {
+    match env.var("AUTH_MODE").map(|v| v.to_string()).as_deref() {
+        Ok("open") => "open",
+        _ => "key",
+    }
+}
+
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     console_error_panic_hook::set_once();
@@ -1238,13 +1251,23 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     }
 
     // 鉴权白名单：健康检查根路径 + 公开模型列表（营销入口）。
-    // 其余端点一律要求有效固定密钥（防滥用 / 控成本）
+    // 其余端点鉴权模式由 AUTH_MODE 决定：
+    //   key  → 仅 GATEWAY_KEYS 中的密钥放行（默认，防滥用）
+    //   open → 任意非空密钥放行（个人自部署场景）
     let path = req.path().to_string();
     let is_public = path == "/" || path == "/v1/models";
     if !is_public {
         match extract_key(&req).await {
-            Some(k) if key_valid(&env, &k) => {}
-            _ => return err_invalid_key(),
+            Some(k) => {
+                let ok = match auth_mode(&env) {
+                    "open" => true,
+                    _ => key_valid(&env, &k),
+                };
+                if !ok {
+                    return err_invalid_key();
+                }
+            }
+            None => return err_invalid_key(),
         }
     }
 

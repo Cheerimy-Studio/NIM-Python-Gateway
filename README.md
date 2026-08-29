@@ -83,6 +83,20 @@ aqua-worker/
 - **密钥分片**：Nvidia 数百密钥自动按 CF 单变量 5.1KB 上限分片（`NVIDIA_KEYS` + `NVIDIA_KEYS_2..N`），运行时透明合并
 - **固定密钥制**：`GATEWAY_KEYS` 支持逗号分隔多把并存，平滑轮换；无效密钥返回 401 中文提示
 
+### 鉴权双模式（AUTH_MODE）
+
+自部署用户可随时在环境变量中切换，改完重新部署即生效：
+
+| AUTH_MODE | 行为 | 适用场景 |
+|---|---|---|
+| `key`（默认） | 仅 `GATEWAY_KEYS` 中列出的密钥可用，其他密钥返回 401 | 公开服务 / 防滥用 |
+| `open` | 任意非空密钥均可使用（如 `sk-anything`） | 个人自用 / 朋友间共享 |
+
+```toml
+# vars.toml 示例：只想自己用，改成 open 即可
+AUTH_MODE = "open"
+```
+
 ## 快速开始
 
 ### 1. 前置条件
@@ -156,7 +170,8 @@ curl https://your-gateway-domain.example/v1/chat/completions \
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
-| `GATEWAY_KEYS` | 是 | 用户调用网关的密钥，逗号分隔支持多把平滑轮换 |
+| `AUTH_MODE` | 否 | 鉴权模式：`key`（指定密钥制，默认）/ `open`（任意密钥可用，个人自部署推荐） |
+| `GATEWAY_KEYS` | 是* | 用户调用网关的密钥，逗号分隔支持多把平滑轮换（`AUTH_MODE=open` 时可不配） |
 | `NVIDIA_KEYS` | 否 | Nvidia 密钥池（逗号分隔，可上百个；支持 `_2.._N` 分片） |
 | `GITEE_KEY` / `SILICONFLOW_KEY` / `ZHIPU_KEY` / `SPARK_KEY` | 否 | 各上游密钥，未配置则对应通道 502 |
 | `ACU_BASE` / `ACU_KEY` | 否 | 自定义专属上游地址与密钥（未配置则 `acu/*` 502） |
