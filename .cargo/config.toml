@@ -1,0 +1,6 @@
+# 项目级 cargo 镜像配置（仅影响 aqua-worker 目录）加速依赖下载
+[source.crates-io]
+replace-with = "rsproxy-sparse"
+
+[source.rsproxy-sparse]
+registry = "sparse+https://rsproxy.cn/index/"

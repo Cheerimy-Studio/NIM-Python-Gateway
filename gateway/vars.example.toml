@@ -1,0 +1,49 @@
+# =====================================================================
+# AQUA 网关环境变量样例（复制为 vars.toml 并填入真实值；vars.toml 不入库）
+# 部署方式二选一：
+#   1. wrangler secret put <NAME>（推荐，值存 CF 加密存储）
+#   2. 写入 wrangler.toml [env.production.vars] 后部署（记得别提交该文件）
+# 任何真实密钥不得提交到 Git。
+# =====================================================================
+
+# ---- 群密钥（用户调用网关用；逗号分隔支持多把平滑轮换）----
+GATEWAY_KEYS = "sk-aqua-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# ---- Nvidia NIM 上游密钥池（逗号分隔，可上百个）----
+NVIDIA_KEYS = "nvapi-xxx,nvapi-yyy,nvapi-zzz"
+# 可选：覆盖默认上游地址
+# NVIDIA_BASE = "https://integrate.api.nvidia.com"
+
+# ---- Gitee AI ----
+GITEE_KEY = "你的GITEE_KEY"
+# GITEE_BASE = "https://ai.gitee.com/v1"
+
+# ---- SiliconFlow（硅基流动）----
+SILICONFLOW_KEY = "sk-xxxx"
+# SILICONFLOW_BASE = "https://api.siliconflow.cn/v1"
+
+# ---- 智谱 GLM ----
+ZHIPU_KEY = "xxxx.yyyy"
+# ZHIPU_BASE = "https://open.bigmodel.cn/api/paas/v4"
+
+# ---- 讯飞星火 ----
+SPARK_KEY = "你的SPARK_KEY"
+# SPARK_BASE = "https://spark-api-open.xf-yun.com/v1"
+
+# ---- acu/* 专属上游（示例；未配置则 acu/* 返回 502）----
+ACU_BASE = "https://your-private-upstream.example/v1/chat/completions"
+ACU_KEY = "sk-your-private-upstream-key"
+
+# ---- Workers AI（多账号日额度池，JSON 数组；或用下面的单账号兜底）----
+WAI_ACCOUNTS = '[{"name":"a1","account_id":"xxxx","token":"yyyy","cap":10000}]'
+# WAI_ACCOUNT_ID = "你的CF账号ID"
+# WAI_API_TOKEN = "你的CF API Token"
+# WAI_CAP_GLOBAL = "10000"
+
+# ---- 风控参数（可选，按需启用）----
+ABUSE_IP_RPM = "30"
+ABUSE_KEY_RPM = "120"
+ABUSE_KEY_DAILY = "5000"
+ABUSE_KEY_CONCURRENCY = "8"
+ABUSE_IP_WHITELIST = ""
+ABUSE_ENABLED = "true"

@@ -1,0 +1,26 @@
+# Rust
+/target/
+**/target/
+
+# Node
+node_modules/
+
+# 构建产物（由 scripts/build.ps1 生成，按需保留或忽略）
+/build/
+**/build/
+
+# 本地工具（wasm-bindgen CLI 等）
+/.tools/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 真实密钥/隐私配置（绝不入库！样例见 vars.example.toml）
+**/vars.toml
+**/wrangler.local.toml
+*.env
+!.env.example
+
+# 私有部署脚本（不入 Git！含生产注入逻辑，仅站长本地使用）
+scripts/deploy.ps1

@@ -1,0 +1,22 @@
+[package]
+name = "aqua-frontend"
+version = "0.1.0"
+edition = "2021"
+description = "AQUA 前台 - Cloudflare Worker (Rust->Wasm), 品牌首页 + API 文档 + 模型列表"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["console_error_panic_hook"]
+
+[dependencies]
+worker = "0.4.1"
+js-sys = "0.3"
+console_error_panic_hook = { version = "0.1.7", optional = true }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+codegen-units = 1

@@ -1,0 +1,10 @@
+name = "aqua-frontend"
+main = "build/worker/shim.mjs"
+compatibility_date = "2024-01-01"
+
+[build]
+command = "pwsh -ExecutionPolicy Bypass -File ../scripts/build.ps1 frontend"
+
+[env.production]
+# 绑定前台域名（⚠️ 部署前替换为你自己的域名）
+route = { pattern = "your-frontend-domain.example", custom_domain = true }

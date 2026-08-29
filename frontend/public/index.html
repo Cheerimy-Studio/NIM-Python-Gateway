@@ -1,0 +1,2428 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AQUA · 免费极速 AI API 网关</title>
+<meta name="description" content="AQUA — 免费、极速的 AI API 网关。兼容 OpenAI 协议，接入 Nvidia NIM、Gitee AI、SiliconFlow 与智谱 GLM 全线模型，加 QQ 群免费获取密钥即可使用。">
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<style>
+  /* ===== 主题：深蓝（默认暗色） ===== */
+  :root, [data-theme="dark"] {
+    --bg: #04111f;
+    --bg2: #071a2e;
+    --bg3: #04111f;
+    --card: rgba(255,255,255,.05);
+    --card2: rgba(0,0,0,.35);
+    --border: rgba(103, 232, 249, .18);
+    --border-hover: rgba(34,211,238,.4);
+    --aqua: #22d3ee;
+    --aqua2: #38bdf8;
+    --text: #e2e8f0;
+    --muted: #8fa8bd;
+    --accent: #7dd3fc;
+    --accent-soft: #bae6fd;
+    --code-bg: rgba(0,0,0,.4);
+    --code-color: #d7f5ff;
+    --code-color2: #e0f7ff;
+    --code-color3: #f0f9ff;
+    --hover-bg: rgba(34,211,238,.07);
+    --btn-bg: rgba(34,211,238,.1);
+    --btn-hover: rgba(34,211,238,.22);
+    --nav-bg: rgba(4,17,31,.8);
+    --tab-bg: rgba(255,255,255,.04);
+    --tab-active-bg: rgba(34,211,238,.15);
+    --grad-1: #67e8f9;
+    --grad-2: #38bdf8;
+    --grad-3: #818cf8;
+    --glow: rgba(34,211,238,.14);
+    --glow2: rgba(56,189,248,.12);
+    --tok: #7dd3fc;
+    --str: #a5f3fc;
+    --kwd: #c4b5fd;
+    --copied: #6ee7b7;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  /* ===== 主题：亮色白天 ===== */
+  [data-theme="light"] {
+    --bg: #f2f6fb;
+    --bg2: #e8eef5;
+    --bg3: #ffffff;
+    --card: rgba(255,255,255,.94);
+    --card2: rgba(15,60,100,.05);
+    --border: rgba(20,90,160,.16);
+    --border-hover: rgba(2,132,199,.45);
+    --aqua: #0891b2;
+    --aqua2: #0284c7;
+    --text: #14283c;
+    --muted: #475569;
+    --accent: #0369a1;
+    --accent-soft: #075985;
+    --code-bg: rgba(255,255,255,.96);
+    --code-color: #0c4a6e;
+    --code-color2: #1e3a5f;
+    --code-color3: #075985;
+    --hover-bg: rgba(8,145,178,.07);
+    --btn-bg: rgba(8,145,178,.09);
+    --btn-hover: rgba(8,145,178,.16);
+    --nav-bg: rgba(255,255,255,.86);
+    --tab-bg: rgba(15,60,100,.05);
+    --tab-active-bg: rgba(8,145,178,.14);
+    --grad-1: #06b6d4;
+    --grad-2: #0284c7;
+    --grad-3: #6366f1;
+    --glow: rgba(8,145,178,.06);
+    --glow2: rgba(2,132,199,.05);
+    --tok: #0369a1;
+    --str: #0e7490;
+    --kwd: #7c3aed;
+    --copied: #047857;
+  }
+
+  /* ===== 浅色主题覆盖：深色版标签/徽标/状态，确保可读性（避免浅色底+浅色字） ===== */
+  /* 亮色下去掉 body 紫色渐晕与卡片青色高光的脏感，保持干净 */
+  [data-theme="light"] body {
+    background:
+      radial-gradient(900px 420px at 85% -6%, rgba(8,145,178,.07), transparent 55%),
+      linear-gradient(180deg, var(--bg), var(--bg2) 55%, var(--bg) 100%);
+  }
+  [data-theme="light"] .card::before { background: transparent; opacity: 1; }
+  [data-theme="light"] a.cap-card::before { opacity: 0; }
+  [data-theme="light"] .mtag.m-nvidia { color: #0284c7; }
+  [data-theme="light"] .mtag.m-gitee { color: #0f766e; }
+  [data-theme="light"] .mtag.m-siliconflow { color: #6d28d9; }
+  [data-theme="light"] .mtag.m-workers-ai { color: #047857; }
+  [data-theme="light"] .mtag.m-zhipu { color: #b45309; }
+  [data-theme="light"] .mtag.m-spark { color: #1d4ed8; }
+  [data-theme="light"] .mtag.m-acu { color: #0284c7; }
+  [data-theme="light"] .mtag.m-status-exhausted { color: #b91c1c; background: rgba(239,68,68,.14); border-color: rgba(239,68,68,.45); }
+  [data-theme="light"] .mtag.m-status-unavailable { color: #92400e; background: rgba(245,158,11,.16); border-color: rgba(245,158,11,.5); }
+  [data-theme="light"] .mtag.m-health.h-excellent { color: #15803d; background: rgba(34,197,94,.14); border-color: rgba(34,197,94,.45); }
+  [data-theme="light"] .mtag.m-health.h-good { color: #4d7c0f; background: rgba(132,204,22,.16); border-color: rgba(132,204,22,.5); }
+  [data-theme="light"] .mtag.m-health.h-warn { color: #c2410c; background: rgba(249,115,22,.16); border-color: rgba(249,115,22,.5); }
+  [data-theme="light"] .mtag.m-health.h-bad { color: #b91c1c; background: rgba(239,68,68,.14); border-color: rgba(239,68,68,.45); }
+  [data-theme="light"] .cap-card-flag.flag-ex { color: #b91c1c; background: rgba(239,68,68,.12); }
+  [data-theme="light"] .cap-card-flag.flag-un { color: #92400e; background: rgba(245,158,11,.12); }
+  [data-theme="light"] .cap-mini.yes { color: #059669; }
+  [data-theme="light"] .cap-mini.part { color: #b45309; }
+  [data-theme="light"] .cap-mini.no { color: rgba(71,85,105,.5); }
+  [data-theme="light"] .acu-badge { color: #075985; background: rgba(8,145,178,.07); border-color: rgba(3,105,161,.3); }
+  [data-theme="light"] .acu-title .acu-crown { color: #0369a1; }
+  [data-theme="light"] .acu-title .acu-crown svg { color: #0369a1; }
+  [data-theme="light"] .acu-feat { background: #f7fafd; }
+  [data-theme="light"] .acu-feat .feat-ic { background: linear-gradient(135deg, rgba(8,145,178,.12), rgba(99,102,241,.05)); }
+  [data-theme="light"] .acu-feat .feat-ic svg { color: #0369a1; }
+  [data-theme="light"] .acu-note { background: #eef5fb; border-color: rgba(15,90,160,.22); }
+  [data-theme="light"] .acu-note svg { color: #0369a1; }
+  [data-theme="light"] .acu-note b { color: #075985; }
+  [data-theme="light"] .acu-model { background: #f7fafd; border-color: rgba(15,90,160,.2); }
+  [data-theme="light"] .acu-model .flag { color: #0369a1; border-color: rgba(3,105,161,.4); }
+  [data-theme="light"] .acu-model .cpy { color: #475569; }
+  [data-theme="light"] .acu-sponsor { background: #eef5fb; border-color: rgba(15,90,160,.2); }
+  [data-theme="light"] .acu-sponsor svg { color: #0369a1; }
+  [data-theme="light"] .acu-block { border-color: rgba(15,90,160,.22); background: #ffffff; }
+  [data-theme="light"] .acu-block::before { background: radial-gradient(600px 220px at 12% 0%, rgba(8,145,178,.05), transparent 60%); }
+  [data-theme="light"] .acu-models-banner { border-color: rgba(15,90,160,.22); background: #ffffff; }
+  [data-theme="light"] .acu-models-banner::before { background: radial-gradient(480px 160px at 10% 0%, rgba(8,145,178,.06), transparent 60%); }
+  [data-theme="light"] .acu-models-banner:hover { border-color: rgba(2,132,199,.5); box-shadow: 0 8px 24px rgba(15,90,160,.1); }
+  /* 自营大卡片内部元素亮色适配：纯白底 + 深蓝字，杜绝亮青文字与亮青渐变背景重合 */
+  [data-theme="light"] .acu-models-banner .mb-ic { background: linear-gradient(135deg, rgba(8,145,178,.1), rgba(99,102,241,.06)); }
+  [data-theme="light"] .acu-models-banner .mb-ic svg { color: #0369a1; }
+  [data-theme="light"] .acu-models-banner .mb-badge { color: #075985; border-color: rgba(3,105,161,.32); background: rgba(8,145,178,.08); }
+  [data-theme="light"] .acu-models-banner .mb-title { color: #0f2f44; }
+  [data-theme="light"] .acu-models-banner .mb-id { background: #f5f9fd; border-color: rgba(15,90,160,.22); }
+  [data-theme="light"] .acu-models-banner .mb-id code { color: #075985; }
+  [data-theme="light"] .acu-models-banner .mb-copy-hint { color: #475569; }
+  [data-theme="light"] .acu-models-banner .mb-desc { color: #475569; }
+  [data-theme="light"] .acu-models-banner .mb-desc b { color: #1e3a52; }
+  [data-theme="light"] .acu-models-banner .mb-meta span { color: #075985; background: #eef5fb; border-color: rgba(15,90,160,.2); }
+  [data-theme="light"] .acu-models-banner .mb-foot { border-top-color: rgba(15,90,160,.15); }
+  [data-theme="light"] .acu-models-banner .mb-copy-tip { color: #0369a1; }
+  [data-theme="light"] .acu-models-banner .mb-copy-tip svg { color: #0369a1; }
+  [data-theme="light"] .acu-models-banner .mb-detail { color: #075985; border-color: rgba(3,105,161,.28); background: rgba(8,145,178,.06); }
+  [data-theme="light"] .acu-models-banner .mb-detail:hover { background: rgba(8,145,178,.12); }
+  [data-theme="light"] .acu-sponsor { background: linear-gradient(135deg, rgba(3,105,161,.1), rgba(99,102,241,.03)); border-color: rgba(3,105,161,.28); }
+  [data-theme="light"] a.cap-card.m-acu .cap-card-name { color: #075985; }
+  [data-theme="light"] a.cap-card.m-acu .metric b { color: #0284c7; }
+  [data-theme="light"] a.cap-card.m-acu .cap-platform-label { color: #0369a1; }
+  [data-theme="light"] a.cap-card.m-acu .cap-card-flag.flag-acu { color: #0369a1; border-color: rgba(3,105,161,.35); }
+  [data-theme="light"] .cap-dot.m-acu { background: #0284c7; }
+  [data-theme="light"] .api-method { background: rgba(2,132,199,.12); color: #075985; }
+  [data-theme="light"] .badge { color: #075985; }
+  [data-theme="light"] .nav-tabs a.active { color: #03598a; }
+  [data-theme="light"] #model-grid .model-item.exhausted .model-link { color: #94a3b8; }
+  [data-theme="light"] .copy-row code, [data-theme="light"] .api-endpoint { color: #075985; }
+  [data-theme="light"] .copy-row code { background: #f5f9fd; }
+  [data-theme="light"] .search { background: #ffffff; }
+  [data-theme="light"] .md-head h1 code, [data-theme="light"] .md-table td.pname code { background: rgba(8,145,178,.1); }
+  [data-theme="light"] .model-link { color: #0369a1; }
+  [data-theme="light"] .cap-type-badge { color: #475569; }
+  [data-theme="light"] .cap-type-badge.t-vision { color: #2563eb; }
+  [data-theme="light"] .cap-type-badge.t-embedding { color: #6d28d9; }
+  [data-theme="light"] .cap-type-badge.t-rerank { color: #b45309; }
+  [data-theme="light"] .cap-type-badge.t-asr { color: #a21caf; }
+  [data-theme="light"] .cap-type-badge.t-tts { color: #047857; }
+  [data-theme="light"] .cap-type-badge.t-moderation { color: #b91c1c; }
+  [data-theme="light"] .cap-type-badge.t-image { color: #be123c; }
+  [data-theme="light"] .cap-type-badge.t-video { color: #4f46e5; }
+  [data-theme="light"] .cap-type-badge.t-chat { color: #475569; }
+  [data-theme="light"] .cap-yes { color: #059669; text-shadow: none; }
+  [data-theme="light"] .cap-part { color: #b45309; }
+  [data-theme="light"] .cap-no { color: rgba(71,85,105,.55); }
+  [data-theme="light"] .cap-table tbody tr:hover { background: rgba(8,145,178,.05); }
+  [data-theme="light"] .cap-table tbody td { border-bottom-color: rgba(0,100,200,.1); }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background:
+      radial-gradient(1100px 520px at 82% -8%, var(--glow), transparent 58%),
+      radial-gradient(820px 460px at -8% 8%, var(--glow2), transparent 52%),
+      radial-gradient(700px 300px at 50% 120%, rgba(129,140,248,.06), transparent 60%),
+      linear-gradient(180deg, var(--bg), var(--bg2) 55%, var(--bg) 100%);
+    min-height: 100vh;
+    line-height: 1.6;
+    transition: background .3s ease, color .3s ease;
+    background-attachment: fixed;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+
+  /* ===== SVG 图标通用 ===== */
+  .ic { display: inline-flex; align-items: center; justify-content: center; }
+  .ic svg { width: 16px; height: 16px; display: block; flex: none; }
+
+  /* ===== 顶部切换栏 ===== */
+  .topnav { position: sticky; top: 0; z-index: 50; background: var(--nav-bg);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border); }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .nav-brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; }
+  .nav-brand svg { filter: drop-shadow(0 0 12px var(--glow)); }
+  .nav-brand span { font-size: 20px; font-weight: 800; letter-spacing: 4px;
+    background: linear-gradient(120deg, var(--grad-1) 0%, var(--grad-2) 45%, var(--grad-3) 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 0 10px rgba(56,189,248,.18)); }
+  .nav-tabs { display: flex; gap: 6px; background: var(--tab-bg);
+    border: 1px solid var(--border); border-radius: 10px; padding: 4px; }
+  .nav-tabs a { text-decoration: none; color: var(--muted); font-size: 14px;
+    padding: 7px 18px; border-radius: 7px; transition: all .15s;
+    display: inline-flex; align-items: center; gap: 7px; }
+  .nav-tabs a:hover { color: var(--accent-soft); }
+  .nav-tabs a.active { background: var(--tab-active-bg); color: var(--accent); font-weight: 600; }
+
+  /* ===== 页面切换 ===== */
+  .page { display: none; }
+  .page.active { display: block; animation: fadein .25s ease; }
+  @keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  /* ===== Hero ===== */
+  header.home-hero { text-align: center; padding: 64px 20px 36px; }
+  .logo { display: inline-flex; align-items: center; gap: 14px; }
+  .brand { font-size: 46px; font-weight: 800; letter-spacing: 6px;
+           background: linear-gradient(90deg, var(--grad-1), var(--grad-2), var(--grad-3));
+           -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .tagline { margin-top: 14px; color: var(--muted); font-size: 17px; }
+  .badges { margin-top: 22px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .badge { font-size: 13px; padding: 6px 14px; border-radius: 999px;
+           border: 1px solid var(--border); background: var(--card); color: var(--accent-soft);
+           display: inline-flex; align-items: center; gap: 7px; }
+  .badge .ic svg { width: 15px; height: 15px; }
+
+  /* ===== 连接信息卡片 ===== */
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 12px 0 40px; }
+  .card { position: relative; background: linear-gradient(160deg, var(--card), var(--card2));
+    border: 1px solid var(--border); border-radius: 16px; padding: 20px;
+    box-shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 8px 24px rgba(0,0,0,.12); }
+  .card::before { content: ""; position: absolute; inset: 0; border-radius: 16px; pointer-events: none;
+    background: linear-gradient(160deg, rgba(103,232,249,.1), transparent 40%); opacity: .4; }
+  .card > * { position: relative; }
+  .card h3 { font-size: 15px; color: var(--accent); margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  .card h3 .ic svg { width: 18px; height: 18px; }
+  .copy-row { display: flex; align-items: center; gap: 8px; }
+  .copy-row code { flex: 1; font-family: var(--mono); font-size: 14px; color: var(--code-color3);
+    background: var(--card2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; word-break: break-all; }
+  .btn { cursor: pointer; border: 1px solid var(--border); background: var(--btn-bg); color: var(--accent);
+    border-radius: 8px; padding: 9px 14px; font-size: 13px; transition: all .15s; white-space: nowrap;
+    font-family: inherit; display: inline-flex; align-items: center; gap: 6px; }
+  .btn .ic svg { width: 14px; height: 14px; }
+  .btn:hover { background: var(--btn-hover); }
+  .btn.copied { color: var(--copied); }
+  .hint { font-size: 13px; color: var(--muted); margin-top: 8px; }
+
+  /* ===== Section ===== */
+  section.block { margin: 44px 0; }
+  .sec-title { font-size: 22px; font-weight: 700; margin-bottom: 20px;
+               display: flex; align-items: center; gap: 9px; position: relative; }
+  .sec-title::before { content: ""; width: 4px; height: 22px; border-radius: 2px; flex: none;
+    background: linear-gradient(180deg, var(--grad-1), var(--grad-3)); box-shadow: 0 0 10px var(--glow); }
+  .sec-title .ic svg { width: 20px; height: 20px; color: var(--aqua); }
+
+  /* ===== Docs ===== */
+  .doc-block { margin-bottom: 18px; }
+  .doc-block .label { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+  pre { font-family: var(--mono); font-size: 13px; background: var(--code-bg);
+    border: 1px solid var(--border); border-radius: 10px; padding: 16px; overflow-x: auto; position: relative; }
+  pre .btn { position: absolute; top: 10px; right: 10px; padding: 5px 10px; font-size: 12px; }
+  pre code { color: var(--code-color); white-space: pre; }
+  .tok { color: var(--tok); } .str { color: var(--str); } .kwd { color: var(--kwd); }
+
+  /* ===== 模型列表页 ===== */
+  .models-page-head { padding: 40px 0 10px; }
+  .models-page-head h1 { font-size: 26px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+  .models-page-head h1 .ic svg { width: 24px; height: 24px; color: var(--aqua); }
+  .models-page-head p { color: var(--muted); margin-top: 8px; font-size: 14px; }
+  .models-bar { display: flex; gap: 10px; margin: 18px 0; flex-wrap: wrap; }
+  .search { flex: 1; min-width: 240px; background: var(--card2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 11px 14px; color: var(--text); font-size: 14px; outline: none; font-family: inherit; }
+  .search:focus { border-color: var(--aqua); }
+  .count { font-size: 13px; color: var(--muted); align-self: center; }
+  .model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; padding-bottom: 30px; }
+  .model-item { display: flex; align-items: center; gap: 8px; background: var(--card);
+    border: 1px solid var(--border); border-radius: 10px; padding: 11px 12px; transition: all .15s; }
+  .model-item:hover { border-color: var(--border-hover); background: var(--hover-bg); }
+  .model-item code { flex: 1; font-family: var(--mono); font-size: 13px; color: var(--code-color2); word-break: break-all; }
+  .model-item .btn { padding: 6px 11px; font-size: 12px; }
+  .model-empty { color: var(--muted); padding: 40px; text-align: center; }
+  /* 模型列表加载/同步状态提示条 */
+  .model-notice { display: flex; align-items: center; gap: 8px; margin: 10px 0; padding: 9px 14px; border-radius: 10px; font-size: 13px; border: 1px solid var(--border); background: var(--tab-bg); color: var(--muted); line-height: 1.5; }
+  .model-notice svg { flex: 0 0 auto; width: 16px; height: 16px; }
+  .model-notice.err { border-color: rgba(248,113,113,.4); background: rgba(239,68,68,.08); color: #fca5a5; }
+  .model-notice .nt-msg { flex: 1 1 auto; }
+  .model-notice .nt-btn { flex: 0 0 auto; }
+
+  /* ===== API 文档页 ===== */
+  .api-page { padding: 32px 0 10px; }
+  .api-page h1 { font-size: 26px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+  .api-page h1 .ic svg { width: 24px; height: 24px; color: var(--aqua); }
+  .api-page .intro { color: var(--muted); margin-top: 8px; font-size: 14px; }
+  .api-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 20px; margin: 16px 0; }
+  .api-card h2 { font-size: 17px; color: var(--accent); display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
+  .api-card h2 .ic svg { width: 18px; height: 18px; }
+  .api-card h3 { font-size: 14px; color: var(--accent); margin: 16px 0 6px; }
+  .api-card p.desc { font-size: 13px; color: var(--muted); margin: 4px 0 10px; }
+  .api-card ul.tips { margin: 8px 0 0 18px; font-size: 13px; color: var(--muted); }
+  .api-card ul.tips li { margin: 3px 0; }
+  .api-method { display: inline-block; font-family: var(--mono); font-size: 11px; font-weight: 700;
+    padding: 2px 8px; border-radius: 5px; background: rgba(34,211,238,.14); color: var(--aqua); margin-right: 8px;
+    vertical-align: 2px; letter-spacing: .5px; }
+  .api-endpoint { font-family: var(--mono); font-size: 13px; color: var(--code-color3); word-break: break-all; }
+  .api-anchor { scroll-margin-top: 80px; }
+
+  /* ===== 模型分类筛选 ===== */
+  .filter-row { display: flex; align-items: center; gap: 8px; margin: 12px 0 4px; flex-wrap: wrap; }
+  .filter-row .flabel { font-size: 12px; color: var(--muted); min-width: 44px; }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; }
+  .pill { cursor: pointer; border: 1px solid var(--border); background: var(--card); color: var(--muted);
+    border-radius: 999px; padding: 6px 14px; font-size: 13px; transition: all .15s; font-family: inherit; }
+  .pill:hover { color: var(--accent-soft); border-color: var(--border-hover); }
+  .pill.active { background: var(--tab-active-bg); color: var(--accent); border-color: var(--aqua); font-weight: 600; }
+  .mtag { flex: none; font-size: 10px; padding: 2px 7px; border-radius: 5px; letter-spacing: .4px;
+    border: 1px solid var(--border); color: var(--muted); }
+  .mtag.m-nvidia { color: #7dd3fc; }
+  .mtag.m-gitee { color: #a5f3fc; }
+  .mtag.m-siliconflow { color: #c4b5fd; }
+  .mtag.m-workers-ai { color: #6ee7b7; }
+  .mtag.m-zhipu { color: #fbbf24; }
+  .mtag.m-spark { color: #60a5fa; }
+  .mtag.m-acu { color: #38bdf8; }
+  .mtag.m-status-exhausted { color: #fca5a5; border-color: rgba(248,113,113,.5); background: rgba(239,68,68,.12); font-weight: 600; }
+  .mtag.m-status-unavailable { color: #fbbf24; border-color: rgba(251,191,36,.5); background: rgba(251,191,36,.12); font-weight: 600; }
+  .mtag.m-health { font-weight: 600; }
+  .mtag.m-health.h-excellent { color: #4ade80; border-color: rgba(74,222,128,.5); background: rgba(34,197,94,.12); }
+  .mtag.m-health.h-good { color: #a3e635; border-color: rgba(163,230,53,.5); background: rgba(132,204,22,.12); }
+  .mtag.m-health.h-warn { color: #fb923c; border-color: rgba(251,146,60,.5); background: rgba(249,115,22,.12); }
+  .mtag.m-health.h-bad { color: #f87171; border-color: rgba(248,113,113,.5); background: rgba(239,68,68,.14); }
+  .model-item.exhausted code { color: var(--muted); }
+  .model-item.exhausted .model-link { color: var(--muted); }
+
+  /* ===== 模型详情页 ===== */
+  .model-detail { max-width: 900px; margin: 0 auto; }
+  .back-link { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); text-decoration: none; font-size: 13px; margin: 8px 0 12px; }
+  .back-link svg { width: 15px; height: 15px; }
+  .back-link:hover { text-decoration: underline; }
+  .md-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--card);
+    border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; }
+  .md-head h1 { font-size: 18px; word-break: break-all; margin: 0; flex: 1 1 100%; }
+  .md-head h1 code { background: rgba(34,211,238,.1); padding: 4px 10px; border-radius: 6px; color: var(--accent); font-size: 15px; }
+  .md-tags { display: flex; gap: 6px; flex-wrap: wrap; flex: 1 1 auto; }
+  .md-block { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 16px 20px; margin-top: 12px; }
+  .md-block h3 { font-size: 14px; color: var(--accent); margin: 0 0 10px; display: flex; align-items: center; gap: 6px; }
+  .md-desc { font-size: 13px; color: var(--text); line-height: 1.7; margin: 0; }
+  .md-table-wrap { overflow-x: auto; }
+  .md-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .md-table th { text-align: left; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .md-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .md-table td.pname code { background: rgba(34,211,238,.08); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+  .md-table tr:last-child td { border-bottom: none; }
+  ul.md-limits { margin: 0; padding-left: 18px; font-size: 13px; color: var(--text); line-height: 1.8; }
+  ul.md-limits li { margin: 3px 0; }
+  .model-link { color: var(--accent); text-decoration: none; font-family: var(--mono); font-size: 13px;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .model-link:hover { text-decoration: underline; color: var(--accent-soft); }
+
+  /* ===== 模型能力总览页 ===== */
+  .cap-page { max-width: 1080px; margin: 0 auto; }
+  .cap-head h1 { display: flex; align-items: center; gap: 10px; font-size: 22px; }
+  .cap-head p { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .cap-stats { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0 6px; }
+  .cap-stat-card { flex: none; min-width: 90px; background: linear-gradient(135deg, var(--card), color-mix(in srgb, var(--aqua) 6%, var(--card)));
+    border: 1px solid var(--border); border-radius: 14px; padding: 12px 16px; text-align: center; }
+  .cap-stat-card.wide { flex: 1; text-align: left; background: var(--card); }
+  .cap-stat-num { font-size: 26px; font-weight: 800; background: linear-gradient(120deg, var(--aqua), #818cf8); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+  .cap-stat-label { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .cap-stat-types { display: flex; gap: 6px; flex-wrap: wrap; }
+  .stat-pill { font-size: 12px; color: var(--text); background: var(--btn-bg); border: 1px solid var(--border);
+    border-radius: 999px; padding: 3px 10px; }
+  .stat-pill b { color: var(--accent); }
+  .cap-bar-card { flex: 1 1 100%; display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px 16px; margin-top: 4px; }
+  .cap-bar { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+  .cap-bar-label { color: var(--muted); min-width: 70px; white-space: nowrap; }
+  .cap-bar-track { flex: 1; height: 6px; border-radius: 999px; background: var(--btn-bg); overflow: hidden; }
+  .cap-bar-fill { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--aqua), #818cf8); transition: width .4s; }
+  .cap-bar-pct { color: var(--accent); min-width: 34px; text-align: right; font-weight: 600; }
+  .cap-table-wrap { overflow-x: auto; margin-top: 8px; border: 1px solid var(--border); border-radius: 14px;
+    background: var(--card); box-shadow: 0 4px 20px rgba(0,0,0,.04); }
+  .cap-table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 640px; }
+  .cap-table thead th { position: sticky; top: 0; z-index: 2; background: var(--card);
+    padding: 10px 8px; text-align: center; color: var(--muted); font-weight: 600; white-space: nowrap;
+    border-bottom: 2px solid var(--border); font-size: 11px; }
+  .cap-table thead th.cap-model-col, .cap-table thead th.cap-type-col { text-align: left; }
+  .cap-table tbody td { text-align: center; padding: 8px 6px; border-bottom: 1px solid var(--border); }
+  .cap-table tbody tr { cursor: pointer; transition: background .15s; }
+  .cap-table tbody tr:hover { background: color-mix(in srgb, var(--aqua) 7%, transparent); }
+  .cap-table tbody tr:last-child td { border-bottom: none; }
+  .cap-model-col { text-align: left !important; max-width: 340px; }
+  .cap-model-col a.cap-link { font-family: var(--mono); color: var(--text); text-decoration: none; word-break: break-all; }
+  .cap-model-col:hover a.cap-link { color: var(--accent); text-decoration: underline; }
+  .cap-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; vertical-align: middle; flex: none; }
+  .cap-dot.m-nvidia { background: #7dd3fc; } .cap-dot.m-gitee { background: #a5f3fc; }
+  .cap-dot.m-siliconflow { background: #c4b5fd; } .cap-dot.m-workers-ai { background: #6ee7b7; } .cap-dot.m-zhipu { background: #fbbf24; } .cap-dot.m-spark { background: #60a5fa; } .cap-dot.m-acu { background: #38bdf8; }
+  .cap-type-badge { font-size: 10px; padding: 2px 8px; border-radius: 6px; background: var(--btn-bg); color: var(--muted); border: 1px solid var(--border); white-space: nowrap; }
+  .cap-type-badge.t-vision { color: #4f86f7; } .cap-type-badge.t-embedding { color: #8b5cf6; }
+  .cap-type-badge.t-rerank { color: #f59e0b; } .cap-type-badge.t-asr { color: #e879f9; }
+  .cap-type-badge.t-tts { color: #34d399; } .cap-type-badge.t-moderation { color: #f87171; }
+  .cap-type-badge.t-image { color: #fb7185; } .cap-type-badge.t-video { color: #a78bfa; }
+  .cap-yes { color: #34d399; font-weight: 800; font-size: 14px; }
+  .cap-part { color: #fbbf24; font-weight: 700; font-size: 13px; }
+  .cap-no { color: color-mix(in srgb, var(--muted) 55%, transparent); font-size: 12px; }
+
+  /* ── 能力总览卡片网格 ── */
+  .cap-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 10px; }
+  a.cap-card { display: flex; flex-direction: column; gap: 8px; background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 14px 16px; text-decoration: none; transition: all .18s; position: relative; overflow: hidden; }
+  a.cap-card::before { content: ""; position: absolute; inset: 0; border-radius: 14px; padding: 1px;
+    background: linear-gradient(135deg, transparent, color-mix(in srgb, var(--aqua) 18%, transparent)); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; opacity: 0; transition: opacity .2s; }
+  a.cap-card:hover { transform: translateY(-3px); box-shadow: 0 8px 28px rgba(0,0,0,.09); border-color: color-mix(in srgb, var(--aqua) 30%, var(--border)); }
+  a.cap-card:hover::before { opacity: 1; }
+  /* 官方自营专属蓝色卡片 */
+  a.cap-card.m-acu { background: linear-gradient(160deg, rgba(56,189,248,.08), var(--card) 45%, rgba(56,189,248,.04));
+    border-color: rgba(56,189,248,.3); }
+  a.cap-card.m-acu::before { background: linear-gradient(135deg, #38bdf8, transparent 55%, #818cf8); opacity: .35; }
+  a.cap-card.m-acu:hover { border-color: rgba(56,189,248,.55);
+    box-shadow: 0 8px 30px rgba(56,189,248,.15); }
+  a.cap-card.m-acu .cap-card-name { color: #7dd3fc; }
+  a.cap-card.m-acu .metric b { color: #38bdf8; }
+  a.cap-card.m-acu .cap-platform-label { color: #7dd3fc; font-weight: 600; }
+  .cap-card-top { display: flex; align-items: center; gap: 7px; }
+  .cap-card-name { font-size: 14px; font-weight: 700; color: var(--text); word-break: break-all; flex: 1; min-width: 0;
+    line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; text-overflow: ellipsis; white-space: normal; font-family: var(--mono); }
+  a.cap-card:hover .cap-card-name { color: var(--accent); }
+  .cap-card-id { font-family: var(--mono); font-size: 11px; color: var(--muted); word-break: break-all; line-height: 1.4;
+    overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .cap-card-flag.flag-acu { color: #38bdf8; background: rgba(56,189,248,.12); border: 1px solid rgba(56,189,248,.35);
+    padding: 2px 8px; font-size: 10px; font-weight: 700; border-radius: 6px; align-self: flex-start; }
+  .cap-card-metrics { display: flex; flex-wrap: wrap; gap: 6px 10px; }
+  .metric { font-size: 11px; color: var(--muted); background: var(--btn-bg); border-radius: 6px; padding: 2px 7px; }
+  .metric b { color: var(--accent); font-weight: 600; }
+  .cap-card-platform { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+  .cap-platform-label { font-size: 11px; color: var(--muted); }
+  .cap-card-icons { display: flex; flex-wrap: wrap; gap: 5px 8px; border-top: 1px solid var(--border); padding-top: 8px; }
+  .cap-mini-wrap { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: var(--muted); }
+  .cap-mini-label { opacity: .7; }
+  .cap-mini { font-weight: 800; font-size: 12px; }
+  .cap-mini.yes { color: #34d399; } .cap-mini.part { color: #fbbf24; } .cap-mini.no { color: color-mix(in srgb, var(--muted) 30%, transparent); }
+  .cap-card-flag { font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 4px; }
+  .cap-card-flag.flag-ex { color: #f87171; background: rgba(239,68,68,.1); }
+  .cap-card-flag.flag-un { color: #fbbf24; background: rgba(251,191,36,.1); }
+
+  /* ── 详情页 spec 知识库区块 ── */
+  .md-spec-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+  .spec-item { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 4px;
+    background: var(--btn-bg); border-radius: 10px; padding: 10px 8px; transition: background .15s; }
+  .spec-item:hover { background: color-mix(in srgb, var(--aqua) 8%, var(--btn-bg)); }
+  .spec-icon { width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    color: var(--accent); background: color-mix(in srgb, var(--aqua) 12%, transparent); }
+  .spec-icon svg { width: 16px; height: 16px; }
+  .spec-label { font-size: 10px; color: var(--muted); }
+  .spec-val { font-size: 14px; font-weight: 700; color: var(--accent); }
+
+  /* ── 详情页"不支持的参数"区块 ── */
+  .md-unsupported-grid { display: flex; flex-wrap: wrap; gap: 6px 8px; }
+  .unsupp-pill { display: inline-flex; align-items: center; gap: 4px; background: rgba(248,113,113,.08);
+    border: 1px solid rgba(248,113,113,.25); border-radius: 6px; padding: 2px 8px; font-size: 12px; }
+  .unsupp-pill code { font-size: 11px; color: var(--muted); }
+  .unsupp-x { color: #f87171; font-weight: 700; font-size: 11px; }
+
+  /* ===== QQ 群 ===== */
+  .qq-block { display: flex; align-items: center; gap: 16px; background: var(--card);
+    border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; margin: 10px 0 40px;
+    flex-wrap: wrap; }
+
+  /* ===== 赞助商广告位（一排多卡片，可扩展） ===== */
+  .sponsors { margin: 18px 0 8px; }
+  .sponsors-title { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700;
+    letter-spacing: .5px; color: var(--muted); margin-bottom: 10px; text-transform: uppercase; }
+  .sponsors-title::before, .sponsors-title::after { content: ""; flex: 1; height: 1px;
+    background: var(--border); }
+  .sponsors-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  .sponsor-card { position: relative; display: flex; flex-direction: column; gap: 10px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px;
+    transition: all .18s; }
+  .sponsor-card:hover { border-color: var(--border-hover); }
+  .sponsor-card.locked { display: none; }
+  .sponsor-top { display: flex; align-items: center; gap: 12px; }
+  .sponsor-logo { width: 128px; height: 40px; flex: none; display: flex; align-items: center;
+    justify-content: center; border-radius: 8px; background: #fff;
+    border: 1px solid var(--border); padding: 3px 10px; }
+  .sponsor-logo img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+  .sponsor-tag { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .4px;
+    color: var(--accent); border: 1px solid var(--border); border-radius: 999px;
+    padding: 1px 8px; }
+  .sponsor-name { font-size: 14px; font-weight: 700; margin-top: 4px; line-height: 1.4; }
+  .sponsor-desc { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .sponsor-desc b { color: var(--text); }
+  .sponsor-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    margin-top: auto; }
+  a.sponsor-btn { display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--btn-bg); color: var(--accent);
+    border-radius: 8px; padding: 7px 14px; font-size: 12.5px; transition: all .15s; text-decoration: none;
+    font-weight: 600; }
+  a.sponsor-btn:hover { background: var(--btn-hover); }
+  a.sponsor-btn svg { width: 13px; height: 13px; }
+  .sponsor-lock { cursor: pointer; border: 1px solid var(--border); background: transparent;
+    color: var(--muted); border-radius: 7px; width: 28px; height: 28px; display: inline-flex;
+    align-items: center; justify-content: center; transition: all .15s; flex: none; padding: 0; }
+  .sponsor-lock:hover { color: var(--accent); border-color: var(--border-hover); background: var(--btn-bg); }
+  .sponsor-lock svg { width: 14px; height: 14px; }
+  .sponsors-restore { margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .sponsors-restore a { color: var(--accent); cursor: pointer; text-decoration: underline; }
+
+  /* ===== 友情链接（独立于广告区，小卡低调展示；经项目维护者确认后添加） ===== */
+  .friends { margin: 14px 0 8px; }
+  .friends-title { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600;
+    color: var(--muted); margin-bottom: 8px; }
+  .friends-title::before, .friends-title::after { content: ""; flex: 1; height: 1px;
+    background: var(--border); opacity: .5; }
+  .friends-row { display: flex; flex-wrap: wrap; gap: 10px; }
+  .friend-card { display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+    border: 1px solid var(--border); border-radius: 12px; background: var(--card);
+    text-decoration: none; transition: border-color .15s, transform .15s; min-width: 0; }
+  .friend-card:hover { border-color: var(--border-hover); transform: translateY(-1px); }
+  .friend-card img { width: 22px; height: 22px; border-radius: 6px; object-fit: contain; flex: none; }
+  .friend-card .f-info { min-width: 0; }
+  .friend-card .f-name { font-size: 13px; font-weight: 600; color: var(--text); line-height: 1.3;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .friend-card .f-desc { font-size: 11px; color: var(--muted); line-height: 1.4;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .qq-icon { width: 46px; height: 46px; flex: none; border-radius: 12px; display: flex; align-items: center;
+    justify-content: center; background: linear-gradient(135deg, var(--grad-1), var(--grad-2)); }
+  .qq-icon svg { width: 26px; height: 26px; color: #fff; }
+  .qq-info { flex: 1; min-width: 200px; }
+  .qq-info b { font-size: 15px; }
+  .qq-info p { font-size: 13px; color: var(--muted); }
+  .qq-info .qq-num { font-family: var(--mono); color: var(--accent); }
+  .qq-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  a.qq-join { display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--btn-bg); color: var(--accent);
+    border-radius: 8px; padding: 9px 16px; font-size: 13px; transition: all .15s; text-decoration: none;
+    font-weight: 600; }
+  a.qq-join:hover { background: var(--btn-hover); }
+  a.qq-join svg { width: 14px; height: 14px; }
+  .qq-nav { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); text-decoration: none;
+    font-size: 13px; padding: 7px 12px; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--card); transition: all .15s; }
+  .qq-nav:hover { color: var(--accent-soft); border-color: var(--border-hover); }
+  .qq-nav svg { width: 15px; height: 15px; }
+
+  /* ===== 官方自营大板块（首页） ===== */
+  .acu-block { position: relative; overflow: hidden; border-radius: 18px; margin: 8px 0 40px;
+    border: 1px solid rgba(56,189,248,.28);
+    background: linear-gradient(135deg, rgba(56,189,248,.08), rgba(255,255,255,.02) 45%, rgba(129,140,248,.05));
+    padding: 28px 30px; }
+  .acu-block::before { content:""; position:absolute; inset:0; pointer-events:none;
+    background: radial-gradient(600px 220px at 12% 0%, rgba(56,189,248,.1), transparent 60%); }
+  .acu-block > * { position: relative; }
+  .acu-badge { display:inline-flex; align-items:center; gap:8px; font-size:12px; font-weight:700; letter-spacing:.5px;
+    color:#7dd3fc; background: rgba(56,189,248,.12); border:1px solid rgba(56,189,248,.38);
+    padding:5px 12px; border-radius:999px; }
+  .acu-badge svg { width:14px; height:14px; }
+  .acu-title { font-size:24px; font-weight:800; margin:16px 0 8px; color: var(--text);
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .acu-title .acu-crown { color:#38bdf8; display:inline-flex; }
+  .acu-title .acu-crown svg { width:22px; height:22px; }
+  .acu-desc { color:var(--muted); font-size:14px; line-height:1.8; max-width:760px; }
+  .acu-feats { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px; margin:22px 0; }
+  .acu-feat { background:rgba(255,255,255,.03); border:1px solid var(--border); border-radius:12px; padding:16px; }
+  .acu-feat .feat-ic { width:38px; height:38px; border-radius:10px; display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(135deg, rgba(56,189,248,.22), rgba(129,140,248,.05)); margin-bottom:10px; }
+  .acu-feat .feat-ic svg { width:20px; height:20px; color:#38bdf8; }
+  .acu-feat b { font-size:14px; }
+  .acu-feat p { font-size:12.5px; color:var(--muted); margin-top:6px; line-height:1.6; }
+  .acu-models { display:flex; flex-wrap:wrap; gap:10px; margin-top:22px; }
+  .acu-model { display:inline-flex; align-items:center; gap:9px; background:var(--card);
+    border:1px solid rgba(56,189,248,.32); border-radius:10px; padding:9px 14px; }
+  .acu-model code { font-family:var(--mono); font-size:12.5px; color:var(--text); }
+  .acu-model .flag { font-size:10px; color:#38bdf8; border:1px solid rgba(56,189,248,.45); border-radius:5px; padding:1px 6px; }
+  .acu-model .cpy { color:var(--muted); background:transparent; border:none; cursor:pointer; padding:0;
+    display:inline-flex; }
+  .acu-model .cpy:hover { color:var(--accent); }
+  .acu-model .cpy svg { width:14px; height:14px; }
+  .acu-sponsor { display:flex; align-items:center; gap:12px; margin-top:22px; padding:14px 16px;
+    background:linear-gradient(135deg, rgba(56,189,248,.16), rgba(129,140,248,.04));
+    border:1px solid rgba(56,189,248,.35); border-radius:12px; }
+  .acu-sponsor svg { width:22px; height:22px; color:#38bdf8; flex:none; }
+  .acu-sponsor b { font-size:14px; }
+  .acu-sponsor p { font-size:12.5px; color:var(--muted); margin-top:4px; }
+  .acu-note { display:flex; align-items:flex-start; gap:12px; margin-top:16px; padding:14px 16px;
+    background:rgba(56,189,248,.07); border:1px dashed rgba(56,189,248,.4); border-radius:12px; }
+  .acu-note svg { width:20px; height:20px; color:#38bdf8; flex:none; margin-top:2px; }
+  .acu-note b { font-size:14px; color:#7dd3fc; }
+  .acu-note p { font-size:12.5px; color:var(--muted); margin-top:4px; line-height:1.7; }
+
+  /* ===== 官方自营大卡片（模型列表页，蓝色） ===== */
+  .acu-models-banner { position: relative; overflow: hidden; border-radius: 16px; margin: 16px 0 6px;
+    padding: 20px 22px; cursor: pointer; user-select: none;
+    border: 1px solid rgba(56,189,248,.3);
+    background: linear-gradient(150deg, rgba(56,189,248,.1), var(--card) 40%, rgba(129,140,248,.05));
+    transition: all .2s; }
+  .acu-models-banner::before { content:""; position:absolute; inset:0; pointer-events:none;
+    background: radial-gradient(480px 160px at 10% 0%, rgba(56,189,248,.12), transparent 60%); }
+  .acu-models-banner > * { position: relative; }
+  .acu-models-banner:hover { border-color: rgba(56,189,248,.55); transform: translateY(-2px);
+    box-shadow: 0 10px 30px rgba(56,189,248,.12); }
+  .mb-top { display:flex; align-items:center; gap:12px; }
+  .acu-models-banner .mb-ic { width:48px; height:48px; flex:none; border-radius:14px; display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(135deg, rgba(56,189,248,.3), rgba(129,140,248,.12)); }
+  .acu-models-banner .mb-ic svg { width:26px; height:26px; color:#7dd3fc; }
+  .mb-badge { font-size:11px; font-weight:700; letter-spacing:.4px; color:#7dd3fc; border:1px solid rgba(56,189,248,.4);
+    background:rgba(56,189,248,.1); padding:4px 11px; border-radius:999px; }
+  .mb-main { margin-top:14px; }
+  .mb-title { font-size:18px; font-weight:800; color:var(--text); display:flex; align-items:center; gap:8px; }
+  .mb-id { display:flex; align-items:center; gap:10px; margin-top:8px; background:var(--card);
+    border:1px solid rgba(56,189,248,.4); border-radius:10px; padding:9px 14px; width:fit-content; }
+  .mb-id code { font-family:var(--mono); font-size:13.5px; color:#7dd3fc; font-weight:700; }
+  .mb-copy-hint { font-size:10.5px; color:var(--muted); }
+  .mb-desc { font-size:13px; color:var(--muted); line-height:1.7; margin:12px 0 14px; max-width:680px; }
+  .mb-desc b { color:var(--text); }
+  .mb-meta { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 14px; }
+  .mb-meta span { font-size:11.5px; color:#7dd3fc; background:rgba(56,189,248,.08);
+    border:1px solid rgba(56,189,248,.28); border-radius:999px; padding:4px 12px; letter-spacing:.2px; }
+  .mb-foot { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;
+    border-top:1px dashed rgba(56,189,248,.3); padding-top:12px; }
+  .mb-copy-tip { font-size:12px; color:#38bdf8; display:inline-flex; align-items:center; gap:6px; }
+  .mb-copy-tip svg { width:15px; height:15px; }
+  .acu-models-banner .mb-detail { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:600; color:#7dd3fc; text-decoration:none;
+    border:1px solid rgba(56,189,248,.4); border-radius:8px; padding:6px 12px; background:rgba(56,189,248,.06); }
+  .acu-models-banner .mb-detail svg { width:14px; height:14px; }
+  .acu-models-banner .mb-detail:hover { background:rgba(56,189,248,.16); }
+
+  /* ===== Footer ===== */
+  footer { text-align: center; color: var(--muted); font-size: 13px; padding: 40px 20px 32px;
+    border-top: 1px solid var(--border); margin-top: 40px; }
+
+  /* ===== 主题切换器 ===== */
+  .theme-switch { display: flex; align-items: center; gap: 4px; background: var(--tab-bg);
+    border: 1px solid var(--border); border-radius: 10px; padding: 3px; }
+  .theme-btn { cursor: pointer; border: none; background: transparent; color: var(--muted);
+    border-radius: 7px; padding: 6px 8px; transition: all .15s; display: inline-flex; align-items: center;
+    justify-content: center; }
+  .theme-btn:hover { color: var(--accent-soft); }
+  .theme-btn.active { background: var(--tab-active-bg); color: var(--accent); }
+  .theme-btn svg { width: 16px; height: 16px; display: block; }
+  .nav-right { display: flex; align-items: center; gap: 8px; }
+
+  /* ===== 平板 (≤960px) ===== */
+  @media (max-width: 960px) {
+    .wrap { padding: 0 16px; }
+    header.home-hero { padding: 48px 16px 28px; }
+    .brand { font-size: 38px; letter-spacing: 4px; }
+    .tagline { font-size: 15px; }
+  }
+
+  /* ===== 手机 (≤720px) ===== */
+  @media (max-width: 720px) {
+    .wrap { padding: 0 14px; }
+    body { font-size: 14px; }
+
+    /* 导航栏：允许换行，避免溢出 */
+    .nav-inner { height: auto; min-height: 56px; flex-wrap: wrap; gap: 8px; padding: 8px 0; }
+    .nav-brand img.nav-logo { width: 28px; height: 28px; }
+    .nav-brand span { font-size: 17px; letter-spacing: 2px; }
+    .nav-right { gap: 6px; flex-wrap: wrap; }
+    .nav-tabs { padding: 3px; }
+    .nav-tabs a { padding: 6px 12px; font-size: 13px; gap: 5px; }
+    .nav-tabs a .ic svg { width: 14px; height: 14px; }
+    .theme-switch { padding: 2px; }
+    .theme-btn { padding: 5px 6px; }
+    .theme-btn svg { width: 14px; height: 14px; }
+
+    /* Hero */
+    header.home-hero { padding: 36px 14px 24px; }
+    .logo { gap: 10px; }
+    .logo img { width: 48px; height: 48px; border-radius: 12px !important; }
+    .brand { font-size: 32px; letter-spacing: 3px; }
+    .tagline { font-size: 14px; margin-top: 10px; }
+    .badges { gap: 8px; margin-top: 16px; }
+    .badge { font-size: 12px; padding: 5px 11px; gap: 5px; }
+    .badge .ic svg { width: 13px; height: 13px; }
+
+    /* 卡片单列 */
+    .cards { grid-template-columns: 1fr; gap: 12px; margin: 8px 0 28px; }
+    .card { padding: 16px; }
+    .card h3 { font-size: 14px; }
+    .copy-row { flex-wrap: nowrap; gap: 6px; }
+    .copy-row code { font-size: 12px; padding: 8px 10px; min-width: 0; }
+    .btn { padding: 8px 12px; font-size: 12px; flex-shrink: 0; }
+
+    /* Section */
+    section.block { margin: 28px 0; }
+    .sec-title { font-size: 18px; gap: 7px; }
+    .sec-title .ic svg { width: 18px; height: 18px; }
+    .doc-block .label { font-size: 12px; }
+    pre { font-size: 12px; padding: 12px; }
+    pre .btn { top: 8px; right: 8px; padding: 4px 8px; font-size: 11px; }
+
+    /* 模型列表 */
+    .models-page-head { padding: 24px 0 8px; }
+    .models-page-head h1 { font-size: 20px; gap: 8px; }
+    .models-page-head h1 .ic svg { width: 20px; height: 20px; }
+    .models-page-head p { font-size: 13px; }
+    .models-bar { flex-direction: column; gap: 8px; }
+    .search { min-width: 0; width: 100%; padding: 10px 12px; font-size: 14px; }
+    .count { font-size: 12px; }
+    .model-grid { grid-template-columns: 1fr; gap: 8px; }
+    .model-item { padding: 10px; gap: 6px; }
+    .model-item code { font-size: 12px; }
+    .model-item .btn { padding: 5px 10px; font-size: 11px; }
+
+    /* Footer */
+    footer { padding: 28px 14px 24px; font-size: 12px; }
+
+    /* API 文档 / 筛选 / QQ */
+    .api-page { padding: 24px 0 6px; }
+    .api-page h1 { font-size: 20px; gap: 8px; }
+    .api-page h1 .ic svg { width: 20px; height: 20px; }
+    .api-page .intro { font-size: 13px; }
+    .api-card { padding: 16px; margin: 12px 0; }
+    .api-card h2 { font-size: 15px; }
+    .api-card ul.tips { font-size: 12px; }
+    .filter-row { gap: 6px; }
+    .pill { padding: 5px 11px; font-size: 12px; }
+    .qq-block { padding: 14px 16px; gap: 12px; }
+    .qq-icon { width: 40px; height: 40px; }
+    .qq-icon svg { width: 22px; height: 22px; }
+    .acu-block { padding: 20px 18px; }
+    .acu-title { font-size: 20px; }
+    .acu-feats { grid-template-columns:1fr; gap:10px; }
+    .acu-models-banner { padding: 14px 16px; gap: 12px; }
+    .acu-models-banner .mb-ic { width: 44px; height: 44px; }
+    .acu-models-banner .mb-ic svg { width: 24px; height: 24px; }
+    .qq-info p { font-size: 12px; }
+    a.qq-join { padding: 8px 13px; font-size: 12px; }
+    .qq-nav { padding: 6px 9px; font-size: 12px; }
+  }
+
+  /* ===== 超小屏 (≤380px) ===== */
+  @media (max-width: 380px) {
+    .nav-tabs a { padding: 5px 8px; font-size: 12px; }
+    .nav-tabs a span:not(.ic) { display: none; }
+    .nav-tabs a .ic svg { width: 16px; height: 16px; }
+    .brand { font-size: 28px; }
+    .copy-row code { font-size: 11px; }
+    .model-item { flex-direction: column; align-items: stretch; }
+    .model-item .btn { align-self: flex-end; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== 顶部切换栏 ===== -->
+<nav class="topnav">
+  <div class="wrap nav-inner">
+    <a class="nav-brand" href="#/home">
+      <img src="/favicon.ico" alt="AQUA" width="34" height="34" style="border-radius:8px; display:block;" class="nav-logo">
+      <span>AQUA</span>
+    </a>
+    <div class="nav-right">
+      <a class="qq-nav" href="https://qm.qq.com/q/qoe6XbsVge" target="_blank" rel="noopener" title="加入 AQUA 开源项目交流群 1103667832">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7" r="4"/><path d="M4 21v-1a8 8 0 0 1 16 0v1"/><path d="M9 12l-2 3M15 12l2 3"/></svg>
+        <span>QQ群</span>
+      </a>
+      <div class="nav-tabs">
+        <a href="#/home" data-tab="home">
+          <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9 21v-6h6v6"/></svg></span>
+          首页
+        </a>
+        <a href="#/models" data-tab="models">
+          <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span>
+          模型列表
+        </a>
+        <a href="#/capabilities" data-tab="capabilities">
+          <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 20 7v10l-8 5-8-5V7l8-5z"/><path d="M12 12v8"/><path d="m4 7 8 5 8-5"/><path d="M12 2v8"/></svg></span>
+          模型能力
+        </a>
+        <a href="#/api" data-tab="api">
+          <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
+          API 文档
+        </a>
+      </div>
+      <div class="theme-switch" id="theme-switch">
+        <button class="theme-btn" data-theme="light" title="白天亮色">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+        </button>
+        <button class="theme-btn" data-theme="dark" title="深蓝模式">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <!-- ===== 页面一：首页（品牌 + 介绍 + 文档） ===== -->
+  <section id="page-home" class="page">
+    <header class="home-hero">
+      <div class="logo">
+        <img src="/favicon.ico" alt="AQUA" width="60" height="60" style="border-radius:14px;" class="hero-logo">
+        <span class="brand">AQUA</span>
+      </div>
+      <p class="tagline">免费 · 极速 · 免注册 —— 接入 Nvidia NIM + Gitee AI + SiliconFlow + 智谱 GLM + 讯飞星火 + 官方自营 全线模型的 OpenAI 兼容 API 代理</p>
+      <div class="badges">
+        <span class="badge"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H12L13 2z"/></svg></span>SSE 流式</span>
+        <span class="badge"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M11 12 21 2"/><path d="M15.5 7.5 18 10"/></svg></span>加群领密钥</span>
+        <span class="badge"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 4 5.6 4 9s-1.5 6.4-4 9c-2.5-2.6-4-5.6-4-9s1.5-6.4 4-9z"/></svg></span>全球边缘节点</span>
+        <span class="badge"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="12" rx="2"/><path d="M3 9h18v3H3z"/><path d="M12 9v12"/><path d="M12 9c0-3-1-6-4-6-2.2 0-3.5 1.5-3.5 3S6.3 9 12 9z"/><path d="M12 9c0-3 1-6 4-6 2.2 0 3.5 1.5 3.5 3S17.7 9 12 9z"/></svg></span>完全免费</span>
+      </div>
+    </header>
+
+    <div class="cards">
+      <div class="card">
+        <h3><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>Base URL（接口地址）</h3>
+        <div class="copy-row">
+          <code id="base-url">https://your-gateway-domain.example/v1</code>
+          <button class="btn" data-copy="base-url">复制</button>
+        </div>
+        <p class="hint">客户端只需填入该地址，系统自动拼接 /chat/completions 等路径。</p>
+      </div>
+      <div class="card">
+        <h3><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M11 12 21 2"/><path d="M15.5 7.5 18 10"/></svg></span>API Key（密钥）</h3>
+        <div class="copy-row">
+          <code>进 QQ 群查看 · 不定期更换</code>
+          <button class="btn" data-copy-text="1103667832">复制群号</button>
+        </div>
+        <p class="hint">为防止滥用，本站已启用固定密钥制：加入官方 QQ 群（<b>1103667832</b>）即可免费获取最新密钥，群公告置顶展示。密钥不定期更换，失效时请回群获取。</p>
+      </div>
+    </div>
+
+    <!-- ===== QQ 群入口 ===== -->
+    <div class="qq-block">
+      <div class="qq-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7" r="4"/><path d="M4 21v-1a8 8 0 0 1 16 0v1"/><path d="M9 12l-2 3M15 12l2 3"/></svg>
+      </div>
+      <div class="qq-info">
+        <b>AQUA 开源项目交流群</b>
+        <p>使用中遇到问题、反馈建议，或想参与开发，欢迎加入 QQ 群一起交流</p>
+        <p>群号：<span class="qq-num">1103667832</span></p>
+      </div>
+      <div class="qq-actions">
+        <a class="qq-join" href="https://qm.qq.com/q/qoe6XbsVge" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+          加入群聊
+        </a>
+        <button class="btn" data-copy-text="1103667832">复制群号</button>
+      </div>
+    </div>
+    <!-- ===== 赞助商/服务商一排（JS 渲染，可扩展可锁定） ===== -->
+    <div class="sponsors" id="sponsors">
+      <div class="sponsors-title">赞助商与服务商</div>
+      <div class="sponsors-row" id="sponsors-row"></div>
+      <div class="sponsors-restore" id="sponsors-restore" style="display:none;">
+        已隐藏部分赞助商 · <a id="sponsors-restore-link">恢复显示全部</a>
+      </div>
+    </div>
+    <!-- ===== 友情链接（非广告，独立小卡；仅项目维护者手动确认添加） ===== -->
+    <div class="friends">
+      <div class="friends-title">友情链接</div>
+      <div class="friends-row">
+        <a class="friend-card" href="https://miofog.top/" target="_blank" rel="noopener" title="miofog公益API">
+          <img src="https://miofog.top/favicon.ico" alt="miofog公益API" onerror="this.style.display='none';this.parentElement.classList.add('no-logo')">
+          <span class="f-info">
+            <span class="f-name">miofog公益API</span>
+            <span class="f-desc">免费 AI 模型平台 · 首个基于 AQUA 开源版二开</span>
+          </span>
+        </a>
+        <a class="friend-card" href="https://guliang.me/guliang-ai" target="_blank" rel="noopener" title="顾凉中转站">
+          <img src="https://guliang.me/i/u/PNThg82.png" alt="顾凉中转站" loading="lazy" onerror="this.style.display='none'">
+          <span class="f-info">
+            <span class="f-name">顾凉中转站</span>
+            <span class="f-desc">自研聚合中转 · 纯免费公益</span>
+          </span>
+        </a>
+      </div>
+    </div>
+
+    <section class="block">
+      <h2 class="sec-title"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 7-5 5 5 5"/><path d="m16 7 5 5-5 5"/><path d="m13 4-2 16"/></svg></span>快速开始</h2>
+
+      <div class="doc-block">
+        <div class="label">curl 示例</div>
+        <pre><button class="btn" data-copy-from="code-curl">复制</button><code id="code-curl"><span class="kwd">curl</span> https://your-gateway-domain.example/v1/chat/completions \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -H <span class="str">"Authorization: Bearer sk-****"</span> \
+  -d <span class="str">'{
+    "model": "zhipu/glm-4-flash",
+    "messages": [{"role": "user", "content": "你好，介绍一下自己"}],
+    "stream": true
+  }'</span></code></pre>
+      </div>
+
+      <div class="doc-block">
+        <div class="label">Python（OpenAI SDK）</div>
+        <pre><button class="btn" data-copy-from="code-py">复制</button><code id="code-py"><span class="kwd">from</span> openai <span class="kwd">import</span> OpenAI
+
+client = OpenAI(
+    base_url=<span class="str">"https://your-gateway-domain.example/v1"</span>,
+    api_key=<span class="str">"sk-****"</span>,   <span class="tok"># 密钥加 QQ 群获取（群号 1103667832）</span>
+)
+resp = client.chat.completions.create(
+    model=<span class="str">"zhipu/glm-4-flash"</span>,
+    messages=[{<span class="str">"role"</span>: <span class="str">"user"</span>, <span class="str">"content"</span>: <span class="str">"你好"</span>}],
+    stream=<span class="kwd">True</span>,
+)
+<span class="kwd">for</span> chunk <span class="kwd">in</span> resp:
+    print(chunk.choices[<span class="tok">0</span>].delta.content <span class="kwd">or</span> <span class="str">""</span>, end=<span class="str">""</span>)</code></pre>
+      </div>
+
+      <div class="doc-block">
+        <div class="label">JavaScript</div>
+        <pre><button class="btn" data-copy-from="code-js">复制</button><code id="code-js"><span class="kwd">const</span> res = <span class="kwd">await</span> fetch(<span class="str">"https://your-gateway-domain.example/v1/chat/completions"</span>, {
+  method: <span class="str">"POST"</span>,
+  headers: { <span class="str">"Content-Type"</span>: <span class="str">"application/json"</span>,
+             <span class="str">"Authorization"</span>: <span class="str">"Bearer sk-****"</span> },
+  body: JSON.stringify({
+    model: <span class="str">"zhipu/glm-4-flash"</span>,
+    messages: [{ role: <span class="str">"user"</span>, content: <span class="str">"你好"</span> }],
+    stream: <span class="kwd">true</span>,
+  }),
+});
+<span class="kwd">for await</span> (<span class="kwd">const</span> chunk <span class="kwd">of</span> res.body) {
+  console.log(<span class="kwd">new</span> TextDecoder().decode(chunk));
+}</code></pre>
+      </div>
+
+      <div class="doc-block">
+        <div class="label">兼容性</div>
+        <p class="hint">完整兼容 OpenAI 协议：Chat Completions（含 SSE 流式）、Embeddings、Images、Audio、Moderations、Rerank、模型列表均可直接用 OpenAI SDK 调用。NextChat、Cherry Studio、LobeChat、沉浸式翻译等主流客户端均开箱即用。详细端点与错误码见「API 文档」页。</p>
+      </div>
+
+      <div class="doc-block">
+        <div class="label">可用模型</div>
+        <p class="hint">点击顶部「模型列表」查看全部模型名称并一键复制模型 ID；模型由 Nvidia NIM、Gitee AI、SiliconFlow、智谱 GLM 与讯飞星火实时提供。</p>
+      </div>
+    </section>
+  </section>
+
+  <!-- ===== 页面二：模型列表 ===== -->
+  <section id="page-models" class="page">
+    <div class="models-page-head">
+      <h1><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span>模型列表</h1>
+      <p>以下模型由 Nvidia NIM、Gitee AI、SiliconFlow、智谱 GLM、讯飞星火与官方自营平台提供，点击「复制」即可获取模型 ID，填入客户端使用。</p>
+    </div>
+    <div class="acu-models-banner" data-copy-text="acu/deepseek-v4-flash" title="点击复制模型 ID">
+      <div class="mb-top">
+        <div class="mb-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.9 6.26 6.86.63-5.2 4.55 1.56 6.71L12 16.9 5.88 20.15l1.56-6.71-5.2-4.55 6.86-.63z"/></svg></div>
+        <span class="mb-badge">官方自营 · 社区共同赞助</span>
+      </div>
+      <div class="mb-main">
+        <b class="mb-title">官方自营旗舰 · DeepSeek V4 Flash</b>
+        <div class="mb-id"><code>acu/deepseek-v4-flash</code><span class="mb-copy-hint">点击复制</span></div>
+      </div>
+      <p class="mb-desc">由 AQUA 全体用户与热心伙伴共同出资、<b>官方团队亲自运营</b> 的自营通道，不走第三方中转，长期稳定、完全免费。</p>
+      <div class="mb-meta">
+        <span>全局共用并发 10</span>
+        <span>用量不限制</span>
+        <span>并发满自动排队 · 先到先得</span>
+      </div>
+      <div class="mb-foot">
+        <span class="mb-copy-tip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>点击卡片任意处复制模型 ID</span>
+        <a class="mb-detail" href="#/model/acu%2Fdeepseek-v4-flash" onclick="event.stopPropagation()">能力详情<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></a>
+      </div>
+    </div>
+    <div class="filter-row">
+      <span class="flabel">平台</span>
+      <div class="filters" id="platform-filter">
+        <button class="pill active" data-platform="all">全部</button>
+        <button class="pill" data-platform="nvidia">Nvidia NIM</button>
+        <button class="pill" data-platform="gitee">Gitee AI</button>
+        <button class="pill" data-platform="siliconflow">SiliconFlow</button>
+        <button class="pill" data-platform="workers-ai">Workers AI</button>
+        <button class="pill" data-platform="zhipu">智谱 GLM</button>
+        <button class="pill" data-platform="spark">讯飞星火</button>
+        <button class="pill" data-platform="acu">官方自营</button>
+      </div>
+    </div>
+    <div class="filter-row">
+      <span class="flabel">数组</span>
+      <div class="filters" id="type-filter">
+        <button class="pill active" data-type="all">全部</button>
+        <button class="pill" data-type="chat">对话</button>
+        <button class="pill" data-type="embedding">向量</button>
+        <button class="pill" data-type="rerank">重排</button>
+        <button class="pill" data-type="asr">语音识别</button>
+        <button class="pill" data-type="tts">语音合成</button>
+        <button class="pill" data-type="moderation">风控</button>
+        <button class="pill" data-type="vision">视觉</button>
+      </div>
+    </div>
+    <div class="models-bar">
+      <input class="search" id="model-search" type="text" placeholder="搜索模型名称，如 llama / deepseek / gemma ...">
+      <span class="count" id="model-count"></span>
+    </div>
+    <div class="model-notice" id="model-notice" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
+      <span class="nt-msg"></span>
+    </div>
+    <div class="model-grid" id="model-grid">
+      <div class="model-empty">模型加载中…</div>
+    </div>
+    <p class="hint" style="margin-top:10px;">点击任意模型 ID 可查看该模型的详细能力说明与支持参数。</p>
+  </section>
+
+  <!-- ===== 页面三：模型详情 ===== -->
+  <section id="page-model" class="page">
+    <div class="model-detail" id="model-detail">
+      <div class="model-empty">模型加载中…</div>
+    </div>
+  </section>
+
+  <!-- ===== 页面四：模型能力总览 ===== -->
+  <section id="page-capabilities" class="page">
+    <div class="cap-page">
+      <div class="cap-head">
+        <h1><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 20 7v10l-8 5-8-5V7l8-5z"/><path d="M12 12v8"/><path d="m4 7 8 5 8-5"/><path d="M12 2v8"/></svg></span>模型能力总览</h1>
+        <p>浏览所有模型的「能力卡片」——上下文 / 参数量 / 平台 / 类型一目了然。点击任意卡片可进入该模型专属详情页（含上下文知识库、支持与不支持参数、使用示例等）。</p>
+      </div>
+      <div class="cap-stats" id="cap-stats"></div>
+      <div class="filter-row">
+        <span class="flabel">筛选</span>
+        <div class="filters" id="cap-filter">
+          <button class="pill active" data-cap="all">全部</button>
+          <button class="pill" data-cap="chat">对话</button>
+          <button class="pill" data-cap="vision">视觉</button>
+          <button class="pill" data-cap="embedding">向量</button>
+          <button class="pill" data-cap="rerank">重排</button>
+          <button class="pill" data-cap="asr">语音识别</button>
+          <button class="pill" data-cap="tts">语音合成</button>
+          <button class="pill" data-cap="moderation">风控</button>
+          <button class="pill" data-cap="image">绘图</button>
+          <button class="pill" data-cap="video">视频</button>
+          <button class="pill" data-cap="ip">IP</button>
+        </div>
+      </div>
+      <div class="models-bar">
+        <input class="search" id="cap-search" type="text" placeholder="在能力总览中搜索模型…">
+        <span class="count" id="cap-count"></span>
+      </div>
+      <div class="cap-cards" id="cap-cards">
+        <div class="model-empty">模型加载中…</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 页面五：API 文档 ===== -->
+  <section id="page-api" class="page">
+    <div class="api-page">
+      <h1><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>API 文档</h1>
+      <p class="intro">AQUA 网关完整兼容 OpenAI 协议，所有端点均可直接用 OpenAI SDK 调用。统一入口见「首页」，以下为各端点的详细说明、调用示例与错误码。API Key 加 QQ 群（1103667832）获取，模型列表请以「模型列表」页为准（实时同步）。</p>
+
+      <div class="api-card api-anchor">
+        <h2><span class="api-method">GET</span><span class="api-endpoint">/v1/models</span></h2>
+        <p class="desc">获取可用模型列表。返回 Nvidia NIM、Gitee AI、SiliconFlow、智谱 GLM、讯飞星火、官方自营与 Workers AI 的全部模型。</p>
+        <h3>响应结构</h3>
+        <pre><button class="btn" data-copy-from="code-api-models-resp">复制</button><code id="code-api-models-resp">{<span class="str">"object"</span>: <span class="str">"list"</span>,
+  <span class="str">"data"</span>: [{
+    <span class="str">"id"</span>: <span class="str">"zhipu/glm-4-flash"</span>,
+    <span class="str">"object"</span>: <span class="str">"model"</span>,
+    <span class="str">"owned_by"</span>: <span class="str">"zhipu"</span>
+  }]}</code></pre>
+        <h3>curl</h3>
+        <pre><button class="btn" data-copy-from="code-api-models-curl">复制</button><code id="code-api-models-curl"><span class="kwd">curl</span> https://your-gateway-domain.example/v1/models
+  -H <span class="str">"Authorization: Bearer sk-****"</span></code></pre>
+      </div>
+
+      <div class="api-card api-anchor">
+        <h2><span class="api-method">POST</span><span class="api-endpoint">/v1/chat/completions</span></h2>
+        <p class="desc">对话补全，支持流式（SSE）。根据填入的模型 ID 自动路由到对应上游。</p>
+        <h3>请求体</h3>
+        <pre><button class="btn" data-copy-from="code-api-chat-body">复制</button><code id="code-api-chat-body">{<span class="str">"model"</span>: <span class="str">"zhipu/glm-4-flash"</span>,
+  <span class="str">"messages"</span>: [
+    {<span class="str">"role"</span>: <span class="str">"system"</span>, <span class="str">"content"</span>: <span class="str">"你是 AQUA 助手"</span>},
+    {<span class="str">"role"</span>: <span class="str">"user"</span>, <span class="str">"content"</span>: <span class="str">"你好"</span>}
+  ],
+  <span class="str">"temperature"</span>: <span class="tok">0.7</span>,
+  <span class="str">"stream"</span>: <span class="kwd">true</span>  <span class="tok">// 可选，流式返回</span>
+}</code></pre>
+        <h3>python</h3>
+        <pre><button class="btn" data-copy-from="code-api-chat-py">复制</button><code id="code-api-chat-py"><span class="kwd">from</span> openai <span class="kwd">import</span> OpenAI
+client = OpenAI(api_key=<span class="str">"sk-****"</span>, base_url=<span class="str">"https://your-gateway-domain.example/v1"</span>)
+r = client.chat.completions.create(
+  model=<span class="str">"zhipu/glm-4-flash"</span>,
+  messages=[{<span class="str">"role"</span>: <span class="str">"user"</span>, <span class="str">"content"</span>: <span class="str">"你好"</span>}])
+print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
+      </div>
+
+      <div class="api-card api-anchor">
+        <h2><span class="api-method">POST</span><span class="api-endpoint">/v1/embeddings</span></h2>
+        <p class="desc">向量化。向量模型（如 BAAI/bge-m3）由 Gitee AI / SiliconFlow 提供。</p>
+        <pre><button class="btn" data-copy-from="code-api-emb">复制</button><code id="code-api-emb"><span class="kwd">curl</span> https://your-gateway-domain.example/v1/embeddings \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d <span class="str">'{"model": "BAAI/bge-m3", "input": "AQUA 网关"}'</span></code></pre>
+      </div>
+
+      <div class="api-card api-anchor">
+        <h2><span class="api-method">POST</span><span class="api-endpoint">/v1/rerank</span></h2>
+        <p class="desc">重排。用于 RAG 检索结果排序，支持 bge-reranker-v2-m3 等重排模型。</p>
+        <pre><button class="btn" data-copy-from="code-api-rerank">复制</button><code id="code-api-rerank"><span class="kwd">curl</span> https://your-gateway-domain.example/v1/rerank \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d <span class="str">'{"model": "bge-reranker-v2-m3", "query": "你好", "documents": ["A", "B"]}'</span></code></pre>
+      </div>
+
+      <div class="api-card api-anchor">
+        <h2><span class="api-method">POST</span><span class="api-endpoint">/v1/audio/transcriptions</span></h2>
+        <p class="desc">语音识别（ASR）。使用 multipart/form-data 上传音频文件，内容类型透传；支持 GLM-ASR、SenseVoiceSmall 等。</p>
+        <pre><button class="btn" data-copy-from="code-api-asr">复制</button><code id="code-api-asr"><span class="kwd">curl</span> https://your-gateway-domain.example/v1/audio/transcriptions \
+  -F <span class="str">"file=@audio.wav"</span> \
+  -F <span class="str">"model=GLM-ASR"</span></code></pre>
+      </div>
+
+      <div class="api-card api-anchor">
+        <h2><span class="api-method">POST</span><span class="api-endpoint">/v1/audio/speech</span></h2>
+        <p class="desc">语音合成（TTS）。部分 TTS 模型的文本合成能力取决于上游平台；可携带 prompt_audio / prompt_audio_url 参考音频（语音克隆类模型）。</p>
+        <pre><button class="btn" data-copy-from="code-api-tts">复制</button><code id="code-api-tts"><span class="kwd">curl</span> https://your-gateway-domain.example/v1/audio/speech \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d <span class="str">'{"model": "Spark-TTS-0.5B", "input": "你好，欢迎使用 AQUA"}'</span></code></pre>
+      </div>
+
+      <div class="api-card api-anchor">
+        <h2><span class="api-method">POST</span><span class="api-endpoint">/v1/moderations</span></h2>
+        <p class="desc">内容安全检测。支持 Qwen3Guard-Gen-0.6B、nonescape-v0、nsfw-classifier 等风控模型。</p>
+        <pre><button class="btn" data-copy-from="code-api-mod">复制</button><code id="code-api-mod"><span class="kwd">curl</span> https://your-gateway-domain.example/v1/moderations \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d <span class="str">'{"model": "Qwen3Guard-Gen-0.6B", "input": "待检测文本"}'</span></code></pre>
+      </div>
+
+      <div class="api-card api-anchor">
+        <h2><span class="api-method">POST</span><span class="api-endpoint">/v1/images/generations</span></h2>
+        <p class="desc">文生图。由智谱 CogView 系列免费提供，模型 ID 以 <code>zhipu/cogview-</code> 开头（如 <code>zhipu/cogview-3-flash</code>）。</p>
+        <pre><button class="btn" data-copy-from="code-api-img">复制</button><code id="code-api-img"><span class="kwd">curl</span> https://your-gateway-domain.example/v1/images/generations \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d <span class="str">'{"model": "zhipu/cogview-3-flash", "prompt": "一只坐在沙发上的橘猫", "size": "1024x1024"}'</span></code></pre>
+      </div>
+
+      <div class="api-card api-anchor">
+        <h2><span class="api-method">POST</span><span class="api-endpoint">/v1/videos/generations</span></h2>
+        <p class="desc">文生视频。由智谱 CogVideoX 免费提供（如 <code>zhipu/cogvideox-flash</code>）。视频生成耗时较长，客户端超时建议设置 5 分钟以上。</p>
+        <pre><button class="btn" data-copy-from="code-api-vid">复制</button><code id="code-api-vid"><span class="kwd">curl</span> https://your-gateway-domain.example/v1/videos/generations \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d <span class="str">'{"model": "zhipu/cogvideox-flash", "prompt": "一只小狗在草地上奔跑"}'</span></code></pre>
+      </div>
+
+      <div class="api-card api-anchor">
+        <h2><span class="api-method">POST</span><span class="api-endpoint">/v1/ip_location</span></h2>
+        <p class="desc">IP 归属地查询。模型 ID 为 <code>ip-location</code>，由 Gitee AI 提供。</p>
+        <pre><button class="btn" data-copy-from="code-api-ip">复制</button><code id="code-api-ip"><span class="kwd">curl</span> https://your-gateway-domain.example/v1/ip_location \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d <span class="str">'{"model": "ip-location", "ip": "8.8.8.8"}'</span></code></pre>
+      </div>
+
+      <div class="api-card api-anchor">
+        <h2><span class="api-method">GET</span><span class="api-endpoint">/assets/{key}</span></h2>
+        <p class="desc">R2 媒体缓存访问。生成类接口（图片/音频/视频）产出的文件会写入缓存，可通过该路径直接访问，路径形如 <code>/assets/&#123;key&#125;</code>。</p>
+        <pre><button class="btn" data-copy-from="code-api-asset">复制</button><code id="code-api-asset"><span class="kwd">curl</span> https://your-gateway-domain.example/assets/2026/08/abc123.png \
+  -H <span class="str">"Authorization: Bearer sk-****"</span></code></pre>
+      </div>
+
+      <div class="api-card api-anchor">
+        <h2>特殊模型说明</h2>
+        <ul class="tips">
+          <li><b>Auto 路由</b>：填入 <code>auto</code> 或 <code>acu/auto</code>，网关自动从 Nvidia 候选池随机命中一个主流模型。</li>
+          <li><b>Workers AI</b>：模型 ID 为 <code>workers-ai/&#123;alias&#125;</code>（如 <code>workers-ai/llama-3.1-8b</code>），每日有免费额度，超出自动返回 429。</li>
+          <li><b>智谱 GLM</b>：模型 ID 为 <code>zhipu/&#123;model&#125;</code>（如 <code>zhipu/glm-4-flash</code>），含 CogView 绘图 / CogVideo 视频，同样免费。</li>
+          <li><b>讯飞星火</b>：模型 ID 为 <code>spark/&#123;model&#125;</code>（如 <code>spark/spark-lite</code>），由科大讯飞免费提供。</li>
+          <li><b>官方自营</b>：模型 ID 为 <code>acu/&#123;model&#125;</code>（如 <code>acu/deepseek-v4-flash</code>），由 AQUA 官方自营旗舰通道提供，长期服务、稳定可靠。</li>
+          <li><b>自营排队</b>：上游并发有限（全局 10 并发），高峰期会自动排队等待（先到先得，最长约 15 秒）；排队超时会返回 429 提示，请稍后重试，不要重复提交。</li>
+          <li><b>非标准端点</b>：embedding / rerank / asr / tts 等特殊模型已适配为标准 OpenAI SDK 端点，可直接用官方 SDK 调用。</li>
+          <li><b>Key 加群获取</b>：为防止滥用，已启用固定密钥制，密钥加入 QQ 群（1103667832）查看群公告获取，不定期更换。</li>
+        </ul>
+      </div>
+
+      <div class="api-card api-anchor">
+        <h2>错误与状态码</h2>
+        <p class="desc">所有错误响应均采用 OpenAI 兼容的错误结构（HTTP 状态码 + JSON 错误体），客户端可直接按 OpenAI 官方错误格式解析：</p>
+        <pre><button class="btn" data-copy-from="code-api-err">复制</button><code id="code-api-err">{<span class="str">"error"</span>: {
+  <span class="str">"message"</span>: <span class="str">"上游限流，请稍后重试"</span>,
+  <span class="str">"type"</span>: <span class="str">"api_error"</span>,
+  <span class="str">"code"</span>: <span class="tok">429</span>
+}}</code></pre>
+        <h3>HTTP 状态码</h3>
+        <div class="md-table-wrap"><table class="md-table">
+          <thead><tr><th>状态码</th><th>含义</th><th>常见原因与处理</th></tr></thead>
+          <tbody>
+            <tr><td><code>200</code></td><td>成功</td><td>正常返回；流式请求返回 SSE 数据流（<code>Content-Type: text/event-stream</code>）</td></tr>
+            <tr><td><code>400</code></td><td>请求参数错误</td><td>请求体不是合法 JSON、缺少 <code>model</code> 字段或参数非法。检查请求体后重试</td></tr>
+            <tr><td><code>401</code></td><td>密钥无效 / 未提供</td><td>本站启用固定密钥制：密钥需加 QQ 群（1103667832）获取，不定期更换；密钥失效时返回 401 并提示加群，请回群获取最新密钥</td></tr>
+            <tr><td><code>404</code></td><td>接口或模型不存在</td><td>请求了不存在的端点，或模型 ID 拼写错误 / 不在模型列表中</td></tr>
+            <tr><td><code>429</code></td><td>限流 / 额度耗尽</td><td>Workers AI 日额度用尽、上游限流、或官方自营通道排队超时。稍后重试即可</td></tr>
+            <tr><td><code>500</code></td><td>服务器内部错误</td><td>网关内部异常。可稍后重试；若持续出现请到交流群反馈</td></tr>
+            <tr><td><code>502</code></td><td>上游不可达</td><td>上游网关超时 / 密钥池不可用 / 上游返回 5xx。稍后重试</td></tr>
+            <tr><td><code>503</code></td><td>服务暂不可用</td><td>Nvidia 密钥池全部繁忙（<code>all keys busy</code>）。稍后重试</td></tr>
+          </tbody>
+        </table></div>
+        <h3>模型状态字段（<code>/v1/models</code> 返回）</h3>
+        <div class="md-table-wrap"><table class="md-table">
+          <thead><tr><th>status</th><th>含义</th><th>处理建议</th></tr></thead>
+          <tbody>
+            <tr><td>（无）</td><td>正常可用</td><td>直接调用</td></tr>
+            <tr><td><code>exhausted</code></td><td>Workers AI 今日免费额度已用尽</td><td>等待每天 00:00 UTC 自动重置，或切换其他平台模型</td></tr>
+            <tr><td><code>unavailable</code></td><td>模型在上游被封锁（3+ 密钥无访问权限）</td><td>约 10 分钟后自动恢复，期间可先切换其他模型</td></tr>
+          </tbody>
+        </table></div>
+        <h3>健康评分（<code>health.score</code>）</h3>
+        <p class="desc">每个模型附带近 100 次调用的健康评分（0-100，由成功率 / 延迟 / 稳定性加权计算）。<code>90+</code> 优秀、<code>70-89</code> 良好、<code>50-69</code> 一般、<code>&lt;50</code> 较差，可作为选择稳定模型的参考。</p>
+      </div>
+    </div>
+  </section>
+</div>
+
+<footer>
+  <p>AQUA · 数据由 Nvidia NIM、Gitee AI、SiliconFlow、智谱 GLM、讯飞星火、官方自营与 Workers AI 提供 · 仅用于技术学习与交流</p>
+  <p style="margin-top:8px;">交流群：<a href="https://qm.qq.com/q/qoe6XbsVge" target="_blank" rel="noopener" style="color:var(--accent);">AQUA 开源项目交流群</a>（群号 1103667832）</p>
+</footer>
+
+<script>
+// 主题切换（提前执行，避免闪烁）
+(function () {
+  var saved = localStorage.getItem("aqua-theme");
+  if (saved === "midnight") saved = "dark";
+  if (saved !== "light" && saved !== "dark") saved = "light";
+  document.documentElement.setAttribute("data-theme", saved);
+  localStorage.setItem("aqua-theme", saved);
+})();
+
+/* ===== 赞助商 / 服务商（一排多卡片，可扩展、可锁定隐藏） ===== */
+(function () {
+  var HIDE_KEY = "aqua-hidden-sponsors";
+  // 赞助商数据：新增赞助商只需在此数组追加一条（id 需唯一）
+  var SPONSORS = [
+    {
+      id: "anyi",
+      tag: "赞助商",
+      name: "安逸云 · 新一代云服务提供商",
+      desc: "香港/美国/日本等全球机房，CN2 回国优化线路，9.9 元起云服务器，<b>超低价特惠机型低至 1 元/月</b>、免备案公益主机可选，高防线路齐备。选购低价精品服务器，同时也在支持 AQUA 的发展。",
+      logo: "data:image/png;base64,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",
+      url: "https://idc.61nb.cn/aff/PRISUTPY"    },
+    {
+      id: "tokenlinks",
+      tag: "服务商",
+      name: "TokenLinks · 专业级 AI API 网关",
+      desc: "国内正规厂商运营，提供<b>稳定高速的官方中转接口</b>，API 价格享受专属折扣；主流旗舰模型全部<b>高缓存、计费极低</b>，一站接入 GLM/Kimi/Doubao/DeepSeek 等。注册即用，支持多种支付方式。",
+      logo: "data:image/png;base64,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",
+      url: "https://www.tokenlinks.cn/sign-up?aff=o4JN"
+    }
+  ];
+  function getHidden() {
+    try { return JSON.parse(localStorage.getItem(HIDE_KEY) || "[]"); } catch (e) { return []; }
+  }
+  function setHidden(arr) {
+    localStorage.setItem(HIDE_KEY, JSON.stringify(arr));
+  }
+  function renderSponsors() {
+    var row = document.getElementById("sponsors-row");
+    var restore = document.getElementById("sponsors-restore");
+    if (!row || !SPONSORS.length) return;
+    var hidden = getHidden();
+    var shown = 0;
+    row.innerHTML = "";
+    SPONSORS.forEach(function (s) {
+      if (hidden.indexOf(s.id) !== -1) return;
+      shown++;
+      var card = document.createElement("div");
+      card.className = "sponsor-card";
+      card.setAttribute("data-id", s.id);
+      card.innerHTML =
+        '<div class="sponsor-top">' +
+          '<div class="sponsor-logo"><img src="' + s.logo + '" alt="' + s.name.replace(/<[^>]+>/g, "") + '"></div>' +
+          '<span class="sponsor-tag">' + s.tag + '</span>' +
+        '</div>' +
+        '<div class="sponsor-name">' + s.name + '</div>' +
+        '<div class="sponsor-desc">' + s.desc + '</div>' +
+        '<div class="sponsor-actions">' +
+          '<a class="sponsor-btn" href="' + s.url + '" target="_blank" rel="noopener">' +
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>前往选购' +
+          '</a>' +
+          '<button class="sponsor-lock" title="锁定隐藏此赞助商">' +
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>' +
+          '</button>' +
+        '</div>';
+      row.appendChild(card);
+    });
+    // 恢复入口
+    if (hidden.length) {
+      restore.style.display = "";
+      document.getElementById("sponsors-restore-link").textContent =
+        "恢复显示全部（" + hidden.length + "）";
+    } else {
+      restore.style.display = "none";
+    }
+  }
+  // 点击锁定按钮：隐藏该卡并记住
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest(".sponsor-lock");
+    if (!btn) return;
+    var card = btn.closest(".sponsor-card");
+    if (!card) return;
+    var id = card.getAttribute("data-id");
+    var hidden = getHidden();
+    if (hidden.indexOf(id) === -1) hidden.push(id);
+    setHidden(hidden);
+    card.classList.add("locked");
+    renderSponsors();
+  });
+  // 恢复全部
+  document.addEventListener("click", function (e) {
+    if (e.target.id !== "sponsors-restore-link") return;
+    setHidden([]);
+    renderSponsors();
+  });
+  renderSponsors();
+})();
+
+
+(function () {
+  var GATEWAY = "https://your-gateway-domain.example/v1";
+
+  /* ---- 主题切换 ---- */
+  function setTheme(t) {
+    document.documentElement.setAttribute("data-theme", t);
+    localStorage.setItem("aqua-theme", t);
+    document.querySelectorAll(".theme-btn").forEach(function (b) {
+      b.classList.toggle("active", b.getAttribute("data-theme") === t);
+    });
+  }
+  document.addEventListener("click", function (e) {
+    var t = e.target.closest(".theme-btn");
+    if (t) { setTheme(t.getAttribute("data-theme")); }
+  });
+  // 初始化高亮
+  var cur = localStorage.getItem("aqua-theme");
+  if (cur === "midnight") cur = "dark";
+  if (cur !== "light" && cur !== "dark") cur = "light";
+  setTheme(cur);
+  var CHECK_ICON = '<span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>已复制';
+  var fallbackModels = [
+    // ── 国产大模型（DeepSeek / Qwen / 智谱 / 百川 / 零一） ──
+    "deepseek-ai/deepseek-r1",
+    "deepseek-ai/deepseek-r1-distill-qwen-32b",
+    "deepseek-ai/deepseek-r1-distill-qwen-14b",
+    "deepseek-ai/deepseek-r1-distill-qwen-7b",
+    "deepseek-ai/deepseek-r1-distill-llama-8b",
+    "deepseek-ai/deepseek-coder-6.7b-instruct",
+    "qwen/qwq-32b",
+    "qwen/qwen2.5-coder-32b-instruct",
+    "qwen/qwen2.5-coder-7b-instruct",
+    "qwen/qwen2.5-7b-instruct",
+    "qwen/qwen2-7b-instruct",
+    "thudm/chatglm3-6b",
+    "baichuan-inc/baichuan2-13b-chat",
+    "01-ai/yi-large",
+    // ── Nvidia 旗舰 & 大参数 Nemotron ──
+    "nvidia/llama-3.1-nemotron-ultra-253b-v1",
+    "nvidia/nemotron-4-340b-instruct",
+    "nvidia/llama-3.3-nemotron-super-49b-v1",
+    "nvidia/llama-3.1-nemotron-70b-instruct",
+    "nvidia/llama-3.1-nemotron-nano-8b-v1",
+    "nvidia/nemotron-mini-4b-instruct",
+    // ── Meta Llama 旗舰（2026-08 实测可用的在线版本；旧 405B/3.3-70B 已下线）──
+    "moonshotai/kimi-k3",
+    "nvidia/nemotron-3-super-120b-a12b",
+    "nvidia/nemotron-3-ultra-550b-a55b",
+    "deepseek-ai/deepseek-v4-pro-0813",
+    "minimaxai/minimax-m3",
+    "meta/llama-3.2-90b-vision-instruct",
+    "meta/llama-3.2-11b-vision-instruct",
+    "meta/llama-3.2-3b-instruct",
+    "meta/llama-3.2-1b-instruct",
+    "meta/llama3-70b-instruct",
+    "meta/llama3-8b-instruct",
+    "meta/llama2-70b",
+    "meta/codellama-70b",
+    // ── Mistral 旗舰 ──
+    "mistralai/mistral-large-2-instruct",
+    "mistralai/mistral-medium-3-instruct",
+    "mistralai/mistral-small-3.1-24b-instruct-2503",
+    "mistralai/mistral-small-24b-instruct",
+    "mistralai/mixtral-8x22b-instruct-v0.1",
+    "mistralai/mixtral-8x7b-instruct-v0.1",
+    "mistralai/mistral-7b-instruct-v0.3",
+    "mistralai/codestral-22b-instruct-v0.1",
+    "mistralai/mamba-codestral-7b-v0.1",
+    "mistralai/mathstral-7b-v0.1",
+    "nv-mistralai/mistral-nemo-12b-instruct",
+    // ── Google Gemma ──
+    "google/gemma-3-27b-it",
+    "google/gemma-3-12b-it",
+    "google/gemma-3-4b-it",
+    "google/gemma-3-1b-it",
+    "google/gemma-2-27b-it",
+    "google/gemma-2-9b-it",
+    "google/gemma-2-2b-it",
+    "google/codegemma-1.1-7b",
+    "google/codegemma-7b",
+    "google/shieldgemma-9b",
+    // ── Microsoft Phi ──
+    "microsoft/phi-4-multimodal-instruct",
+    "microsoft/phi-4-mini-instruct",
+    "microsoft/phi-3.5-moe-instruct",
+    "microsoft/phi-3.5-mini-instruct",
+    "microsoft/phi-3.5-vision-instruct",
+    "microsoft/phi-3-medium-128k-instruct",
+    "microsoft/phi-3-medium-4k-instruct",
+    "microsoft/phi-3-small-128k-instruct",
+    "microsoft/phi-3-small-8k-instruct",
+    "microsoft/phi-3-mini-128k-instruct",
+    "microsoft/phi-3-mini-4k-instruct",
+    "microsoft/phi-3-vision-128k-instruct",
+    // ── 其他国际模型 ──
+    "ai21labs/jamba-1.5-large-instruct",
+    "ai21labs/jamba-1.5-mini-instruct",
+    "databricks/dbrx-instruct",
+    "igenius/colosseum_355b_instruct_16k",
+    "igenius/italia_10b_instruct_16k",
+    "writer/palmyra-creative-122b",
+    "writer/palmyra-fin-70b-32k",
+    "writer/palmyra-med-70b",
+    "writer/palmyra-med-70b-32k",
+    "ibm/granite-34b-code-instruct",
+    "ibm/granite-3.0-8b-instruct",
+    "ibm/granite-3.0-3b-a800m-instruct",
+    "ibm/granite-8b-code-instruct",
+    "ibm/granite-guardian-3.0-8b",
+    "bigcode/starcoder2-15b",
+    "bigcode/starcoder2-7b",
+    "microsoft/kosmos-2",
+    "google/deplot",
+    "google/paligemma",
+    "adept/fuyu-8b",
+    "nvidia/neva-22b",
+    "nvidia/vila",
+    "nvidia/nvclip",
+    "abacusai/dracarys-llama-3.1-70b-instruct",
+    "institute-of-science-tokyo/llama-3.1-swallow-70b-instruct-v0.1",
+    "institute-of-science-tokyo/llama-3.1-swallow-8b-instruct-v0.1",
+    "tokyotech-llm/llama-3-swallow-70b-instruct-v0.1",
+    "mediatek/breeze-7b-instruct",
+    "aisingapore/sea-lion-7b-instruct",
+    "upstage/solar-10.7b-instruct",
+    "rakuten/rakutenai-7b-chat",
+    "rakuten/rakutenai-7b-instruct",
+    "tiiuae/falcon3-7b-instruct",
+    "yentinglin/llama-3-taiwan-70b-instruct",
+    "zyphra/zamba2-7b-instruct",
+    // ── Nvidia 安全 / 嵌入 / 检索 ──
+    "nvidia/llama-3.1-nemoguard-8b-content-safety",
+    "nvidia/llama-3.1-nemoguard-8b-topic-control",
+    "nvidia/llama-3.1-nemotron-70b-reward",
+    "nvidia/nemotron-4-340b-reward",
+    "nvidia/nemotron-4-mini-hindi-4b-instruct",
+    "nvidia/llama3-chatqa-1.5-70b",
+    "nvidia/llama3-chatqa-1.5-8b",
+    "nvidia/mistral-nemo-minitron-8b-8k-instruct",
+    "nvidia/usdcode-llama-3.1-70b-instruct",
+    "nvidia/nemoretriever-parse",
+    "nvidia/embed-qa-4",
+    "nvidia/nv-embed-v1",
+    "nvidia/nv-embedcode-7b-v1",
+    "nvidia/nv-embedqa-e5-v5",
+    "nvidia/nv-embedqa-mistral-7b-v2",
+    "nvidia/llama-3.2-nv-embedqa-1b-v1",
+    "nvidia/llama-3.2-nv-embedqa-1b-v2",
+    "baai/bge-m3",
+    "snowflake/arctic-embed-l",
+    // ── Gitee AI（模力方舟） ──
+    "HuatuoGPT-o1-7B", "Lingshu-32B", "DeepSeek-Prover-V2-7B", "HealthGPT-L14",
+    "GLM-4-9B-0414", "glm-4-9b-chat", "Qwen3-0.6B", "Qwen3-4B", "Qwen3-8B",
+    "Qwen2-7B-Instruct", "internlm3-8b-instruct",
+    "DeepSeek-R1-Distill-Qwen-1.5B", "DeepSeek-R1-Distill-Qwen-7B", "DeepSeek-R1-Distill-Qwen-14B",
+    "GLM-ASR", "SenseVoiceSmall", "Spark-TTS-0.5B",
+    "Qwen3-Embedding-4B", "Qwen3-Reranker-0.6B", "Qwen3-Reranker-4B",
+    "bge-reranker-v2-m3", "bce-reranker-base_v1",
+    "Qwen3Guard-Gen-0.6B", "nonescape-v0", "Security-semantic-filtering", "nsfw-classifier",
+    "ip-location",
+    // ── SiliconFlow（硅基流动） ──
+    "BAAI/bge-large-en-v1.5", "BAAI/bge-large-zh-v1.5", "BAAI/bge-m3", "BAAI/bge-reranker-v2-m3",
+    "FunAudioLLM/SenseVoiceSmall", "PaddlePaddle/PaddleOCR-VL-1.5", "Qwen/Qwen3-ASR-1.7B",
+    "TeleAI/TeleSpeechASR", "tencent/Hunyuan-MT-7B", "THUDM/GLM-4-9B-0414", "THUDM/GLM-Z1-9B-0414",
+    // ── Workers AI（Cloudflare 免费额度） ──
+    "workers-ai/llama-3.2-1b", "workers-ai/llama-3.2-3b", "workers-ai/llama-3.1-8b", "workers-ai/llama-3.3-70b",
+    "workers-ai/mistral-7b", "workers-ai/qwen1.5-7b", "workers-ai/deepseek-r1-32b", "workers-ai/qwen2.5-coder-32b",
+    "workers-ai/qwq-32b", "workers-ai/gemma-3-12b", "workers-ai/mistral-small-24b",
+    // ── 智谱 GLM（免费，含 CogView 绘图 / CogVideo 视频） ──
+    "zhipu/glm-4.7-flash", "zhipu/glm-4-flash-250414", "zhipu/glm-z1-flash", "zhipu/glm-4-flash",
+    "zhipu/glm-4.6v-flash", "zhipu/glm-4v-flash", "zhipu/glm-4.1v-thinking-flash",
+    "zhipu/cogview-3-flash", "zhipu/cogvideox-flash",
+    // ── 讯飞星火（Spark，免费） ──
+    "spark/spark-lite",
+    // ── 官方自营（DeepSeek V4 Flash，AQUA 自营旗舰） ──
+    "acu/deepseek-v4-flash"
+  ];
+  var models = [];        // 模型 ID 数组（已排序）
+  var modelMeta = {};     // id -> {platform, type}
+  var modelStatus = {};   // id -> "exhausted" | undefined
+  var modelStatusMsg = {}; // id -> 中文说明
+  var modelHealth = {};   // id -> {score, total, ok, avg_latency_ms}
+  var curPlatform = "all";
+  var curType = "all";
+
+  /* ---- 模型分类元数据：平台 + 类型 ---- */
+  var GITEE_IDS = [];
+  var SILICONFLOW_IDS = [];
+  var WORKERS_AI_IDS = [];
+  var ZHIPU_IDS = [];
+  var SPARK_IDS = [];
+  var ACU_IDS = [];
+  var TYPES = {};
+  fallbackModels.forEach(function (id) {
+    var l = id.toLowerCase();
+    if (l.indexOf("workers-ai/") === 0) { WORKERS_AI_IDS.push(id); TYPES[id] = "chat"; }
+    else if (l.indexOf("spark/") === 0) { SPARK_IDS.push(id); TYPES[id] = "chat"; }
+    else if (l.indexOf("acu/") === 0) { ACU_IDS.push(id); TYPES[id] = "chat"; }
+    else if (l.indexOf("zhipu/") === 0) {
+      ZHIPU_IDS.push(id);
+      TYPES[id] = (l.indexOf("cogview") !== -1) ? "image"
+        : (l.indexOf("cogvideo") !== -1) ? "video"
+        : (/v-[a-z]/.test(l)) ? "vision" : "chat";
+    }
+    else if (["BAAI/bge-large-en-v1.5","BAAI/bge-large-zh-v1.5","BAAI/bge-m3"].indexOf(id) !== -1) { SILICONFLOW_IDS.push(id); TYPES[id] = "embedding"; }
+    else if (id.indexOf("BAAI/bge-reranker-v2-m3") !== -1) { SILICONFLOW_IDS.push(id); TYPES[id] = "rerank"; }
+    else if (id.indexOf("SenseVoiceSmall") !== -1); // handled below
+    else if (l.indexOf("asr") !== -1 || (/GLM-ASR|SenseVoiceSmall|TeleASR|Qwen3-ASR/.test(id))) { TYPES[id] = "asr"; }
+    else if (id.indexOf("rerank") !== -1 || (/reranker|bce-rerank/.test(id))) { TYPES[id] = "rerank"; }
+    else if (id.indexOf("embed") !== -1 || (/bge-m3|arctic-embed|nv-embed|nv-embedqa/.test(l))) { TYPES[id] = "embedding"; }
+    else if (/guard|moderat|nonescape|security|nsfw|reward|nemoguard/.test(l)) { TYPES[id] = "moderation"; }
+    else if (/vision|kosmos|fuyu|paligemma|neva|vila|ocr/.test(l)) { TYPES[id] = "vision"; }
+    else if (/tts/.test(l)) { TYPES[id] = "tts"; }
+    else { TYPES[id] = "chat"; }
+  });
+  // 手动补充 Gitee / SiliconFlow 归属
+  GITEE_IDS = fallbackModels.filter(function (id) {
+    return ["HuatuoGPT-o1-7B","Lingshu-32B","DeepSeek-Prover-V2-7B","HealthGPT-L14","GLM-4-9B-0414",
+      "glm-4-9b-chat","Qwen3-0.6B","Qwen3-4B","Qwen3-8B","Qwen2-7B-Instruct","internlm3-8b-instruct",
+      "DeepSeek-R1-Distill-Qwen-1.5B","DeepSeek-R1-Distill-Qwen-7B","DeepSeek-R1-Distill-Qwen-14B",
+      "GLM-ASR","SenseVoiceSmall","Spark-TTS-0.5B","Qwen3-Embedding-4B","Qwen3-Reranker-0.6B",
+      "Qwen3-Reranker-4B","bge-reranker-v2-m3","bce-reranker-base_v1","Qwen3Guard-Gen-0.6B",
+      "nonescape-v0","Security-semantic-filtering","nsfw-classifier","ip-location"].indexOf(id) !== -1;
+  });
+  SILICONFLOW_IDS = fallbackModels.filter(function (id) {
+    return ["BAAI/bge-large-en-v1.5","BAAI/bge-large-zh-v1.5","BAAI/bge-m3","BAAI/bge-reranker-v2-m3",
+      "FunAudioLLM/SenseVoiceSmall","PaddlePaddle/PaddleOCR-VL-1.5","Qwen/Qwen3-ASR-1.7B",
+      "TeleAI/TeleSpeechASR","tencent/Hunyuan-MT-7B","THUDM/GLM-4-9B-0414","THUDM/GLM-Z1-9B-0414"].indexOf(id) !== -1;
+  });
+  function classify(id) {
+    var l = id.toLowerCase();
+    var platform, type = TYPES[id] || inferType(id) || "chat";
+    if (l.indexOf("workers-ai/") === 0) platform = "workers-ai";
+    else if (l.indexOf("zhipu/") === 0) platform = "zhipu";
+    else if (l.indexOf("spark/") === 0) platform = "spark";
+    else if (l.indexOf("acu/") === 0) platform = "acu";
+    else if (GITEE_IDS.indexOf(id) !== -1) platform = "gitee";
+    else if (SILICONFLOW_IDS.indexOf(id) !== -1) platform = "siliconflow";
+    else platform = "nvidia";
+    // SiliconFlow 中的语音/向量等特殊模型类型修正
+    if (platform === "siliconflow") {
+      if (l.indexOf("asr") !== -1 || /SenseVoiceSmall|TeleASR|Qwen3-ASR/.test(id)) type = "asr";
+    }
+    return { platform: platform, type: type };
+  }
+  // 根据模型 ID 推断能力类型（用于不在静态清单中的动态模型）
+  function inferType(id) {
+    var l = id.toLowerCase();
+    if (l.indexOf("cogview") !== -1) return "image";
+    if (l.indexOf("cogvideo") !== -1) return "video";
+    if (l.indexOf("ip-location") !== -1) return "ip";
+    if (l.indexOf("rerank") !== -1 || /reranker|bce-rerank/.test(l)) return "rerank";
+    if (/bge-large|bge-m3|arctic-embed|embedqa|embed-|embedcode/.test(l) && l.indexOf("rerank") === -1) return "embedding";
+    if (/guard|moderat|nonescape|security|nsfw|reward|nemoguard/.test(l) && l.indexOf("guardian") === -1) return "moderation";
+    if (/asr|sensevoice|teleasr|speechasr|voice/.test(l)) return "asr";
+    if (/melotts|spark-tts|tts/.test(l)) return "tts";
+    if (/vision|kosmos|fuyu|paligemma|neva|vila|llama-3\.2-1[19]b/.test(l)) return "vision";
+    return "chat";
+  }
+  function PLATFORM_LABEL(p) { return { nvidia: "Nvidia", gitee: "Gitee", siliconflow: "SiliconFlow", "workers-ai": "Workers AI", zhipu: "智谱", spark: "讯飞星火", acu: "官方自营" }[p] || p; }
+  function hideTag(type) { return type === "chat"; } // 对话不显示标签，精简
+
+  /* ============ 模型详情知识库 ============ */
+  function typeLabel(t) {
+    return { chat: "对话", vision: "视觉", embedding: "向量", rerank: "重排", asr: "语音识别",
+      tts: "语音合成", moderation: "风控", image: "文生图", video: "文生视频", ip: "IP 定位" }[t] || t;
+  }
+  // 按能力类型定义「支持的请求体参数」模板
+  var PARAM_TEMPLATES = {
+    chat: {
+      desc: "通用对话 / 补全模型。向一个纯文本模型发送一轮或多轮对话消息，返回模型补全内容，支持 SSE 流式输出。",
+      params: [
+        ["messages", "array", "必填", "对话消息列表，每项含 role（system / user / assistant）与 content"],
+        ["stream", "boolean", "false", "开启 SSE 流式输出，逐字返回"],
+        ["temperature", "number", "1.0", "采样温度，越高输出越发散、越低越稳定"],
+        ["top_p", "number", "1.0", "核采样阈值，与 temperature 二选一微调"],
+        ["max_tokens", "integer", "—", "本次最大输出 token 数（受模型上限约束）"],
+        ["stop", "array", "null", "停止序列，命中即结束生成"],
+        ["frequency_penalty", "number", "0", "对已出现 token 的重复惩罚"],
+        ["presence_penalty", "number", "0", "对新话题的鼓励程度"],
+        ["seed", "integer", "null", "随机种子，固定后可复现结果（部分模型支持）"]
+      ],
+      unsupported: ["tools", "tool_choice", "response_format", "function_call", "functions", "logprobs", "top_logprobs", "n", "logit_bias", "user", "parallel_tool_calls", "audio", "stream_options"],
+      limits: ["纯文本输入，不支持图像 / 音频 / 视频", "max_tokens 受各模型上下文窗口限制", "不支持 tools / function calling（特殊模型除外）"]
+    },
+    vision: {
+      desc: "多模态视觉对话模型。除文本外可输入图片（URL 或 base64），模型能理解图像内容并作答。",
+      params: [
+        ["messages", "array", "必填", "对话消息，content 数组可含 type=image_url 的图片"],
+        ["stream", "boolean", "false", "SSE 流式输出"],
+        ["temperature", "number", "1.0", "采样温度"],
+        ["top_p", "number", "1.0", "核采样"],
+        ["max_tokens", "integer", "—", "最大输出 token 数"]
+      ],
+      unsupported: ["tools", "tool_choice", "response_format", "function_call", "functions", "logprobs", "n", "logit_bias", "user", "parallel_tool_calls", "audio", "stream_options"],
+      limits: ["仅接受图片，不支持视频输入", "图片建议使用公开 URL 或 base64 编码，单张建议 < 10MB", "不支持音频输入"]
+    },
+    embedding: {
+      desc: "向量化模型。将文本转换为高维向量，用于检索、相似度计算、RAG 知识库等场景。",
+      params: [
+        ["input", "string / array", "必填", "待向量化的文本，可一次传单条或多条"],
+        ["encoding_format", "string", "float", "返回格式：float（浮点数组）或 base64"]
+      ],
+      unsupported: ["messages", "stream", "temperature", "top_p", "max_tokens", "stop", "frequency_penalty", "presence_penalty", "seed", "tools", "tool_choice", "response_format", "function_call", "functions", "n", "logit_bias", "user"],
+      limits: ["仅支持文本输入", "不支持流式、temperature 等对话参数", "向量维度由模型决定（如 bge-m3 为 1024 维）"]
+    },
+    rerank: {
+      desc: "重排模型。给定查询与候选文档列表，为每个文档打分排序，用于 RAG 检索结果精排。",
+      params: [
+        ["query", "string", "必填", "查询文本"],
+        ["documents", "array", "必填", "候选文档列表"],
+        ["top_n", "integer", "全部", "仅返回得分最高的前 N 个文档"],
+        ["return_documents", "boolean", "false", "是否在结果中回带文档内容"]
+      ],
+      unsupported: ["messages", "stream", "temperature", "top_p", "max_tokens", "stop", "frequency_penalty", "presence_penalty", "seed", "tools", "tool_choice", "response_format", "function_call", "functions", "n", "logit_bias", "user"],
+      limits: ["专用重排接口，不支持对话参数", "文档数量受上游限制（通常 ≤ 1024 条）"]
+    },
+    asr: {
+      desc: "语音识别（ASR）模型。接收音频文件，返回识别出的文字内容。",
+      params: [
+        ["file", "file", "必填", "音频文件（multipart/form-data 上传）"],
+        ["model", "string", "必填", "模型 ID"],
+        ["response_format", "string", "json", "返回格式：json / text / verbose_json"],
+        ["language", "string", "auto", "音频语言（如 zh / en，可留空自动识别）"]
+      ],
+      unsupported: ["messages", "stream", "temperature", "top_p", "max_tokens", "stop", "frequency_penalty", "presence_penalty", "seed", "tools", "tool_choice", "response_format", "function_call", "functions", "n", "logit_bias", "user"],
+      limits: ["仅接受音频文件，不支持文本输入", "使用 multipart/form-data 上传", "支持绝大多数主流音频编码（wav / mp3 / flac / m4a 等）"]
+    },
+    tts: {
+      desc: "语音合成（TTS）模型。将文本合成为自然语音，支持多种音色；部分模型支持声音克隆。",
+      params: [
+        ["input", "string", "必填", "待合成的文本"],
+        ["voice", "string", "—", "音色 / 说话人 ID（因模型而异）"],
+        ["response_format", "string", "mp3", "音频格式：mp3 / wav / pcm"],
+        ["speed", "number", "1.0", "语速倍率"],
+        ["prompt_audio", "string", "null", "参考音频 base64（语音克隆类模型）"],
+        ["prompt_audio_url", "string", "null", "参考音频 URL（语音克隆类模型）"]
+      ],
+      unsupported: ["messages", "stream", "temperature", "top_p", "max_tokens", "stop", "frequency_penalty", "presence_penalty", "seed", "tools", "tool_choice", "response_format", "function_call", "functions", "n", "logit_bias", "user"],
+      limits: ["仅支持文本合成，不支持对话", "长文本请分段（单次有字数限制）", "克隆音色需提供参考音频"]
+    },
+    moderation: {
+      desc: "内容安全 / 风控模型。检测文本中是否含有违规、有害内容，返回各安全类别打分。",
+      params: [
+        ["input", "string / array", "必填", "待检测文本"],
+        ["input_type", "string", "—", "输入类型（query / response，部分模型支持）"]
+      ],
+      unsupported: ["messages", "stream", "temperature", "top_p", "max_tokens", "stop", "frequency_penalty", "presence_penalty", "seed", "tools", "tool_choice", "response_format", "function_call", "functions", "n", "logit_bias", "user"],
+      limits: ["专用检测接口，不支持对话参数", "返回的是分类打分配置，不生成文本内容"]
+    },
+    image: {
+      desc: "文生图模型。根据文字描述生成图片，返回图片 URL（已缓存至本站 R2，24 小时内有效）。",
+      params: [
+        ["prompt", "string", "必填", "图片描述（越详细效果越好）"],
+        ["size", "string", "1024x1024", "图片尺寸，如 1024x1024 / 768x1344 / 1344x768"],
+        ["n", "integer", "1", "一次生成张数"],
+        ["negative_prompt", "string", "null", "负面提示词（避免出现的内容，部分模型支持）"],
+        ["response_format", "string", "url", "返回格式：url 或 b64_json"]
+      ],
+      unsupported: ["messages", "stream", "temperature", "top_p", "max_tokens", "stop", "frequency_penalty", "presence_penalty", "seed", "tools", "tool_choice", "response_format(含义不同)", "function_call", "functions", "logit_bias", "user", "audio", "stream_options"],
+      limits: ["仅支持文字描述生成，不作为对话模型使用", "生成结果缓存 24 小时后自动清理", "提示词可能存在内容审核"]
+    },
+    video: {
+      desc: "文生视频模型。根据文字描述生成一段视频（耗时较长，需等待）。",
+      params: [
+        ["prompt", "string", "必填", "视频内容描述"],
+        ["size", "string", "—", "视频尺寸（因模型而异）"],
+        ["duration", "integer", "—", "生成时长（因模型而异）"],
+        ["negative_prompt", "string", "null", "负面提示词（部分模型支持）"]
+      ],
+      unsupported: ["messages", "stream", "temperature", "top_p", "max_tokens", "stop", "frequency_penalty", "presence_penalty", "seed", "tools", "tool_choice", "response_format", "function_call", "functions", "logit_bias", "user", "audio", "stream_options"],
+      limits: ["生成耗时较长（数秒至数分钟），请耐心等待", "不适合流式场景", "每月免费额度有限"]
+    },
+    ip: {
+      desc: "IP 归属地查询。返回请求来源 IP 的地理位置信息。",
+      params: [
+        ["ip", "string", "可选", "要查询的 IP（缺省为请求者 IP）"]
+      ],
+      unsupported: ["messages", "stream", "temperature", "top_p", "max_tokens", "stop", "frequency_penalty", "presence_penalty", "seed", "tools", "tool_choice", "response_format", "function_call", "functions", "n", "logit_bias", "user", "model", "audio", "stream_options"],
+      limits: ["专用查询接口", "返回地理信息，不参与对话生成"]
+    }
+  };
+  /* ============ 模型精确规格（按 ID 关键词匹配） ============ */
+  /* ctx = 上下文 token 上限；size = 参数量；dims = 向量维度；released = 发布日期 */
+  var MODEL_SPECS = [
+    // ── Nvidia / Meta Llama ──
+    { re: /llama-3\.1-405b/, ctx: "128K", size: "405B", released: "2024-12" },
+    { re: /llama-3\.1-70b-instruct/, ctx: "128K", size: "70B", released: "2024-07" },
+    { re: /llama-3\.1-8b-instruct/, ctx: "128K", size: "8B", released: "2024-07" },
+    { re: /llama-3\.3-70b/, ctx: "128K", size: "70B", released: "2024-12" },
+    { re: /llama-3\.2-1b/, ctx: "128K", size: "1B", released: "2024-09" },
+    { re: /llama-3\.2-3b/, ctx: "128K", size: "3B", released: "2024-09" },
+    { re: /llama-3\.2-90b-vision/, ctx: "128K", size: "90B", released: "2024-09" },
+    { re: /llama-3\.2-11b-vision/, ctx: "128K", size: "11B", released: "2024-09" },
+    { re: /llama3-70b/, ctx: "8K", size: "70B", released: "2024-03" },
+    { re: /llama3-8b/, ctx: "8K", size: "8B", released: "2024-03" },
+    { re: /llama2-70b/, ctx: "4K", size: "70B", released: "2023-07" },
+    { re: /codellama-70b/, ctx: "16K", size: "70B", released: "2023-08" },
+    { re: /llama-guard-4/, ctx: "8K", size: "12B", released: "2024-12" },
+    { re: /muse-glimmer/, ctx: "256K", size: "30B", released: "2024-06" },
+    // ── Nvidia Nemotron ──
+    { re: /nemotron-ultra-253b/, ctx: "128K", size: "253B", released: "2025-01" },
+    { re: /nemotron-4-340b-instruct/, ctx: "4K", size: "340B", released: "2024-05" },
+    { re: /nemotron-3-super-120b/, ctx: "1M", size: "120B (12B active)", released: "2026-06" },
+    { re: /nemotron-3-ultra-550b/, ctx: "1M", size: "550B (55B active)", released: "2026-06" },
+    { re: /nemotron-3-nano-omni/, ctx: "256K", size: "30B (3.6B active)", released: "2026-05" },
+    { re: /nemotron-3-nano-30b/, ctx: "1M", size: "30B (3.6B active)", released: "2026-03" },
+    { re: /nemotron-nano-3-30b/, ctx: "1M", size: "30B (3.6B active)", released: "2026-03" },
+    { re: /nemotron-3\.5-lightning/, ctx: "1M", size: "30B (3B active)", released: "2026-08" },
+    { re: /nemotron-3\.5-content-safety/, ctx: "1M", size: "8B", released: "2026-08" },
+    { re: /nemotron-4-340b-reward/, ctx: "4K", size: "340B", released: "2024-05" },
+    { re: /nemotron-3-embed-1b/, ctx: "0.5K", size: "1B", dims: 2048, released: "2025-06" },
+    { re: /nemotron-parse/, ctx: "0.5K", size: "—", released: "2024-10" },
+    { re: /llama-3\.3-nemotron-super-49b/, ctx: "128K", size: "49B", released: "2024-12" },
+    { re: /llama-3\.1-nemotron-70b/, ctx: "128K", size: "70B", released: "2024-10" },
+    { re: /llama-3\.1-nemotron-51b/, ctx: "128K", size: "51B", released: "2024-09" },
+    { re: /llama-3\.1-nemotron-safety-guard/, ctx: "128K", size: "8B", released: "2024-10" },
+    { re: /nemoguard-8b/, ctx: "128K", size: "8B", released: "2024-10" },
+    { re: /llama3-chatqa-1\.5-70b/, ctx: "32K", size: "70B", released: "2024-06" },
+    { re: /llama3-chatqa-1\.5-8b/, ctx: "32K", size: "8B", released: "2024-06" },
+    { re: /mistral-nemo-minitron-8b-8k/, ctx: "8K", size: "8B", released: "2024-08" },
+    { re: /ising-calibration/, ctx: "4K", size: "31B", released: "2024-11" },
+    { re: /ai-synthetic-video-detector/, ctx: "—", size: "—", released: "2024-08" },
+    { re: /cosmos-reason2-8b/, ctx: "16K", size: "8B", released: "2025-01" },
+    // ── Nvidia 嵌入 / 检索 ──
+    { re: /nv-embed-v1|nv-embedcode/, ctx: "0.5K", size: "7B", dims: 2048, released: "2024" },
+    { re: /embed-qa-4/, ctx: "0.5K", size: "4B", dims: 1024, released: "2024" },
+    { re: /nv-embedqa-mistral-7b/, ctx: "0.5K", size: "7B", dims: 1024, released: "2024" },
+    { re: /nv-embedqa-1b-v1/, ctx: "0.5K", size: "1B", dims: 1024, released: "2024" },
+    { re: /nemoretriever-1b/, ctx: "0.5K", size: "1B", dims: 1024, released: "2024-10" },
+    { re: /nemotron-embed-vl-1b/, ctx: "0.5K", size: "1B", dims: 1024, released: "2024-11" },
+    { re: /arctic-embed-l/, ctx: "0.5K", size: "335M", dims: 1024, released: "2024-04" },
+    // ── Nvidia 视觉 ──
+    { re: /neva-22b/, ctx: "4K", size: "22B", released: "2023-11" },
+    { re: /vila/, ctx: "4K", size: "8B", released: "2024-02" },
+    { re: /nvclip/, ctx: "0.5K", size: "1.3B", released: "2024-06" },
+    // ── Nvidia 翻译 ──
+    { re: /riva-translate/, ctx: "0.5K", size: "4B", released: "2024-03" },
+    // ── DeepSeek ──
+    { re: /deepseek-r1\/|deepseek-r1-distill-qwen-32b/, ctx: "128K", size: "671B (MoE)", released: "2025-01" },
+    { re: /deepseek-r1-distill-qwen-14b/, ctx: "128K", size: "14B", released: "2025-01" },
+    { re: /deepseek-r1-distill-qwen-7b/, ctx: "128K", size: "7B", released: "2025-01" },
+    { re: /deepseek-r1-distill-llama-8b/, ctx: "128K", size: "8B", released: "2025-01" },
+    { re: /deepseek-coder/, ctx: "16K", size: "6.7B", released: "2023-11" },
+    { re: /deepseek-ai\/deepseek-v4-flash/, ctx: "1M", size: "284B (13B active)", released: "2025-07" },
+    { re: /deepseek-v4-pro/, ctx: "1M", size: "1.6T (49B active)", released: "2025-08" },
+    // ── Qwen ──
+    { re: /qwq-32b/, ctx: "32K", size: "32B", released: "2024-11" },
+    { re: /qwen2\.5-coder-32b/, ctx: "32K", size: "32B", released: "2024-11" },
+    { re: /qwen2\.5-coder-7b/, ctx: "128K", size: "7B", released: "2024-11" },
+    { re: /qwen2\.5-7b/, ctx: "32K", size: "7B", released: "2024-09" },
+    { re: /qwen2-7b/, ctx: "32K", size: "7B", released: "2024-09" },
+    // ── Google Gemma ──
+    { re: /gemma-4-31b/, ctx: "128K", size: "31B", released: "2025-06" },
+    { re: /gemma-3-27b/, ctx: "128K", size: "27B", released: "2025-02" },
+    { re: /gemma-3-12b/, ctx: "128K", size: "12B", released: "2025-02" },
+    { re: /gemma-3-4b/, ctx: "128K", size: "4B", released: "2025-02" },
+    { re: /gemma-3-1b/, ctx: "128K", size: "1B", released: "2025-02" },
+    { re: /gemma-2-27b/, ctx: "8K", size: "27B", released: "2024-06" },
+    { re: /gemma-2-9b/, ctx: "8K", size: "9B", released: "2024-06" },
+    { re: /gemma-2-2b/, ctx: "8K", size: "2B", released: "2024-06" },
+    { re: /gemma-2b$/, ctx: "8K", size: "2B", released: "2024-02" },
+    { re: /codegemma/, ctx: "14K", size: "7B", released: "2024-04" },
+    { re: /deplot/, ctx: "2K", size: "1.3B", released: "2023-10" },
+    { re: /diffusiongemma/, ctx: "—", size: "26B", released: "2025-05" },
+    { re: /recurrentgemma/, ctx: "8K", size: "2B", released: "2024-02" },
+    // ── Microsoft Phi ──
+    { re: /phi-4-mini/, ctx: "16K", size: "3.8B", released: "2024-12" },
+    { re: /phi-3\.5-mini/, ctx: "128K", size: "3.8B", released: "2024-08" },
+    { re: /phi-3\.5-moe/, ctx: "128K", size: "42B (MoE)", released: "2024-08" },
+    { re: /phi-3-medium/, ctx: "128K", size: "14B", released: "2024-06" },
+    { re: /phi-3-small/, ctx: "8K", size: "7B", released: "2024-05" },
+    { re: /phi-3-mini/, ctx: "128K", size: "3.8B", released: "2024-04" },
+    { re: /phi-3-vision/, ctx: "128K", size: "4.2B", released: "2024-05" },
+    { re: /phi-4-multimodal/, ctx: "16K", size: "5.6B", released: "2024-12" },
+    { re: /kosmos-2/, ctx: "4K", size: "1.6B", released: "2023-06" },
+    // ── Mistral ──
+    { re: /mistral-large/, ctx: "128K", size: "123B", released: "2024-07" },
+    { re: /mistral-small-3\.1/, ctx: "96K", size: "24B", released: "2025-03" },
+    { re: /mistral-small-24b/, ctx: "96K", size: "24B", released: "2025-03" },
+    { re: /mixtral-8x22b/, ctx: "64K", size: "141B (MoE)", released: "2024-04" },
+    { re: /mistral-7b/, ctx: "32K", size: "7B", released: "2023-09" },
+    { re: /codestral-22b/, ctx: "32K", size: "22B", released: "2024-02" },
+    { re: /mistral-nemotron/, ctx: "128K", size: "70B", released: "2024-10" },
+    { re: /mamba-codestral/, ctx: "256K", size: "7B", released: "2024-07" },
+    { re: /mathstral/, ctx: "32K", size: "7B", released: "2024-07" },
+    { re: /mistral-nemo-12b/, ctx: "128K", size: "12B", released: "2024-07" },
+    // ── IBM Granite ──
+    { re: /granite-34b-code/, ctx: "8K", size: "34B", released: "2024-05" },
+    { re: /granite-3\.0-8b/, ctx: "8K", size: "8B", released: "2024-10" },
+    { re: /granite-3\.0-3b/, ctx: "4K", size: "3B", released: "2024-10" },
+    { re: /granite-8b-code/, ctx: "8K", size: "8B", released: "2024-05" },
+    { re: /granite-guardian/, ctx: "8K", size: "8B", released: "2024-10" },
+    // ── 其他国际模型 ──
+    { re: /01-ai\/yi-large/, ctx: "32K", size: "34B", released: "2024-05" },
+    { re: /adept\/fuyu-8b/, ctx: "16K", size: "8B", released: "2023-10" },
+    { re: /jamba-1\.5-large/, ctx: "256K", size: "398B (MoE)", released: "2024-08" },
+    { re: /jamba-1\.5-mini/, ctx: "256K", size: "52B (MoE)", released: "2024-08" },
+    { re: /sea-lion-7b/, ctx: "3K", size: "7B", released: "2024-02" },
+    { re: /starcoder2-15b/, ctx: "16K", size: "15B", released: "2024-04" },
+    { re: /starcoder2-7b/, ctx: "16K", size: "7B", released: "2024-04" },
+    { re: /dbrx-instruct/, ctx: "32K", size: "132B (MoE)", released: "2024-03" },
+    { re: /colosseum_355b/, ctx: "16K", size: "355B", released: "2024-06" },
+    { re: /italia_10b/, ctx: "16K", size: "10B", released: "2024-06" },
+    { re: /palmyra-creative-122b/, ctx: "16K", size: "122B", released: "2024-05" },
+    { re: /palmyra-fin-70b-32k/, ctx: "32K", size: "70B", released: "2024-03" },
+    { re: /palmyra-med-70b-32k/, ctx: "32K", size: "70B", released: "2024-03" },
+    { re: /palmyra-med-70b$/, ctx: "4K", size: "70B", released: "2024-03" },
+    { re: /dracarys-llama/, ctx: "128K", size: "70B", released: "2024-08" },
+    { re: /swallow-70b/, ctx: "8K", size: "70B", released: "2024-03" },
+    { re: /swallow-8b/, ctx: "8K", size: "8B", released: "2024-03" },
+    { re: /llama-3-swallow/, ctx: "8K", size: "70B", released: "2024-03" },
+    { re: /breeze-7b/, ctx: "4K", size: "7B", released: "2024-04" },
+    { re: /solar-10\.7b/, ctx: "4K", size: "11B", released: "2023-12" },
+    { re: /rakutenai/, ctx: "4K", size: "7B", released: "2024-01" },
+    { re: /falcon3-7b/, ctx: "32K", size: "7B", released: "2024-12" },
+    { re: /llama-3-taiwan/, ctx: "8K", size: "70B", released: "2024-04" },
+    { re: /zamba2-7b/, ctx: "4K", size: "7B", released: "2024-10" },
+    { re: /usdcode/, ctx: "128K", size: "70B", released: "2024-08" },
+    // ── 开源大模型（新接入） ──
+    { re: /gpt-oss-120b/, ctx: "128K", size: "120B", released: "2025-08" },
+    { re: /gpt-oss-20b/, ctx: "128K", size: "20B", released: "2025-08" },
+    { re: /kimi-k2\.6/, ctx: "128K", size: "~200B (MoE)", released: "2025-07" },
+    { re: /kimi-k3/, ctx: "128K", size: "~260B (MoE)", released: "2025-08" },
+    { re: /minimax-m3/, ctx: "1M", size: "428B (~22B active)", released: "2025-08" },
+    { re: /laguna-xs/, ctx: "8K", size: "—", released: "2025-06" },
+    { re: /step-3\.7-flash/, ctx: "128K", size: "~30B", released: "2025-07" },
+    // ── BGE 检索模型 ──
+    { re: /bge-m3|baai\/bge-m3/, ctx: "8K", size: "568M", dims: 1024, released: "2024-01" },
+    { re: /bge-large-zh/, ctx: "0.5K", size: "326M", dims: 1024, released: "2023-06" },
+    { re: /bge-large-en/, ctx: "0.5K", size: "326M", dims: 1024, released: "2023-06" },
+    { re: /bge-reranker-v2-m3/, ctx: "8K", size: "568M", dims: 0, released: "2024-01" },
+    { re: /bce-reranker/, ctx: "0.5K", size: "278M", dims: 0, released: "2023-09" },
+    // ── Gitee AI 国产模型 ──
+    { re: /huatuogpt-o1-7b/, ctx: "8K", size: "7B", released: "2024-08" },
+    { re: /lingshu-32b/, ctx: "32K", size: "32B", released: "2024-09" },
+    { re: /deepseek-prover-v2-7b/, ctx: "32K", size: "7B", released: "2024-04" },
+    { re: /healthgpt-l14/, ctx: "8K", size: "14B", released: "2024-07" },
+    { re: /glm-4-9b-0414|thudm\/glm-4-9b-0414/, ctx: "128K", size: "9B", released: "2024-04" },
+    { re: /glm-4-9b-chat/, ctx: "32K", size: "9B", released: "2024-01" },
+    { re: /qwen3-8b/, ctx: "128K", size: "8B", released: "2024-12" },
+    { re: /qwen3-4b/, ctx: "128K", size: "4B", released: "2024-12" },
+    { re: /qwen3-0\.6b/, ctx: "128K", size: "0.6B", released: "2024-12" },
+    { re: /qwen2-7b-instruct/, ctx: "32K", size: "7B", released: "2024-09" },
+    { re: /internlm3-8b-instruct/, ctx: "32K", size: "8B", released: "2024-10" },
+    { re: /deepseek-r1-distill-qwen-1\.5b/, ctx: "128K", size: "1.5B", released: "2025-01" },
+    { re: /glm-asr/, ctx: "30s", size: "—", dims: 0 },
+    { re: /sensevoicesmall/, ctx: "30s", size: "234M" },
+    { re: /spark-tts/, ctx: "—", size: "0.5B" },
+    { re: /qwen3-embedding-4b/, ctx: "8K", size: "4B", dims: 2560, released: "2024-12" },
+    { re: /qwen3-reranker-4b/, ctx: "8K", size: "4B", released: "2024-12" },
+    { re: /qwen3-reranker-0\.6b/, ctx: "8K", size: "0.6B", released: "2024-12" },
+    { re: /qwen3guard/, ctx: "8K", size: "0.6B", released: "2024-12" },
+    { re: /nonescape-v0/, ctx: "4K", size: "—", released: "2024-09" },
+    { re: /security.*filter|nsfw-classifier/, ctx: "4K", size: "—", released: "2024-08" },
+    { re: /ip-location/, ctx: "—", size: "—" },
+    // ── SiliconFlow ──
+    { re: /hunyuan-mt-7b/, ctx: "32K", size: "7B", released: "2024-10" },
+    { re: /paddleocr-vl/, ctx: "—", size: "—", released: "2024-08" },
+    { re: /teleasr|telespeech/, ctx: "30s", size: "—", released: "2024-06" },
+    // ── 智谱 GLM ──
+    { re: /zhipu\/glm-4\.7-flash/, ctx: "128K", size: "~10B", released: "2025-06" },
+    { re: /zhipu\/glm-4-flash-250414/, ctx: "128K", size: "~10B", released: "2025-04" },
+    { re: /zhipu\/glm-z1-flash/, ctx: "128K", size: "~10B", released: "2025-01" },
+    { re: /zhipu\/glm-4-flash$/, ctx: "128K", size: "~10B", released: "2024-01" },
+    { re: /zhipu\/glm-4\.6v-flash/, ctx: "32K", size: "~10B", released: "2025-10" },
+    { re: /zhipu\/glm-4v-flash/, ctx: "8K", size: "~9B", released: "2024-07" },
+    { re: /zhipu\/glm-4\.1v-thinking-flash/, ctx: "32K", size: "~10B", released: "2025-02" },
+    { re: /zhipu\/cogview-3-flash/, ctx: "—", size: "—", dims: 0, released: "2024-06" },
+    { re: /zhipu\/cogvideox-flash/, ctx: "—", size: "5B", dims: 0, released: "2024-08" },
+    // ── 讯飞星火（Spark）──
+    { re: /spark\/spark-lite/, ctx: "8K", size: "—", released: "2023-05" },
+    // ── 官方自营（DeepSeek V4 Flash）──
+    { re: /acu\/deepseek-v4-flash/, ctx: "128K", size: "—", released: "2025-07" },
+    // ── Cloudflare Workers AI ──
+    { re: /workers-ai\/llama-3\.1-8b/, ctx: "128K", size: "8B", released: "2024-07" },
+    { re: /workers-ai\/llama-3\.3-70b/, ctx: "128K", size: "70B", released: "2024-12" },
+    { re: /workers-ai\/llama-3\.2-1b/, ctx: "128K", size: "1B", released: "2024-09" },
+    { re: /workers-ai\/llama-3\.2-3b/, ctx: "128K", size: "3B", released: "2024-09" },
+    { re: /workers-ai\/mistral-7b/, ctx: "32K", size: "7B", released: "2023-09" },
+    { re: /workers-ai\/qwen1\.5-7b/, ctx: "32K", size: "7B", released: "2024-02" },
+    { re: /workers-ai\/qwq-32b/, ctx: "32K", size: "32B", released: "2024-11" },
+    { re: /workers-ai\/deepseek-r1-32b/, ctx: "32K", size: "32B", released: "2025-01" },
+    { re: /workers-ai\/qwen2\.5-coder-32b/, ctx: "32K", size: "32B", released: "2024-11" },
+    { re: /workers-ai\/gemma-3-12b/, ctx: "128K", size: "12B", released: "2025-02" },
+    { re: /workers-ai\/mistral-small/, ctx: "96K", size: "24B", released: "2025-03" },
+    { re: /workers-ai\/melotts/, ctx: "—", size: "0.6B", released: "2024-06" }
+  ];
+  function modelSpec(id) {
+    for (var i = 0; i < MODEL_SPECS.length; i++) {
+      if (MODEL_SPECS[i].re.test(id)) return MODEL_SPECS[i];
+    }
+    return null;
+  }
+  // 热门模型定制描述（按模型名关键词匹配，先匹配先生效）
+  var MODEL_NOTES = [
+    { match: /deepseek-ai\/deepseek-v4/, name: "DeepSeek-V4", desc: "DeepSeek 最新旗舰模型，兼顾推理能力与速度，支持超大上下文，中文表现优秀。" },
+    { match: /deepseek-r1|deepseek-ai\/deepseek-r1/, name: "DeepSeek-R1", desc: "DeepSeek 深度推理模型，擅长数学、代码、逻辑推理，输出会展示思考过程。" },
+    { match: /deepseek-coder/, name: "DeepSeek-Coder", desc: "代码专项模型，精通多种编程语言，适合代码生成、补全与解释。" },
+    { match: /llama-3\.3-70b-instruct$/, name: "Llama 3.3 70B", desc: "Meta Llama 3.3 系列，70B 参数旗舰对话模型，继承 405B 能力但更经济。" },
+    { match: /llama-3\.3/, name: "Llama 3.3", desc: "Meta Llama 3.3 系列，70B 参数旗舰对话模型，均衡的较强能力与效率。" },
+    { match: /llama-3\.1-405b/, name: "Llama 3.1 405B", desc: "Meta 最大规模开源模型，405B 参数顶级能力，适合复杂任务。" },
+    { match: /llama-3\.1-70b/, name: "Llama 3.1 70B", desc: "70B 参数的强对话模型，能力与成本的优秀平衡点。" },
+    { match: /llama-3\.2-(1b|3b)/, name: "Llama 3.2 小模型", desc: "轻量级模型，低延迟、低资源占用，适合简单对话与移动端场景。" },
+    { match: /nemotron/, name: "Nvidia Nemotron", desc: "Nvidia 自家对话系列，面向指令跟随与推理优化，参数规模选择丰富。" },
+    { match: /gemma-3/, name: "Gemma 3", desc: "Google 开源轻量模型，多模态与多语言，边端友好。" },
+    { match: /phi-3|phi-4/, name: "Phi 系列", desc: "Microsoft 小模型系列，以较小参数量达成较强常识推理能力。" },
+    { match: /mistral-large/, name: "Mistral Large", desc: "Mistral 高端旗舰，多语言能力强，适合复杂推理任务。" },
+    { match: /mixtral/, name: "Mixtral", desc: "Mistral 多专家稀疏模型（MoE），推理高效。" },
+    { match: /qwen|qwen2\.5|qwq/, name: "通义千问 Qwen", desc: "阿里巴巴开源系列，中文能力出色的全能模型。" },
+    { match: /chatglm|glm-4|glm-z|thudm/, name: "智谱 GLM", desc: "智谱 AI 开源对话模型，中文优化，指令跟随稳定。" },
+    { match: /spark-lite/, name: "讯飞星火 Spark", desc: "科大讯飞星火认知大模型 Lite 版，轻量快速，中文对话流畅，适合日常问答与轻量任务。" },
+    { match: /acu\/deepseek-v4-flash/, name: "DeepSeek V4 Flash（官方自营）", desc: "AQUA 官方自营旗舰模型，极致响应速度与中文逻辑处理能力，专为实时交互与高频调用优化，长期服务、稳定可靠。" },
+    { match: /bge-m3|bge-large|bge-/, name: "BGE 向量系列", desc: "BAAI 开源向量/重排模型，检索领域标杆，中文/多语检索表现优秀。" },
+    { match: /sensevoice|glm-asr/, name: "语音识别（ASR）", desc: "中文语音识别专项模型，抗噪能力强，支持多方言。" },
+    { match: /spark-tts|melotts/, name: "语音合成（TTS）", desc: "自然语音合成模型，支持多种音色与情感，部分支持声音克隆。" },
+    { match: /cogview/, name: "智谱 CogView", desc: "智谱文生图模型，中文提示词理解好，可生成风格化图片。" },
+    { match: /cogvideox/, name: "智谱 CogVideoX", desc: "智谱文生视频模型，根据描述生成短视频片段。" },
+    { match: /guard|nsfw|nonescape|security.*filter/, name: "安全风控", desc: "内容安全检测模型，用于识别违规、有害、敏感内容。" }
+  ];
+  function modelProfile(id) {
+    var meta = modelMeta[id] || classify(id);
+    var t = meta.type || "chat";
+    var base = PARAM_TEMPLATES[t] || PARAM_TEMPLATES.chat;
+    var note = null;
+    for (var i = 0; i < MODEL_NOTES.length; i++) {
+      if (MODEL_NOTES[i].match.test(id)) { note = MODEL_NOTES[i]; break; }
+    }
+    // 合并专属描述 + 平台说明
+    var desc = (note ? note.name + "。" + note.desc + " " : "") + base.desc;
+    var params = base.params.slice();
+    var limits = base.limits.slice();
+    // 平台特定限制
+    if (meta.platform === "workers-ai") {
+      desc += "（由 Cloudflare Workers AI 提供每日免费额度）";
+      limits.unshift("走 Workers AI 免费额度通道，每日 00:00 UTC 重置", "全站额度用尽后统一返回 429");
+    } else if (meta.platform === "zhipu") {
+      limits.unshift("由智谱开放平台免费提供");
+    } else if (meta.platform === "spark") {
+      limits.unshift("由讯飞星火（Spark）免费提供");
+    } else if (meta.platform === "acu") {
+      limits.unshift("由 AQUA 官方自营提供，长期服务、稳定可靠", "全局共用并发 10，高峰期自动排队等待（最长约 15 秒），请勿重复提交");
+    } else if (meta.platform === "gitee") {
+      limits.unshift("由 Gitee AI（模力方舟）提供");
+    } else if (meta.platform === "siliconflow") {
+      limits.unshift("由 SiliconFlow（硅基流动）提供");
+    } else if (meta.platform === "nvidia") {
+      limits.unshift("由 Nvidia NIM 提供，网关密钥池自动轮换（单密钥 38 次/分钟）");
+    }
+    return { meta: meta, typeLabel: typeLabel(t), desc: desc, params: params, limits: limits, noteName: note ? note.name : null, spec: modelSpec(id), unsupported: base.unsupported || [] };
+  }
+  function modelExample(id, t) {
+    var body = "";
+    if (t === "chat" || t === "vision") {
+      body = '{"model":"' + id + '","messages":[{"role":"user","content":"你好"}],"stream":true}';
+    } else if (t === "embedding") {
+      body = '{"model":"' + id + '","input":"你好"}';
+    } else if (t === "rerank") {
+      body = '{"model":"' + id + '","query":"你好","documents":["文档A","文档B"]}';
+    } else if (t === "asr") {
+      return '# 使用 multipart 上传音频文件\ncurl https://your-gateway-domain.example/v1/audio/transcriptions \\\n  -F "file=@audio.wav" \\\n  -F "model=' + id + '"';
+    } else if (t === "tts") {
+      body = '{"model":"' + id + '","input":"你好，欢迎使用 AQUA","voice":"default"}';
+    } else if (t === "moderation") {
+      body = '{"model":"' + id + '","input":"待检测文本"}';
+    } else if (t === "image") {
+      body = '{"model":"' + id + '","prompt":"一只可爱的橘猫","size":"1024x1024"}';
+    } else if (t === "video") {
+      body = '{"model":"' + id + '","prompt":"一只小狗在草地上奔跑"}';
+    } else if (t === "ip") {
+      return 'curl https://your-gateway-domain.example/v1/ip_location\n  -H "Content-Type: application/json"\n  -d \'{"ip":""}\'';
+    }
+    return 'curl https://your-gateway-domain.example/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer sk-****" \\\n  -d \'' + body + '\'';
+  }
+  function renderModelDetail(id) {
+    var el = document.getElementById("model-detail");
+    if (!el) return;
+    var profile = modelProfile(id);
+    var meta = profile.meta;
+    var st = modelStatus[id];
+    var statusTag = "";
+    if (st === "exhausted") statusTag = '<span class="mtag m-status-exhausted">额度已耗尽</span>';
+    else if (st === "unavailable") statusTag = '<span class="mtag m-status-unavailable">暂时不可用</span>';
+    var paramRows = profile.params.map(function (p) {
+      return '<tr><td class="pname"><code>' + esc(p[0]) + '</code></td><td>' + esc(p[1]) + '</td><td>' + esc(p[2]) + '</td><td>' + esc(p[3]) + '</td></tr>';
+    }).join("");
+    var limitItems = profile.limits.map(function (l) { return '<li>' + esc(l) + '</li>'; }).join("");
+    // ── 模型上下文知识库区块 ──
+    var spec = profile.spec;
+    var ctxHtml = "";
+    if (spec) {
+      ctxHtml = '<div class="md-block md-spec-grid">' +
+        (spec.ctx ? '<div class="spec-item"><div class="spec-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></div><div class="spec-label">上下文窗口</div><div class="spec-val">' + esc(spec.ctx) + '</div></div>' : '') +
+        (spec.size ? '<div class="spec-item"><div class="spec-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg></div><div class="spec-label">参数量</div><div class="spec-val">' + esc(spec.size) + '</div></div>' : '') +
+        (spec.dims ? '<div class="spec-item"><div class="spec-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a16 16 0 0 1 0 18M12 3a16 16 0 0 0 0 18"/></svg></div><div class="spec-label">向量维度</div><div class="spec-val">' + esc(spec.dims) + '</div></div>' : '') +
+        (spec.released ? '<div class="spec-item"><div class="spec-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div><div class="spec-label">发布日期</div><div class="spec-val">' + esc(spec.released) + '</div></div>' : '') +
+        '<div class="spec-item"><div class="spec-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><div class="spec-label">上游平台</div><div class="spec-val">' + esc(PLATFORM_LABEL(meta.platform)) + '</div></div>' +
+        '<div class="spec-item"><div class="spec-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/></svg></div><div class="spec-label">能力类型</div><div class="spec-val">' + esc(profile.typeLabel) + '</div></div>' +
+        (profile.noteName ? '<div class="spec-item"><div class="spec-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></div><div class="spec-label">模型系列</div><div class="spec-val">' + esc(profile.noteName) + '</div></div>' : '') +
+      '</div>';
+    }
+    el.innerHTML =
+      '<a href="#/capabilities" class="back-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>返回模型能力</a>' +
+      '<div class="md-head">' +
+        '<h1><code>' + esc(id) + '</code></h1>' +
+        '<div class="md-tags">' +
+          '<span class="mtag m-' + meta.platform + '">' + esc(PLATFORM_LABEL(meta.platform)) + '</span>' +
+          '<span class="mtag m-' + meta.platform + '">' + esc(profile.typeLabel) + '</span>' +
+          statusTag +
+          healthTag(id) +
+        '</div>' +
+        '<button class="btn" data-copy-text="' + esc(id) + '">复制 ID</button>' +
+      '</div>' +
+      ctxHtml +
+      '<div class="md-block"><h3>模型能力简介</h3><p class="md-desc">' + esc(profile.desc) + '</p></div>' +
+      '<div class="md-block"><h3>支持的请求参数</h3>' +
+        '<div class="md-table-wrap"><table class="md-table"><thead><tr><th>参数名</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead><tbody>' + paramRows + '</tbody></table></div>' +
+      '</div>' +
+      (profile.unsupported && profile.unsupported.length ?
+        '<div class="md-block"><h3>不支持的参数</h3><p class="md-desc" style="margin-bottom:10px;">以下 OpenAI 标准参数在该模型类型下不可用或无意义：</p>' +
+        '<div class="md-unsupported-grid">' +
+          profile.unsupported.map(function (p) { return '<span class="unsupp-pill"><span class="unsupp-x">✗</span><code>' + esc(p) + '</code></span>'; }).join("") +
+        '</div></div>' : '') +
+      '<div class="md-block"><h3>限制 / 不支持的功能</h3><ul class="md-limits">' + limitItems + '</ul></div>' +
+      '<div class="md-block"><h3>调用示例</h3><pre><button class="btn" data-copy-from="md-example">复制</button><code id="md-example">' + esc(modelExample(id, meta.type)) + '</code></pre></div>';
+    window.scrollTo(0, 0);
+  }
+
+  /* ============ 模型能力总览页 ============ */
+  var CAPS = [
+    { id: "chat",   label: "对话", tip: "支持 chat/completions 多轮对话" },
+    { id: "stream", label: "流式", tip: "支持流式逐字返回" },
+    { id: "vision", label: "视觉", tip: "可输入图片理解内容" },
+    { id: "audio",  label: "音频", tip: "支持音频输入或输出" },
+    { id: "emb",    label: "向量", tip: "支持 embeddings 接口" },
+    { id: "rerank", label: "重排", tip: "支持 rerank 检索精排" },
+    { id: "gen",    label: "生成", tip: "图像/视频/语音内容生成" },
+    { id: "tools",  label: "工具", tip: "支持 function calling" }
+  ];
+  function capForType(t) {
+    var c = {};
+    c.chat = (t === "chat" || t === "vision") ? 1 : 0;
+    c.stream = (t === "chat" || t === "vision") ? 1 : 0;
+    c.vision = t === "vision" ? 1 : 0;
+    c.audio = (t === "asr" || t === "tts") ? 1 : 0;
+    c.emb = t === "embedding" ? 1 : 0;
+    c.rerank = t === "rerank" ? 1 : 0;
+    c.gen = (t === "image" || t === "video" || t === "tts") ? 1 : 0;
+    c.tools = (t === "chat") ? 0.5 : 0;
+    return c;
+  }
+  function capMini(v) {
+    if (v === 1) return '<span class="cap-mini yes" title="支持">✓</span>';
+    if (v === 0.5) return '<span class="cap-mini part" title="有限支持">~</span>';
+    return '<span class="cap-mini no" title="不支持">—</span>';
+  }
+  function renderCapabilities() {
+    var filter = curCap || "all";
+    var q = (document.getElementById("cap-search").value || "").toLowerCase().trim();
+    var grid = document.getElementById("cap-cards");
+    var countEl = document.getElementById("cap-count");
+    if (!grid) return;
+    var all = models.length ? models : fallbackModels.slice();
+    var rows = all.filter(function (m) {
+      var meta = modelMeta[m] || classify(m);
+      if (filter !== "all" && meta.type !== filter) return false;
+      return q ? m.toLowerCase().indexOf(q) !== -1 : true;
+    });
+    countEl.textContent = "共 " + rows.length + " 个模型";
+    if (!rows.length) { grid.innerHTML = '<div class="model-empty">未找到匹配的模型</div>'; return; }
+    grid.innerHTML = rows.map(function (m) {
+      var meta = modelMeta[m] || classify(m);
+      var spec = modelSpec(m) || {};
+      var c = capForType(meta.type);
+      var st = modelStatus[m];
+      var stTag = st === "exhausted" ? '<span class="cap-card-flag flag-ex">耗尽</span>'
+        : st === "unavailable" ? '<span class="cap-card-flag flag-un">不可用</span>' : "";
+      var capIcons = CAPS.map(function (cp) {
+        return '<span class="cap-mini-wrap" title="' + esc(cp.label) + ': ' + esc(cp.tip) + '">' +
+          '<span class="cap-mini-label">' + esc(cp.label) + '</span>' + capMini(c[cp.id]) + '</span>';
+      }).join("");
+      var dims = spec.dims ? '<span class="metric"><b>向量</b> ' + esc(spec.dims) + 'D</span>' : '';
+      // 官方自营模型使用专属蓝色卡片（m-acu 由 CSS 定义专属主题）
+      var acuExtra = meta.platform === "acu"
+        ? '<span class="cap-card-flag flag-acu">官方自营</span>' : "";
+      return '<a class="cap-card m-' + meta.platform + '" href="#/model/' + encodeURIComponent(m) + '">' +
+        '<div class="cap-card-top">' +
+          '<span class="cap-dot m-' + meta.platform + '"></span>' +
+          '<span class="cap-card-name" title="' + esc(m) + '">' + esc(m) + '</span>' +
+          stTag +
+        '</div>' +
+        acuExtra +
+        '<div class="cap-card-metrics">' +
+          (spec.ctx ? '<span class="metric"><b>上下文</b> ' + esc(spec.ctx) + '</span>' : '') +
+          (spec.size ? '<span class="metric"><b>参数</b> ' + esc(spec.size) + '</span>' : '') +
+          dims +
+          (spec.released ? '<span class="metric"><b>发布</b> ' + esc(spec.released) + '</span>' : '') +
+        '</div>' +
+        '<div class="cap-card-platform">' +
+          '<span class="cap-type-badge t-' + esc(meta.type) + '">' + esc(typeLabel(meta.type)) + '</span>' +
+          '<span class="cap-platform-label">' + esc(PLATFORM_LABEL(meta.platform)) + '</span>' +
+        '</div>' +
+        '<div class="cap-card-icons">' + capIcons + '</div>' +
+      '</a>';
+    }).join("");
+    renderCapStats(rows);
+  }
+  function renderCapStats(rows) {
+    var el = document.getElementById("cap-stats");
+    if (!el) return;
+    var byType = {};
+    var capCounts = {};
+    CAPS.forEach(function (c) { capCounts[c.id] = 0; });
+    rows.forEach(function (m) {
+      var meta = modelMeta[m] || classify(m);
+      byType[meta.type] = (byType[meta.type] || 0) + 1;
+      var c = capForType(meta.type);
+      CAPS.forEach(function (cp) { if (c[cp.id] === 1) capCounts[cp.id] += 1; });
+    });
+    var total = rows.length;
+    var typeHtml = Object.keys(byType).map(function (t) {
+      return '<span class="stat-pill"><b>' + byType[t] + '</b> ' + esc(typeLabel(t)) + '</span>';
+    }).join("");
+    var capHtml = CAPS.filter(function (c) { return capCounts[c.id] > 0; }).map(function (c) {
+      var pct = total ? Math.round(capCounts[c.id] / total * 100) : 0;
+      return '<div class="cap-bar"><span class="cap-bar-label">' + esc(c.label) + '</span>' +
+        '<span class="cap-bar-track"><span class="cap-bar-fill" style="width:' + pct + '%"></span></span>' +
+        '<span class="cap-bar-pct">' + pct + '%</span></div>';
+    }).join("");
+    el.innerHTML =
+      '<div class="cap-stat-card"><div class="cap-stat-num">' + total + '</div><div class="cap-stat-label">模型总数</div></div>' +
+      '<div class="cap-stat-card"><div class="cap-stat-num">' + (total ? Object.keys(byType).length : 0) + '</div><div class="cap-stat-label">能力类型</div></div>' +
+      '<div class="cap-stat-card wide"><div class="cap-stat-types">' + typeHtml + '</div></div>' +
+      '<div class="cap-bar-card">' + capHtml + '</div>';
+  }
+  var curCap = "all";
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest("#cap-filter .pill");
+    if (!b) return;
+    curCap = b.getAttribute("data-cap");
+    document.querySelectorAll("#cap-filter .pill").forEach(function (x) { x.classList.toggle("active", x === b); });
+    renderCapabilities();
+  });
+  var capSearchEl = document.getElementById("cap-search");
+  if (capSearchEl) capSearchEl.addEventListener("input", renderCapabilities);
+
+  /* ---- 页面切换（hash 路由） ---- */
+  // 根据当前 hash 渲染对应页面（route 与 loadModels 完成后共用，消除加载竞态）
+  function renderCurrentPage() {
+    var hash = (location.hash || "#/home").replace(/^#\//, "");
+    var dm = hash.match(/^model\/(.+)$/);
+    if (dm) { renderModelDetail(decodeURIComponent(dm[1])); return; }
+    var tab = hash.split("?")[0] || "home";
+    if (["home", "models", "capabilities", "api"].indexOf(tab) === -1) tab = "home";
+    if (tab === "models") applyFilter();
+    else if (tab === "capabilities") renderCapabilities();
+  }
+  function route() {
+    var hash = (location.hash || "#/home").replace(/^#\//, "");
+    document.querySelectorAll(".page").forEach(function (p) { p.classList.remove("active"); });
+    document.querySelectorAll(".nav-tabs a").forEach(function (a) { a.classList.remove("active"); });
+    // 模型详情路由：#/model/{encodedId}
+    var dm = hash.match(/^model\/(.+)$/);
+    if (dm) {
+      var mid = decodeURIComponent(dm[1]);
+      document.getElementById("page-model").classList.add("active");
+      renderModelDetail(mid);
+      return;
+    }
+    var tab = hash.split("?")[0] || "home";
+    if (["home", "models", "capabilities", "api"].indexOf(tab) === -1) tab = "home";
+    document.getElementById("page-" + tab).classList.add("active");
+    document.querySelectorAll(".nav-tabs a").forEach(function (a) {
+      a.classList.toggle("active", a.getAttribute("data-tab") === tab);
+    });
+    renderCurrentPage();
+  }
+  window.addEventListener("hashchange", route);
+
+  /* ---- 复制能力 ---- */
+  function copyText(text, btn) {
+    var done = function () {
+      if (!btn) return;
+      btn.classList.add("copied");
+      btn.innerHTML = CHECK_ICON;
+      setTimeout(function () {
+        btn.classList.remove("copied");
+        btn.textContent = "复制";
+      }, 1400);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(function () { legacyCopy(text); done(); });
+    } else { legacyCopy(text); done(); }
+  }
+  function legacyCopy(text) {
+    var ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+  document.addEventListener("click", function (e) {
+    var t = e.target.closest("[data-copy]");
+    if (t) { copyText(document.getElementById(t.getAttribute("data-copy")).textContent.trim(), t); return; }
+    t = e.target.closest("[data-copy-text]");
+    if (t) { copyText(t.getAttribute("data-copy-text"), t); return; }
+    t = e.target.closest("[data-copy-from]");
+    if (t) {
+      var el = document.getElementById(t.getAttribute("data-copy-from"));
+      copyText(el.textContent.trim(), t);
+    }
+  });
+
+  /* ---- 模型列表 ---- */
+  function esc(s) {
+    if (s === null || s === undefined) return "";
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  /* 健康评分徽标：根据近100次调用自动评分（后端计算，0-100） */
+  function healthTag(id) {
+    var h = modelHealth[id];
+    if (!h || !h.total) return "";
+    var score = h.score | 0;
+    var cls = "h-bad";
+    if (score >= 90) cls = "h-excellent";
+    else if (score >= 70) cls = "h-good";
+    else if (score >= 50) cls = "h-warn";
+    var rate = Math.round((h.ok / h.total) * 100);
+    var lat = h.avg_latency_ms != null ? (h.avg_latency_ms / 1000).toFixed(1) + "s" : "-";
+    var tip = "近 " + h.total + " 次调用的健康评分：" + score + "/100（成功率 " + rate + "%，平均延迟 " + lat + "）";
+    return '<span class="mtag m-health ' + cls + '" title="' + tip + '" data-health-score="' + score + '" data-health-total="' + h.total + '">健康 ' + score + '</span>';
+  }
+  function render(list) {
+    var grid = document.getElementById("model-grid");
+    var count = document.getElementById("model-count");
+    count.textContent = "共 " + list.length + " 个模型";
+    if (!list.length) {
+      grid.innerHTML = '<div class="model-empty">未找到匹配的模型</div>';
+      return;
+    }
+    grid.innerHTML = list.map(function (m) {
+      var meta = modelMeta[m] || classify(m);
+      var tags = "";
+      if (!hideTag(meta.type)) {
+        tags += '<span class="mtag m-' + meta.platform + '" title="' + esc(meta.type) + '">' + esc(PLATFORM_LABEL(meta.platform)) + ' · ' + esc(typeLabel(meta.type)) + '</span>';
+      }
+      var st = modelStatus[m];
+      var exhaustedCls = "";
+      if (st === "exhausted") {
+        tags += '<span class="mtag m-status-exhausted" title="' + esc(modelStatusMsg[m] || "今日免费额度已用尽") + '">额度已耗尽</span>';
+        exhaustedCls = " exhausted";
+      } else if (st === "unavailable") {
+        tags += '<span class="mtag m-status-unavailable" title="' + esc(modelStatusMsg[m] || "该模型暂时不可用") + '">暂时不可用</span>';
+        exhaustedCls = " exhausted";
+      }
+      tags += healthTag(m);
+      return '<div class="model-item' + exhaustedCls + '">' + tags +
+             '<a class="model-link" href="#/model/' + encodeURIComponent(m) + '" title="查看 ' + esc(m) + ' 详情">' + esc(m) + '</a>' +
+             '<button class="btn" data-copy-text="' + esc(m) + '">复制</button></div>';
+    }).join("");
+  }
+  function modelMatches(m) {
+    var meta = modelMeta[m] || classify(m);
+    if (curPlatform !== "all" && meta.platform !== curPlatform) return false;
+    if (curType !== "all" && meta.type !== curType) return false;
+    return true;
+  }
+  function applyFilter() {
+    var q = document.getElementById("model-search").value.toLowerCase().trim();
+    var list = models.filter(function (m) {
+      if (!modelMatches(m)) return false;
+      return q ? m.toLowerCase().indexOf(q) !== -1 : true;
+    });
+    render(list);
+  }
+  document.getElementById("model-search").addEventListener("input", applyFilter);
+
+  /* 筛选标签点击 */
+  document.getElementById("platform-filter").addEventListener("click", function (e) {
+    var b = e.target.closest(".pill"); if (!b) return;
+    curPlatform = b.getAttribute("data-platform");
+    this.querySelectorAll(".pill").forEach(function (x) { x.classList.toggle("active", x === b); });
+    applyFilter();
+  });
+  document.getElementById("type-filter").addEventListener("click", function (e) {
+    var b = e.target.closest(".pill"); if (!b) return;
+    curType = b.getAttribute("data-type");
+    this.querySelectorAll(".pill").forEach(function (x) { x.classList.toggle("active", x === b); });
+    applyFilter();
+  });
+
+  /* 智能排序：国产/大参数/高智能模型排前 */
+  function modelPriority(id) {
+    var l = id.toLowerCase();
+    // 官方自营通道最前
+    if (/^acu\//.test(l)) return -1;
+    // 国产模型最前（含 Kimi/豆包/月之暗面 等）
+    if (/deepseek|qwen|qwq|chatglm|thudm|baichuan|01-ai|yi-large|zhipu|glm|bigmodel|kimi|moonshot|doubao|moonshotai/.test(l)) return 0;
+    // Nvidia 旗舰 Nemotron
+    if (/nemotron|nvidia.*llama-3\.[13]/.test(l)) return 1;
+    // Meta Llama 旗舰
+    if (/meta\/llama-3\.[13]|meta\/llama-4/.test(l)) return 2;
+    // Mistral 旗舰
+    if (/mistral-large|mistral-medium|mixtral/.test(l)) return 3;
+    // Google Gemma
+    if (/gemma/.test(l)) return 4;
+    // Microsoft Phi
+    if (/phi-4|phi-3\.5/.test(l)) return 5;
+    if (/phi-3/.test(l)) return 6;
+    // Gitee AI 模型
+    if (/^[A-Z]/.test(id) || /^ip-location$/.test(id) || /^nsfw|^nonescape|^security/i.test(id)) return 7;
+    // 其他
+    return 8;
+  }
+  /* 旗舰/大体量版本加分：同组内把热门旗舰版本往前排 */
+  function hotFlag(id) {
+    var l = id.toLowerCase();
+    if (/v4|k3|k2\.6|k2|r1|v3|max|ultra|plus|large|turbo|pro|premium|72b|70b|405b|671b|32b|27b|236b/.test(l)) return 1;
+    return 0;
+  }
+  function smartSort(a, b) {
+    var pa = modelPriority(a), pb = modelPriority(b);
+    if (pa !== pb) return pa - pb;
+    // 同组内：旗舰版本优先
+    var ha = hotFlag(a), hb = hotFlag(b);
+    if (ha !== hb) return hb - ha;
+    // 同组内按参数量降序（粗略提取数字）
+    var na = (a.match(/(\d+)b/i) || [,"0"])[1] | 0;
+    var nb = (b.match(/(\d+)b/i) || [,"0"])[1] | 0;
+    if (na !== nb) return nb - na;
+    return a.localeCompare(b);
+  }
+
+  /* ---- 模型列表加载：状态提示 / 超时 / 重试 ---- */
+  var modelsLoadedAt = null; // 最近一次成功同步的时间戳
+  var modelsLoadErr = false; // 最近一次加载是否失败
+  function timeStr(t) {
+    var d = new Date(t), p = function (x) { return (x < 10 ? "0" : "") + x; };
+    return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
+  function updateModelsNotice() {
+    var n = document.getElementById("model-notice");
+    if (!n) return;
+    var msg = n.querySelector(".nt-msg");
+    if (!msg) return;
+    if (modelsLoadErr) {
+      n.hidden = false;
+      n.className = "model-notice err";
+      msg.innerHTML = (modelsLoadedAt ? "模型列表同步失败（上次成功更新 " + timeStr(modelsLoadedAt) + "），当前展示离线内置列表。" : "模型列表加载失败，当前展示离线内置列表。") +
+        ' <button class="btn nt-btn" id="model-retry-btn">重试</button>';
+      var b = document.getElementById("model-retry-btn");
+      if (b) b.onclick = function () { loadModels(); };
+    } else if (modelsLoadedAt) {
+      n.hidden = false;
+      n.className = "model-notice";
+      msg.textContent = "模型列表已同步，更新于 " + timeStr(modelsLoadedAt) + "（每 60 秒自动刷新）";
+    } else {
+      n.hidden = true;
+    }
+  }
+  function loadModels() {
+    // 请求超时保护：15s 未返回视为失败，避免页面无限等待
+    var controller = (typeof AbortController !== "undefined") ? new AbortController() : null;
+    var timer = null;
+    if (controller) {
+      timer = setTimeout(function () { controller.abort(); }, 15000);
+    }
+    fetch(GATEWAY + "/models", controller ? { signal: controller.signal } : undefined)
+      .then(function (r) { if (!r.ok) throw new Error("status " + r.status); return r.json(); })
+      .then(function (data) {
+        var all = (data && data.data) || [];
+        var arr = all.map(function (m) { return m && m.id; }).filter(function (m) { return typeof m === "string"; });
+        arr = arr.filter(function (m, i) { return arr.indexOf(m) === i; });
+        arr.sort(smartSort);
+        models = arr.length ? arr : fallbackModels.slice();
+        // 记录每个模型平台/类型 + 状态
+        modelStatus = {};
+        modelStatusMsg = {};
+        all.forEach(function (m) {
+          if (!m || !m.id) return;
+          modelMeta[m.id] = classify(m.id);
+          if (m.status) {
+            modelStatus[m.id] = m.status;
+            if (m.status_msg) modelStatusMsg[m.id] = m.status_msg;
+          }
+          modelHealth[m.id] = m.health || null;
+        });
+        models.forEach(function (m) {
+          if (!modelMeta[m]) modelMeta[m] = classify(m);
+        });
+        modelsLoadedAt = Date.now();
+        modelsLoadErr = false;
+        updateModelsNotice();
+        renderCurrentPage();
+      })
+      .catch(function () {
+        modelsLoadErr = true;
+        updateModelsNotice();
+        models = fallbackModels.slice();
+        models.forEach(function (m) { modelMeta[m] = classify(m); });
+        renderCurrentPage();
+      })
+      .then(function () { if (timer) clearTimeout(timer); });
+  }
+  loadModels();
+  // 每 60 秒自动刷新（模型列表与 Workers AI 额度状态自动更新）
+  setInterval(loadModels, 60000);
+  route();
+})();
+</script>
+</body>
+</html>

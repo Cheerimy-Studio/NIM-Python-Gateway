@@ -1,0 +1,99 @@
+name = "aqua-gateway"
+main = "build/worker/shim.mjs"
+compatibility_date = "2024-01-01"
+
+# 网关固定密钥（逗号分隔，支持多把并存做平滑轮换）。
+# ⚠️ 真实密钥不入 Git：提交时保持占位符，部署前通过 wrangler secret / vars 注入真实值。
+[vars]
+GATEWAY_KEYS = "REPLACE_WITH_REAL_KEY"
+
+[build]
+command = "pwsh -ExecutionPolicy Bypass -File ../scripts/build.ps1 gateway"
+
+# Durable Object：Workers AI 每日用量绝对限额的原子计数
+[[durable_objects.bindings]]
+name = "WAI_BUDGET"
+class_name = "WaiBudget"
+
+# Durable Object：Nvidia 密钥池（38次/分钟冷却 + 健康管理）
+[[durable_objects.bindings]]
+name = "NV_KEY_POOL"
+class_name = "NvKeyPool"
+
+# Durable Object：acu/* 通道全局并发限制（中央调控，全局共用 N 并发）
+[[durable_objects.bindings]]
+name = "ACU_LIMIT"
+class_name = "AcuConcurrency"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["WaiBudget"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["NvKeyPool"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["AcuConcurrency"]
+
+# KV 缓存（模型列表，60s TTL，零溢出风险）
+# ⚠️ 部署前替换为你自己的 KV namespace id
+[[kv_namespaces]]
+binding = "MODEL_CACHE"
+id = "REPLACE_WITH_KV_ID"
+
+# D1 数据库（请求日志，7 天自动清理，< 50% 免费额度）
+# ⚠️ 部署前替换为你自己的 D1 database_id
+[[d1_databases]]
+binding = "LOGS_DB"
+database_name = "aqua_logs"
+database_id = "REPLACE_WITH_D1_ID"
+
+# R2 存储（生成图片缓存，24h 自动清理，上限 3GB/10K 对象）
+[[r2_buckets]]
+binding = "IMAGES_BUCKET"
+bucket_name = "aqua-images"
+
+[env.production]
+# 绑定网关域名（⚠️ 部署前替换为你自己的域名）
+route = { pattern = "your-gateway-domain.example", custom_domain = true }
+# 网关固定密钥（named env 不继承顶层 vars，需在此重复声明）
+# ⚠️ 以下全部为占位符：真实值部署前通过 wrangler secret / vars 注入
+[env.production.vars]
+GATEWAY_KEYS = "REPLACE_WITH_REAL_KEY"
+NVIDIA_KEYS = "REPLACE_WITH_REAL_KEY"
+NVIDIA_BASE = "REPLACE_WITH_REAL_KEY"
+GITEE_KEY = "REPLACE_WITH_REAL_KEY"
+GITEE_BASE = "REPLACE_WITH_REAL_KEY"
+SILICONFLOW_KEY = "REPLACE_WITH_REAL_KEY"
+SILICONFLOW_BASE = "REPLACE_WITH_REAL_KEY"
+ZHIPU_KEY = "REPLACE_WITH_REAL_KEY"
+ZHIPU_BASE = "REPLACE_WITH_REAL_KEY"
+SPARK_KEY = "REPLACE_WITH_REAL_KEY"
+SPARK_BASE = "REPLACE_WITH_REAL_KEY"
+ACU_BASE = "REPLACE_WITH_REAL_KEY"
+ACU_KEY = "REPLACE_WITH_REAL_KEY"
+# DO binding 不被环境继承，需在 production 重复声明
+[[env.production.durable_objects.bindings]]
+name = "WAI_BUDGET"
+class_name = "WaiBudget"
+[[env.production.durable_objects.bindings]]
+name = "NV_KEY_POOL"
+class_name = "NvKeyPool"
+[[env.production.durable_objects.bindings]]
+name = "ACU_LIMIT"
+class_name = "AcuConcurrency"
+# KV 命名空间绑定（生产环境继承）
+[[env.production.kv_namespaces]]
+binding = "MODEL_CACHE"
+id = "REPLACE_WITH_KV_ID"
+# D1 数据库（请求日志，7 天自动清理）
+[[env.production.d1_databases]]
+binding = "LOGS_DB"
+database_name = "aqua_logs"
+database_id = "REPLACE_WITH_D1_ID"
+# R2 存储（生产环境）
+[[env.production.r2_buckets]]
+binding = "IMAGES_BUCKET"
+bucket_name = "aqua-images"
