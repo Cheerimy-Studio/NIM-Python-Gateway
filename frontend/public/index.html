@@ -655,9 +655,9 @@
   .pg-main { display: grid; grid-template-columns: 1fr 280px; gap: 14px; align-items: stretch; }
   .pg-chat { border: 1px solid var(--border); border-radius: 14px; background: var(--card);
     min-height: 420px; max-height: 560px; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-  .pg-welcome { margin: auto; text-align: center; color: var(--muted); }
-  .pg-welcome b { display: block; font-size: 17px; color: var(--accent); margin-bottom: 8px; }
-  .pg-welcome p { font-size: 13px; max-width: 420px; }
+  .pg-welcome { margin: auto; text-align: center; color: var(--muted); padding: 30px 20px; }
+  .pg-welcome b { display: block; font-size: 18px; color: var(--accent); margin-bottom: 10px; letter-spacing: .5px; }
+  .pg-welcome p { font-size: 13px; max-width: 440px; line-height: 1.9; }
   .pg-msg { max-width: 78%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.65;
     white-space: pre-wrap; word-break: break-word; }
   .pg-msg.user { align-self: flex-end; background: var(--accent-soft); color: #fff; border-bottom-right-radius: 4px; }
@@ -691,41 +691,65 @@
     padding: 20px; display: flex; flex-direction: column; gap: 8px; text-decoration: none; color: var(--text);
     transition: transform .15s, border-color .15s; position: relative; }
   .tool-card:hover { transform: translateY(-3px); border-color: var(--accent); }
-  .tool-card .tool-ic svg { width: 26px; height: 26px; color: var(--accent); }
-  .tool-card b { font-size: 15px; }
-  .tool-card .tool-desc { font-size: 12.5px; color: var(--muted); line-height: 1.6; flex: 1; }
+  .tool-card .tool-ic { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px;
+    border-radius: 12px; background: rgba(103,232,249,.1); border: 1px solid rgba(103,232,249,.18); }
+  .tool-card .tool-ic svg { width: 22px; height: 22px; color: var(--accent); }
+  .tool-card b { font-size: 15px; letter-spacing: .2px; margin-top: 2px; }
+  .tool-card .tool-desc { font-size: 12.5px; color: var(--muted); line-height: 1.75; flex: 1; }
   .tool-card .tool-tag { font-size: 11px; font-family: var(--mono); color: var(--accent); background: rgba(103,232,249,.08);
-    border: 1px solid rgba(103,232,249,.2); border-radius: 6px; padding: 3px 8px; align-self: flex-start; }
+    border: 1px solid rgba(103,232,249,.2); border-radius: 999px; padding: 3px 10px; align-self: flex-start; }
   .tool-card.tool-soon { opacity: .55; }
   .tool-card.tool-soon .tool-tag { color: var(--muted); border-color: var(--border); background: transparent; }
-  .tools-sec { margin: 26px 0 12px; }
-  .tools-sec-t { font-size: 15px; font-weight: 700; color: var(--accent); display: inline-flex; align-items: center; gap: 8px; }
-  .tools-sec-t::after { content: ""; flex: 1; min-width: 60px; height: 1px; background: var(--border); margin-left: 4px; }
-  .tools-api-note { border: 1px solid var(--border); border-radius: 12px; background: var(--card); padding: 14px 18px; }
-  .tools-api-note p { color: var(--muted); font-size: 13px; line-height: 1.8; }
-  .tools-api-note code { font-family: var(--mono); font-size: 12px; color: var(--accent); }
-  .back-link { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); text-decoration: none; font-size: 13px; margin-bottom: 14px; }
-  .back-link:hover { color: var(--accent); }
+  .tools-sec { display: flex; align-items: center; gap: 12px; margin: 40px 0 18px; }
+  .tools-sec-t { font-size: 16px; font-weight: 800; color: var(--text); display: inline-flex; align-items: center; gap: 10px;
+    letter-spacing: .5px; }
+  .tools-sec-t::before { content: ""; width: 4px; height: 18px; border-radius: 2px; background: var(--accent); }
+  .tools-sec-t::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+  .tools-sec-n { font-size: 12px; color: var(--muted); }
+  .tools-api-note { border: 1px solid var(--border); border-radius: 14px; background: linear-gradient(160deg, var(--card), var(--card2));
+    padding: 18px 22px; margin-top: 36px; }
+  .tools-api-note p { color: var(--muted); font-size: 13.5px; line-height: 2; }
+  .tools-api-note code { font-family: var(--mono); font-size: 12px; color: var(--accent);
+    background: rgba(103,232,249,.08); border: 1px solid rgba(103,232,249,.18); border-radius: 6px; padding: 2px 8px; }
+  .back-link { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); text-decoration: none;
+    font-size: 13px; margin-bottom: 18px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px;
+    background: var(--card); transition: all .15s; }
+  .back-link:hover { color: var(--accent); border-color: var(--accent); }
   .back-link svg { width: 14px; height: 14px; }
-  .tool-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
-  .tool-head h2 { font-size: 20px; display: flex; align-items: center; gap: 8px; }
-  .tool-intro { color: var(--muted); font-size: 13.5px; margin: 6px 0 16px; }
-  .tool-io { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
-  .tool-io textarea { width: 100%; resize: vertical; border: 1px solid var(--border); background: var(--card);
-    color: var(--text); border-radius: 12px; padding: 12px 14px; font-size: 14px; font-family: inherit; line-height: 1.6; }
-  .tool-io textarea:focus { outline: none; border-color: var(--accent); }
-  .tool-btns { display: flex; gap: 10px; }
-  .tool-btns .btn { cursor: pointer; }
-  .tool-btns .tool-run { background: var(--accent-soft); color: #fff; border: none; }
+  .tool-page-card { border: 1px solid var(--border); border-radius: 18px; background: linear-gradient(160deg, var(--card), var(--card2));
+    padding: 26px 28px; box-shadow: 0 8px 24px rgba(0,0,0,.1); }
+  .tool-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; flex-wrap: wrap; }
+  .tool-head h2 { font-size: 22px; display: flex; align-items: center; gap: 10px; letter-spacing: .3px; }
+  .tool-intro { color: var(--muted); font-size: 13.5px; margin: 8px 0 22px; line-height: 1.9; }
+  .tool-intro code { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+  .tool-io { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }
+  .tool-io textarea, .tool-io input[type=text], .tool-io input:not([type]) { width: 100%; resize: vertical;
+    border: 1px solid var(--border); background: var(--card); color: var(--text); border-radius: 12px;
+    padding: 12px 14px; font-size: 14px; font-family: inherit; line-height: 1.7; }
+  .tool-io textarea:focus, .tool-io input:focus { outline: none; border-color: var(--accent); }
+  .tool-io select { background: var(--card2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 10px; padding: 9px 12px; font-size: 13px; }
+  .tool-btns { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .tool-btns .btn { cursor: pointer; padding: 10px 20px; border-radius: 10px; font-size: 13.5px; }
+  .tool-btns .tool-run { background: var(--accent-soft); color: #fff; border: none; font-weight: 600; }
+  .tool-btns .tool-run:hover { filter: brightness(1.12); }
   .tool-btns .tool-ai { background: transparent; color: #f59e0b; border: 1px solid rgba(245,158,11,.5); }
+  .tool-btns > span { font-size: 13px; color: var(--muted); }
   .tool-result { min-height: 40px; }
-  .tool-loading, .tool-empty { color: var(--muted); font-size: 13px; padding: 14px 0; }
-  .tool-kv { border: 1px solid var(--border); border-radius: 12px; background: var(--card); padding: 6px 14px; margin-bottom: 12px; }
+  .tool-loading, .tool-empty { color: var(--muted); font-size: 13px; padding: 16px 0; }
+  .tool-kv { border: 1px solid var(--border); border-radius: 12px; background: var(--card); padding: 8px 16px; margin-bottom: 14px; }
+  .tool-kv .pg-hrow { padding: 9px 0; border-bottom: 1px solid var(--border); }
+  .tool-kv .pg-hrow:last-child { border-bottom: none; }
   .tool-ai-box { border: 1px solid rgba(103,232,249,.3); border-radius: 12px; background: rgba(103,232,249,.05);
-    padding: 14px 16px; margin-bottom: 12px; }
-  .tool-ai-box b { color: var(--accent); display: block; margin-bottom: 6px; font-size: 13px; }
-  .tool-ai-box .tool-ai-text { font-size: 13.5px; line-height: 1.8; color: var(--text); white-space: pre-wrap; }
-  .dev-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+    padding: 16px 18px; margin-bottom: 14px; }
+  .tool-ai-box b { color: var(--accent); display: block; margin-bottom: 8px; font-size: 13px; letter-spacing: .5px; }
+  .tool-ai-box .tool-ai-text { font-size: 14px; line-height: 1.9; color: var(--text); white-space: pre-wrap; }
+  .dev-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .dev-tabs .pill { cursor: pointer; }
+  /* 下拉与输入统一（游戏区） */
+  .pg-toolbar select, .tool-btns select, .tool-io select { background: var(--card2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; font-size: 13px; }
+  .pg-toolbar select:focus, .tool-btns select:focus { outline: none; border-color: var(--accent); }
 
   /* ===== 棋类游戏 ===== */
   .tt-board { display: grid; grid-template-columns: repeat(3, 86px); grid-auto-rows: 86px; gap: 6px;
@@ -1454,7 +1478,7 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
         <h1><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>AI 赋能工具箱</h1>
         <p>基于 AQUA 网关构建的对弈游戏与实用工具——每个工具既是网页应用，也是网关 API，兼容性拉满。</p>
       </div>
-      <div class="tools-sec"><span class="tools-sec-t">AI 对弈游戏</span></div>
+      <div class="tools-sec"><span class="tools-sec-t">AI 对弈游戏</span><span class="tools-sec-n">4 款 · 支持自选模型对手</span></div>
       <div class="tools-grid" id="tools-grid">
         <a class="tool-card" href="#/tools/tictactoe">
           <span class="tool-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M4 9.33h16M4 14.67h16M9.33 4v16M14.67 4v16"/></svg></span>
@@ -1481,7 +1505,7 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
           <span class="tool-tag">LLM 驱动</span>
         </a>
       </div>
-      <div class="tools-sec"><span class="tools-sec-t">实用工具</span></div>
+      <div class="tools-sec"><span class="tools-sec-t">实用工具</span><span class="tools-sec-n">6 个 · 纯算法零额度</span></div>
       <div class="tools-grid">
         <a class="tool-card" href="#/tools/ip">
           <span class="tool-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 4 5.6 4 9s-1.5 6.4-4 9c-2.5-2.6-4-5.6-4-9s1.5-6.4 4-9z"/></svg></span>
@@ -1520,7 +1544,7 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
           <span class="tool-tag">/v1/tools/*</span>
         </a>
       </div>
-      <div class="tools-sec"><span class="tools-sec-t">工具 API（不只 AI，工具也能调）</span></div>
+      <div class="tools-sec"><span class="tools-sec-t">工具 API</span><span class="tools-sec-n">不只 AI，工具也能调</span></div>
       <div class="tools-api-note">
         <p>上述所有工具的能力同时以 REST API 形式开放在网关上——例如 <code>POST /v1/tools/text-stats</code>、<code>GET /v1/tools/uuid</code>、<code>POST /v1/tools/base64</code>。鉴权方式与主 API 相同，详见 <a href="#/api" style="color:var(--accent);">API 文档</a>。我们不只提供 AI API，也提供工具 API。</p>
       </div>
@@ -1641,7 +1665,16 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
 
 
 (function () {
-  var GATEWAY = "https://your-gateway-domain.example/v1";
+  // 网关地址自动探测：同源部署时直接用当前域名；跨域部署时替换下方常量
+  var GATEWAY = (function () {
+    var explicit = "";  // 跨域部署填这里，如 "https://api.example.com/v1"
+    if (explicit) return explicit.replace(/\/$/, "");
+    if (location.hostname === "your-gateway-domain.example") return "/v1";
+    // 前台acu.ltzy.top 与 网关api.ltzy.top 同级约定：acu → api
+    if (location.hostname.startsWith("acu.")) return "https://api." + location.hostname.slice(4) + "/v1";
+    // 其他情况（本地预览/自定义域）：尝试同域 /v1，404 时页面会给出提示
+    return location.origin + "/v1";
+  })();
 
   /* ---- 主题切换 ---- */
   function setTheme(t) {
@@ -2318,8 +2351,8 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
   var TOOL_AI_MODEL = "acu/deepseek-v4-flash";  // AI 解读用模型（acu 通道）
   function toolShell(title, icon, tag, innerHtml) {
     return '<a class="back-link" href="#/tools"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>返回工具箱</a>' +
-      '<div class="tool-head"><h2>' + icon + " " + esc(title) + "</h2>" +
-      '<span class="tool-tag">' + esc(tag) + "</span></div>" + innerHtml;
+      '<div class="tool-page-card"><div class="tool-head">' + icon + "<h2>" + esc(title) + "</h2>" +
+      '<span class="tool-tag">' + esc(tag) + "</span></div>" + innerHtml + "</div>";
   }
   function toolAiExplain(promptText, resultBox) {
     resultBox.innerHTML = '<div class="tool-ai-box"><b>AI 解读</b><div class="tool-ai-text">正在生成解读…</div></div>';
