@@ -698,6 +698,27 @@
     border: 1px solid rgba(103,232,249,.2); border-radius: 6px; padding: 3px 8px; align-self: flex-start; }
   .tool-card.tool-soon { opacity: .55; }
   .tool-card.tool-soon .tool-tag { color: var(--muted); border-color: var(--border); background: transparent; }
+  .back-link { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); text-decoration: none; font-size: 13px; margin-bottom: 14px; }
+  .back-link:hover { color: var(--accent); }
+  .back-link svg { width: 14px; height: 14px; }
+  .tool-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+  .tool-head h2 { font-size: 20px; display: flex; align-items: center; gap: 8px; }
+  .tool-intro { color: var(--muted); font-size: 13.5px; margin: 6px 0 16px; }
+  .tool-io { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+  .tool-io textarea { width: 100%; resize: vertical; border: 1px solid var(--border); background: var(--card);
+    color: var(--text); border-radius: 12px; padding: 12px 14px; font-size: 14px; font-family: inherit; line-height: 1.6; }
+  .tool-io textarea:focus { outline: none; border-color: var(--accent); }
+  .tool-btns { display: flex; gap: 10px; }
+  .tool-btns .btn { cursor: pointer; }
+  .tool-btns .tool-run { background: var(--accent-soft); color: #fff; border: none; }
+  .tool-btns .tool-ai { background: transparent; color: #f59e0b; border: 1px solid rgba(245,158,11,.5); }
+  .tool-result { min-height: 40px; }
+  .tool-loading, .tool-empty { color: var(--muted); font-size: 13px; padding: 14px 0; }
+  .tool-kv { border: 1px solid var(--border); border-radius: 12px; background: var(--card); padding: 6px 14px; margin-bottom: 12px; }
+  .tool-ai-box { border: 1px solid rgba(103,232,249,.3); border-radius: 12px; background: rgba(103,232,249,.05);
+    padding: 14px 16px; margin-bottom: 12px; }
+  .tool-ai-box b { color: var(--accent); display: block; margin-bottom: 6px; font-size: 13px; }
+  .tool-ai-box .tool-ai-text { font-size: 13.5px; line-height: 1.8; color: var(--text); white-space: pre-wrap; }
 
   footer { text-align: center; color: var(--muted); font-size: 13px; padding: 40px 20px 32px;
     border-top: 1px solid var(--border); margin-top: 40px; }
@@ -2203,10 +2224,86 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     }
     return 'curl https://your-gateway-domain.example/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer sk-****" \\\n  -d \'' + body + '\'';
   }
-  /* ---- 工具子页渲染（批次5/6实现具体工具） ---- */
+  /* ---- 工具子页渲染 ---- */
+  var TOOL_AI_MODEL = "acu/deepseek-v4-flash";  // AI 解读用模型（acu 通道）
+  function toolShell(title, icon, tag, innerHtml) {
+    return '<a class="back-link" href="#/tools"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>返回工具箱</a>' +
+      '<div class="tool-head"><h2>' + icon + " " + esc(title) + "</h2>" +
+      '<span class="tool-tag">' + esc(tag) + "</span></div>" + innerHtml;
+  }
+  function toolAiExplain(promptText, resultBox) {
+    resultBox.innerHTML = '<div class="tool-ai-box"><b>AI 解读</b><div class="tool-ai-text">正在生成解读…</div></div>';
+    var textEl = resultBox.querySelector(".tool-ai-text");
+    fetch(GATEWAY + "/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer sk-playground-demo" },
+      body: JSON.stringify({ model: TOOL_AI_MODEL, messages: [{ role: "user", content: promptText }], stream: false, max_tokens: 500 }),
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      var out = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+      textEl.textContent = out || "AI 未返回内容，请稍后重试。";
+    }).catch(function () {
+      textEl.textContent = "AI 解读暂时不可用（网络异常或模型额度耗尽），基础查询结果不受影响。";
+    });
+  }
   function renderTool(name) {
     var el = document.getElementById("tool-body");
     if (!el) return;
+    if (name === "ip") return renderToolIp(el);
+    if (name === "moderation") return renderToolModeration(el);
+    el.innerHTML = '<div class="model-empty">该工具正在建设中，敬请期待</div>';
+  }
+
+  /* ---- 工具：IP 归属地查询 ---- */
+  function renderToolIp(el) {
+    el.innerHTML = toolShell("IP 归属地查询",
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;vertical-align:-4px;color:var(--accent);"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 4 5.6 4 9s-1.5 6.4-4 9c-2.5-2.6-4-5.6-4-9s1.5-6.4 4-9z"/></svg>',
+      "/v1/ip_location",
+      '<p class="tool-intro">输入任意公网 IP 查询其地理位置与运营商；留空则查询你当前的出口 IP。查询结果可一键生成 AI 解读。</p>' +
+      '<div class="tool-io"><textarea id="ip-input" rows="2" placeholder="例如 8.8.8.8 或 114.114.114.114，留空查询本机出口 IP"></textarea>' +
+      '<div class="tool-btns"><button class="btn tool-run" id="ip-run">查询</button><button class="btn tool-ai" id="ip-ai" style="display:none;">AI 解读</button></div></div>' +
+      '<div id="ip-result" class="tool-result"></div>');
+    var run = document.getElementById("ip-run");
+    var ai = document.getElementById("ip-ai");
+    var lastData = null;
+    run.addEventListener("click", function () {
+      var ip = document.getElementById("ip-input").value.trim();
+      var box = document.getElementById("ip-result");
+      box.innerHTML = '<div class="tool-loading">查询中…</div>';
+      ai.style.display = "none"; lastData = null;
+      fetch(GATEWAY + "/ip_location", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer sk-playground-demo" },
+        body: JSON.stringify({ model: "ip-location", ip: ip }),
+      }).then(function (r) { return r.json(); }).then(function (j) {
+        lastData = j;
+        var flat = [];
+        (function walk(o, prefix) {
+          Object.keys(o || {}).forEach(function (k) {
+            var v = o[k];
+            var key = prefix ? prefix + " · " + k : k;
+            if (v && typeof v === "object") walk(v, key);
+            else flat.push([key, String(v)]);
+          });
+        })(j, "");
+        if (!flat.length) { box.innerHTML = '<div class="tool-empty">未查询到信息，请检查 IP 格式。</div>'; return; }
+        box.innerHTML = '<div class="tool-kv">' + flat.map(function (p) {
+          return '<div class="pg-hrow"><span>' + esc(p[0]) + "</span><b>" + esc(p[1]) + "</b></div>";
+        }).join("") + '</div>';
+        ai.style.display = "";
+      }).catch(function () {
+        box.innerHTML = '<div class="tool-empty">查询失败，请稍后重试。</div>';
+      });
+    });
+    ai.addEventListener("click", function () {
+      if (!lastData) return;
+      var box = document.getElementById("ip-result");
+      var prompt = "以下是一个 IP 归属地查询接口返回的 JSON 数据。请用中文写 2-3 句通俗分析：该 IP 的地理位置特征、可能的网络环境（家庭宽带/机房/公共DNS等）、以及这类 IP 常见的使用场景。不要罗列原始数据。\n\n" + JSON.stringify(lastData);
+      toolAiExplain(prompt, box);
+    });
+  }
+
+  /* ---- 工具子页渲染占位（后续批次实现） ---- */
+  function renderToolPlaceholder(el) {
     el.innerHTML = '<div class="model-empty">该工具正在建设中，敬请期待</div>';
   }
 
