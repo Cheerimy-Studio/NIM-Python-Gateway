@@ -726,6 +726,16 @@
   .tool-ai-box b { color: var(--accent); display: block; margin-bottom: 6px; font-size: 13px; }
   .tool-ai-box .tool-ai-text { font-size: 13.5px; line-height: 1.8; color: var(--text); white-space: pre-wrap; }
 
+  /* ===== 棋类游戏 ===== */
+  .tt-board { display: grid; grid-template-columns: repeat(3, 86px); grid-auto-rows: 86px; gap: 6px;
+    max-width: 286px; margin: 4px 0 14px; }
+  .tt-cell { border: 1px solid var(--border); border-radius: 10px; background: var(--card);
+    display: flex; align-items: center; justify-content: center; font-size: 34px; font-weight: 700;
+    cursor: pointer; color: var(--accent); transition: background .12s; user-select: none; }
+  .tt-cell:hover { background: var(--card2); }
+  .tt-cell.taken { cursor: default; }
+  .tt-cell.taken:hover { background: var(--card); }
+
   footer { text-align: center; color: var(--muted); font-size: 13px; padding: 40px 20px 32px;
     border-top: 1px solid var(--border); margin-top: 40px; }
 
@@ -2302,7 +2312,139 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     if (name === "moderation") return renderToolModeration(el);
     if (name === "translate") return renderToolTranslate(el);
     if (name === "summary") return renderToolSummary(el);
+    if (name === "tictactoe") return renderToolTicTacToe(el);
     el.innerHTML = '<div class="model-empty">该工具正在建设中，敬请期待</div>';
+  }
+
+  /* ---- 游戏：井字棋（minimax 算法 / LLM 对手可切换） ---- */
+  function renderToolTicTacToe(el) {
+    var chatOpts = models.filter(pgModelOk).map(function (m) { return '<option value="' + esc(m) + '">' + esc(m) + "</option>"; }).join("");
+    el.innerHTML = toolShell("井字棋对弈",
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;vertical-align:-4px;color:var(--accent);"><path d="M4 4h16v16H4z"/><path d="M4 9.33h16M4 14.67h16M9.33 4v16M14.67 4v16"/></svg>',
+      "minimax / LLM 对手",
+      '<p class="tool-intro">你是 <b>✕</b>，对手是 <b>◯</b>。「算法」对手使用 minimax 全量搜索，理论上不可战胜（最好结果逼平）；「LLM 模型」对手由你选择的 AI 模型实时思考落子——试试能不能抓住大模型的逻辑漏洞。</p>' +
+      '<div class="tool-btns" style="margin-bottom:14px;flex-wrap:wrap;align-items:center;">' +
+      '<span style="align-self:center;">对手</span>' +
+      '<select id="tt-mode" style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;">' +
+      '<option value="algo">minimax 算法</option><option value="llm">LLM 模型</option></select>' +
+      '<select id="tt-llm-model" style="display:none;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;max-width:300px;">' + chatOpts + "</select>" +
+      '<button class="btn tool-run" id="tt-restart">重新开始</button>' +
+      '<span id="tt-status" style="align-self:center;color:var(--accent);font-weight:600;"></span></div>' +
+      '<div class="tt-board" id="tt-board"></div>' +
+      '<div id="tt-result" class="tool-result"></div>');
+    var board = Array(9).fill("");
+    var over = false;
+    var WINS = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+    function winner(b) {
+      for (var i = 0; i < WINS.length; i++) {
+        var w = WINS[i];
+        if (b[w[0]] && b[w[0]] === b[w[1]] && b[w[1]] === b[w[2]]) return { who: b[w[0]], line: w };
+      }
+      return b.indexOf("") === -1 ? { who: "draw", line: [] } : null;
+    }
+    function minimax(b, isAi, depth) {
+      var w = winner(b);
+      if (w) {
+        if (w.who === "O") return 10 - depth;
+        if (w.who === "X") return depth - 10;
+        return 0;
+      }
+      var best = isAi ? -99 : 99;
+      for (var i = 0; i < 9; i++) {
+        if (b[i]) continue;
+        b[i] = isAi ? "O" : "X";
+        var v = minimax(b, !isAi, depth + 1);
+        b[i] = "";
+        if (isAi ? v > best : v < best) best = v;
+      }
+      return best;
+    }
+    function bestMove() {
+      var b = board.slice(), best = -99, cand = [];
+      for (var i = 0; i < 9; i++) {
+        if (b[i]) continue;
+        b[i] = "O";
+        var v = minimax(b, false, 0);
+        b[i] = "";
+        if (v > best) { best = v; cand = [i]; } else if (v === best) cand.push(i);
+      }
+      return cand[Math.floor(Math.random() * cand.length)];
+    }
+    function draw() {
+      var el = document.getElementById("tt-board");
+      el.innerHTML = board.map(function (c, i) {
+        return '<div class="tt-cell' + (c ? " taken" : "") + '" data-i="' + i + '">' + (c === "X" ? "✕" : c === "O" ? "◯" : "") + "</div>";
+      }).join("");
+      Array.prototype.forEach.call(el.querySelectorAll(".tt-cell"), function (cell) {
+        cell.addEventListener("click", function () { onCell(+cell.getAttribute("data-i")); });
+      });
+    }
+    function setStatus(t) { document.getElementById("tt-status").textContent = t; }
+    function finish(w) {
+      over = true;
+      var msg = w.who === "X" ? "🎉 你赢了！" : w.who === "O" ? "💥 对手获胜" : "🤝 平局";
+      setStatus(msg);
+      document.getElementById("tt-result").innerHTML = '<div class="tool-ai-box"><b>对局结束</b><div class="tool-ai-text">' + msg + "</div></div>";
+    }
+    function aiMoveAlgo() {
+      var i = bestMove();
+      board[i] = "O"; draw();
+      var w = winner(board);
+      if (w) return finish(w);
+      setStatus("轮到你了（✕）");
+    }
+    function aiMoveLlm() {
+      var model = document.getElementById("tt-llm-model").value;
+      var grid = "";
+      for (var r = 0; r < 3; r++) {
+        grid += board.slice(r * 3, r * 3 + 3).map(function (c) { return c || "-"; }).join(" ") + "\n";
+      }
+      setStatus("LLM 思考中…");
+      fetch(GATEWAY + "/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer sk-playground-demo" },
+        body: JSON.stringify({
+          model: model, temperature: 0.2, max_tokens: 20, stream: false,
+          messages: [
+            { role: "system", content: "你在玩井字棋，执 O 对抗人类的 X。棋盘用 - 表示空格。只输出一个 0-8 的数字表示你的落子位置（0 左上，8 右下），不要输出任何其他内容。必须选择空格，优先取胜、其次阻挡人类连三。" },
+            { role: "user", content: "当前棋盘：\n" + grid + "轮到你（O）落子，输出空格编号。" }
+          ],
+        }),
+      }).then(function (r) { return r.json(); }).then(function (j) {
+        var out = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+        var idx = -1;
+        if (out) { var mnum = String(out).match(/[0-8]/); if (mnum) idx = +mnum[0]; }
+        if (idx < 0 || board[idx]) { idx = -1; for (var i = 0; i < 9; i++) if (!board[i]) { idx = i; break; } }
+        board[idx] = "O"; draw();
+        var w = winner(board);
+        if (w) return finish(w);
+        setStatus("轮到你了（✕）");
+      }).catch(function () {
+        setStatus("LLM 调用失败，回退算法对手");
+        aiMoveAlgo();
+      });
+    }
+    function aiMove() {
+      var mode = document.getElementById("tt-mode").value;
+      if (mode === "llm") aiMoveLlm(); else aiMoveAlgo();
+    }
+    function onCell(i) {
+      if (over || board[i]) return;
+      board[i] = "X"; draw();
+      var w = winner(board);
+      if (w) return finish(w);
+      setStatus("对手思考中…");
+      setTimeout(aiMove, 300);
+    }
+    document.getElementById("tt-mode").addEventListener("change", function () {
+      document.getElementById("tt-llm-model").style.display = this.value === "llm" ? "" : "none";
+    });
+    document.getElementById("tt-restart").addEventListener("click", function () {
+      board = Array(9).fill(""); over = false;
+      document.getElementById("tt-result").innerHTML = "";
+      draw(); setStatus("轮到你了（✕）");
+    });
+    draw(); setStatus("轮到你了（✕）");
   }
 
   /* ---- 工具：AI 摘要 ---- */
