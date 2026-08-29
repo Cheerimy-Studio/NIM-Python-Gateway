@@ -33,7 +33,7 @@ AQUA 把 **Nvidia NIM、Gitee AI、SiliconFlow、智谱 GLM、讯飞星火、Clo
 | SiliconFlow | `siliconflow/` | — |
 | 智谱 GLM | `zhipu/` | 含 CogView 绘图、CogVideo 视频 |
 | 讯飞星火 | `spark/` | — |
-| Workers AI | `workers-ai/`、`workers-ai-tts/` | Cloudflare 自家 AI，多账号日额度池 |
+| Workers AI | `workers-ai/`、`workers-ai-tts/` | Cloudflare 自家 AI，免费日额度管理 |
 | 自定义上游 | `acu/` | 直连部署者自己的专属上游（地址+密钥均由环境变量配置） |
 
 模型名带前缀自动路由到对应上游；不带前缀的走静态模型目录识别，未识别的兜底到 Nvidia。
@@ -61,7 +61,7 @@ AQUA 把 **Nvidia NIM、Gitee AI、SiliconFlow、智谱 GLM、讯飞星火、Clo
 三个 **Durable Object** 负责有状态调度（单线程模型，天然无竞态）：
 
 - **NvKeyPool** — Nvidia 密钥池：随机轮询、每 Key 每分钟 38 次限速（避开上游 429）、限流冷却、失效隔离；模型封禁只针对 client_error（400/404），5xx/429 仅冷却 Key 不误杀模型
-- **WaiBudget** — Workers AI 日额度：多账号 JSON 池按容量分摊，原子计数，超限自动切下一账号
+- **WaiBudget** — Workers AI 免费日额度：原子计数与每日重置，超额自动熔断返回 429，保护部署者的账号额度不被打爆
 - **AcuConcurrency** — 自定义上游全局并发闸：并发满时排队等待（最长 10s），保护后端
 
 其他特性：
@@ -193,7 +193,7 @@ curl https://your-gateway-domain.example/v1/chat/completions \
 <details>
 <summary><b>模型列表能出来但对话报 429</b></summary>
 
-Workers AI 日额度用尽（WaiBudget 池）或上游限流。Workers AI 可在 `WAI_ACCOUNTS` 里加更多账号分摊额度。
+Workers AI 日额度用尽（WaiBudget 熔断）或上游限流。等待每天 00:00 UTC 自动重置，或改用其他平台模型。
 </details>
 
 <details>
@@ -220,8 +220,7 @@ Workers AI 日额度用尽（WaiBudget 池）或上游限流。Workers AI 可在
 | `NVIDIA_BASE` 等 `*_BASE` | 官方地址 | 各上游 Base URL，一般不用改 |
 | `GITEE_KEY` / `SILICONFLOW_KEY` / `ZHIPU_KEY` / `SPARK_KEY` | — | 对应上游密钥，未配置则该通道 502 |
 | `ACU_BASE` / `ACU_KEY` | — | 自定义专属上游地址与密钥 |
-| `WAI_ACCOUNTS` | — | Workers AI 多账号池，JSON 数组 `[{"name","account_id","token","cap"}]` |
-| `WAI_ACCOUNT_ID` / `WAI_API_TOKEN` / `WAI_CAP_GLOBAL` | — | Workers AI 单账号兜底配置 |
+| `WAI_ACCOUNT_ID` / `WAI_API_TOKEN` / `WAI_CAP_GLOBAL` | — | Workers AI 凭据（**部署者自用，配合部署者自己的 Cloudflare 账号**；请勿填入他人账号） |
 
 ## 项目结构（每个文件夹都有独立 README 详解）
 

@@ -1227,7 +1227,7 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
         <h2>特殊模型说明</h2>
         <ul class="tips">
           <li><b>Auto 路由</b>：填入 <code>auto</code> 或 <code>acu/auto</code>，网关自动从 Nvidia 候选池随机命中一个主流模型。</li>
-          <li><b>Workers AI</b>：模型 ID 为 <code>workers-ai/&#123;alias&#125;</code>（如 <code>workers-ai/llama-3.1-8b</code>），每日有免费额度，超出自动返回 429。</li>
+          <li><b>Workers AI</b>：模型 ID 为 <code>workers-ai/&#123;alias&#125;</code>（如 <code>workers-ai/llama-3.1-8b</code>），有日额度限制，超出自动返回 429。</li>
           <li><b>智谱 GLM</b>：模型 ID 为 <code>zhipu/&#123;model&#125;</code>（如 <code>zhipu/glm-4-flash</code>），含 CogView 绘图 / CogVideo 视频，同样免费。</li>
           <li><b>讯飞星火</b>：模型 ID 为 <code>spark/&#123;model&#125;</code>（如 <code>spark/spark-lite</code>），由科大讯飞免费提供。</li>
           <li><b>官方自营</b>：模型 ID 为 <code>acu/&#123;model&#125;</code>（如 <code>acu/deepseek-v4-flash</code>），由 AQUA 官方自营旗舰通道提供，长期服务、稳定可靠。</li>
@@ -1264,7 +1264,7 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
           <thead><tr><th>status</th><th>含义</th><th>处理建议</th></tr></thead>
           <tbody>
             <tr><td>（无）</td><td>正常可用</td><td>直接调用</td></tr>
-            <tr><td><code>exhausted</code></td><td>Workers AI 今日免费额度已用尽</td><td>等待每天 00:00 UTC 自动重置，或切换其他平台模型</td></tr>
+            <tr><td><code>exhausted</code></td><td>Workers AI 今日额度已用尽</td><td>等待每天 00:00 UTC 自动重置，或切换其他平台模型</td></tr>
             <tr><td><code>unavailable</code></td><td>模型在上游被封锁（3+ 密钥无访问权限）</td><td>约 10 分钟后自动恢复，期间可先切换其他模型</td></tr>
           </tbody>
         </table></div>
@@ -1544,7 +1544,7 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     "BAAI/bge-large-en-v1.5", "BAAI/bge-large-zh-v1.5", "BAAI/bge-m3", "BAAI/bge-reranker-v2-m3",
     "FunAudioLLM/SenseVoiceSmall", "PaddlePaddle/PaddleOCR-VL-1.5", "Qwen/Qwen3-ASR-1.7B",
     "TeleAI/TeleSpeechASR", "tencent/Hunyuan-MT-7B", "THUDM/GLM-4-9B-0414", "THUDM/GLM-Z1-9B-0414",
-    // ── Workers AI（Cloudflare 免费额度） ──
+    // ── Workers AI（Cloudflare，有日额度限制） ──
     "workers-ai/llama-3.2-1b", "workers-ai/llama-3.2-3b", "workers-ai/llama-3.1-8b", "workers-ai/llama-3.3-70b",
     "workers-ai/mistral-7b", "workers-ai/qwen1.5-7b", "workers-ai/deepseek-r1-32b", "workers-ai/qwen2.5-coder-32b",
     "workers-ai/qwq-32b", "workers-ai/gemma-3-12b", "workers-ai/mistral-small-24b",
@@ -2014,8 +2014,8 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     var limits = base.limits.slice();
     // 平台特定限制
     if (meta.platform === "workers-ai") {
-      desc += "（由 Cloudflare Workers AI 提供每日免费额度）";
-      limits.unshift("走 Workers AI 免费额度通道，每日 00:00 UTC 重置", "全站额度用尽后统一返回 429");
+      desc += "（由 Cloudflare Workers AI 提供）";
+      limits.unshift("Workers AI 有日额度限制，每日 00:00 UTC 重置", "额度用尽后该平台模型统一返回 429");
     } else if (meta.platform === "zhipu") {
       limits.unshift("由智谱开放平台免费提供");
     } else if (meta.platform === "spark") {

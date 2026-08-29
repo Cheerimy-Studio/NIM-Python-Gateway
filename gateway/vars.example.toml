@@ -40,8 +40,8 @@ SPARK_KEY = "你的SPARK_KEY"
 ACU_BASE = "https://your-private-upstream.example/v1/chat/completions"
 ACU_KEY = "sk-your-private-upstream-key"
 
-# ---- Workers AI（多账号日额度池，JSON 数组；或用下面的单账号兜底）----
-WAI_ACCOUNTS = '[{"name":"a1","account_id":"xxxx","token":"yyyy","cap":10000}]'
+# ---- Workers AI（部署者自己的 Cloudflare 账号凭据，用于 workers-ai/* 模型）----
+# 获取方式：Cloudflare Dashboard → My Profile → API Tokens（或 Account ID 在 Workers 概览页右栏）
 # WAI_ACCOUNT_ID = "你的CF账号ID"
 # WAI_API_TOKEN = "你的CF API Token"
 # WAI_CAP_GLOBAL = "10000"

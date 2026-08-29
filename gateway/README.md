@@ -10,7 +10,7 @@
 | `src/keypool.rs` | `NvKeyPool` Durable Object：Nvidia 密钥池调度（随机轮询、38 次/分限速、限流冷却、失效隔离、模型封禁管理） |
 | `src/keys.rs` | 从环境变量读取密钥池：支持 `NVIDIA_KEYS` + `NVIDIA_KEYS_2..N` 分片自动合并（绕过 CF 单变量 5.1KB 上限） |
 | `src/acu_limit.rs` | `AcuConcurrency` Durable Object：自定义上游（acu/*）的全局并发闸，并发满时排队最长 10s |
-| `src/workers_ai.rs` | `WaiBudget` Durable Object：Workers AI 多账号日额度原子计数，超限自动切号 |
+| `src/workers_ai.rs` | `WaiBudget` Durable Object：Workers AI 免费日额度原子计数与每日重置，超额熔断保护部署者账号 |
 | `vars.example.toml` | **环境变量样例**——复制为 `vars.toml` 并填入你的真实密钥（`vars.toml` 不入库） |
 | `wrangler.toml` | Workers 配置：DO/KV/D1/R2 绑定、构建命令、域名路由（部署前替换占位符） |
 | `Cargo.toml` | Rust 依赖（worker 0.8 + serde 等） |
