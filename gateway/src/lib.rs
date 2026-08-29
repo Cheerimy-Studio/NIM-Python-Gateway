@@ -627,9 +627,12 @@ fn build_upstream_req(url: &str, auth: Option<&str>, extra_headers: Option<&[(St
         }
     }
     let mut init = RequestInit::new();
-    init.with_method(method);
+    init.with_method(method.clone());
     init.with_headers(headers);
-    init.with_body(Some(body.to_vec().into()));
+    // GET 请求不允许携带 body，否则 Workers 运行时会直接 500
+    if method != Method::Get {
+        init.with_body(Some(body.to_vec().into()));
+    }
     Request::new_with_init(url, &init)
 }
 
