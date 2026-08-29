@@ -748,8 +748,17 @@
   .dev-tabs .pill { cursor: pointer; }
   /* 下拉与输入统一（游戏区） */
   .pg-toolbar select, .tool-btns select, .tool-io select { background: var(--card2); color: var(--text);
-    border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; font-size: 13px; }
-  .pg-toolbar select:focus, .tool-btns select:focus { outline: none; border-color: var(--accent); }
+    border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; font-size: 13px; max-width: 320px; }
+  .pg-toolbar select:focus, .tool-btns select:focus, .tool-io select:focus { outline: none; border-color: var(--accent); }
+  /* 工具/游戏控制行：替代散落的内联样式 */
+  .tool-bar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
+  .tool-bar > label, .tool-bar > span { font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+  .tool-bar input[type=radio] { accent-color: var(--accent); margin: 0; }
+  .tool-bar .tool-status { color: var(--accent); font-weight: 600; }
+  .tool-flex1 { flex: 1; min-width: 200px; }
+  /* 棋类游戏双栏：棋盘 + 信息面板 */
+  .tt-layout { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+  .tt-side { flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 12px; }
 
   /* ===== 棋类游戏 ===== */
   .tt-board { display: grid; grid-template-columns: repeat(3, 86px); grid-auto-rows: 86px; gap: 6px;
@@ -877,6 +886,17 @@
     .qq-info p { font-size: 12px; }
     a.qq-join { padding: 8px 13px; font-size: 12px; }
     .qq-nav { padding: 6px 9px; font-size: 12px; }
+
+    /* 工具箱 / 游戏 */
+    .tools-sec { margin: 28px 0 14px; }
+    .tool-page-card { padding: 18px 16px; border-radius: 14px; }
+    .tool-head h2 { font-size: 18px; }
+    .tool-bar { gap: 8px; }
+    .tool-bar select { max-width: 100%; }
+    .tt-board { grid-template-columns: repeat(3, 72px); grid-auto-rows: 72px; }
+    .tt-cell { font-size: 28px; }
+    .gk-board { grid-template-columns: repeat(9, 30px); grid-auto-rows: 30px; }
+    .gk-black, .gk-white { width: 18px; height: 18px; }
   }
 
   /* ===== 超小屏 (≤380px) ===== */
@@ -2396,11 +2416,11 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     function kvRow(k, v) { return '<div class="pg-hrow"><span>' + esc(k) + "</span><b>" + esc(v) + "</b></div>"; }
     function showUuid() {
       var u = crypto.randomUUID ? crypto.randomUUID() : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) { var r = Math.random() * 16 | 0; return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16); });
-      body.innerHTML = '<div class="tool-io"><div class="tool-btns"><input id="dev-out" readonly value="' + u + '" style="flex:1;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-family:var(--mono);font-size:13px;"><button class="btn tool-run" id="dev-gen">生成</button></div></div>';
+      body.innerHTML = '<div class="tool-io"><div class="tool-btns" style="width:100%;"><input id="dev-out" class="tool-flex1" readonly value="' + u + '" style="font-family:var(--mono);"><button class="btn tool-run" id="dev-gen">生成</button></div></div>';
       document.getElementById("dev-gen").addEventListener("click", showUuid);
     }
     function showTs() {
-      body.innerHTML = '<div class="tool-io"><div class="tool-btns"><input id="dev-ts" placeholder="输入秒级时间戳，留空显示当前" style="flex:1;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px;"><button class="btn tool-run" id="dev-ts-go">转换</button></div></div><div id="dev-ts-out" class="tool-kv"></div>';
+      body.innerHTML = '<div class="tool-io"><div class="tool-btns" style="width:100%;"><input id="dev-ts" class="tool-flex1" placeholder="输入秒级时间戳，留空显示当前"><button class="btn tool-run" id="dev-ts-go">转换</button></div></div><div id="dev-ts-out" class="tool-kv"></div>';
       function conv() {
         var v = document.getElementById("dev-ts").value.trim();
         var ts = v ? parseInt(v, 10) : Math.floor(Date.now() / 1000);
@@ -2507,12 +2527,11 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;vertical-align:-4px;color:var(--accent);"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
       "LLM 驱动",
       '<p class="tool-intro">与 AI 轮流接龙：你出一个四字成语，AI 必须用它的最后一个字开头接一个新成语，如此往复。首尾字自动校验，AI 接不上或接错就判你赢！</p>' +
-      '<div class="tool-btns" style="margin-bottom:14px;flex-wrap:wrap;align-items:center;">' +
-      '<span style="align-self:center;">模型</span>' +
-      '<select id="id-model" style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;max-width:300px;">' + chatOpts + "</select>" +
+      '<div class="tool-bar"><span>模型</span>' +
+      '<select id="id-model">' + chatOpts + "</select>" +
       '<button class="btn tool-run" id="id-restart">重新开始</button>' +
-      '<span id="id-status" style="align-self:center;color:var(--accent);font-weight:600;"></span></div>' +
-      '<div class="tool-io"><div class="tool-btns"><input id="id-input" placeholder="输入一个四字成语开始，如：一帆风顺" style="flex:1;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px;">' +
+      '<span class="tool-status" id="id-status">输入一个四字成语开始</span></div>' +
+      '<div class="tool-io"><div class="tool-btns" style="width:100%;"><input id="id-input" class="tool-flex1" placeholder="输入一个四字成语开始，如：一帆风顺">' +
       '<button class="btn tool-run" id="id-go">接龙</button></div></div>' +
       '<div class="tool-kv" id="id-log"></div>' +
       '<div id="id-result" class="tool-result"></div>');
@@ -2586,13 +2605,11 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;vertical-align:-4px;color:var(--accent);"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>',
       "纯算法 / LLM 推理",
       '<p class="tool-intro">4 位不重复数字。<b>A</b> = 数字和位置都对，<b>B</b> = 数字对位置不对。「你猜 AI」模式下 AI 出题你猜；「LLM 挑战」模式下你想一个数字，看 AI 需要几步推理出来。</p>' +
-      '<div class="tool-btns" style="margin-bottom:14px;flex-wrap:wrap;align-items:center;">' +
-      '<span style="align-self:center;">模式</span>' +
-      '<select id="gs-mode" style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;">' +
-      '<option value="user">你猜 AI 出题</option><option value="llm">LLM 挑战模式</option></select>' +
-      '<select id="gs-llm-model" style="display:none;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;max-width:300px;">' + chatOpts + "</select>" +
+      '<div class="tool-bar"><span>模式</span>' +
+      '<select id="gs-mode"><option value="user">你猜 AI 出题</option><option value="llm">LLM 挑战模式</option></select>' +
+      '<select id="gs-llm-model" style="display:none;">' + chatOpts + "</select>" +
       '<button class="btn tool-run" id="gs-restart">重新开始</button>' +
-      '<span id="gs-status" style="align-self:center;color:var(--accent);font-weight:600;"></span></div>' +
+      '<span class="tool-status" id="gs-status">AI 已出题，开始猜吧</span></div>' +
       '<div id="gs-area"></div>' +
       '<div id="gs-result" class="tool-result"></div>');
     var area = document.getElementById("gs-area");
@@ -2623,7 +2640,7 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     }
     function startUserMode() {
       secret = randSecret(); rounds = 0; history = [];
-      area.innerHTML = '<div class="tool-io"><div class="tool-btns"><input id="gs-input" placeholder="输入 4 位不重复数字" style="flex:1;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px;">' +
+      area.innerHTML = '<div class="tool-io"><div class="tool-btns" style="width:100%;"><input id="gs-input" class="tool-flex1" placeholder="输入 4 位不重复数字">' +
         '<button class="btn tool-run" id="gs-go">猜！</button></div></div>' +
         '<div class="tool-kv" id="gs-log"></div>';
       document.getElementById("gs-go").addEventListener("click", userGuess);
@@ -2645,7 +2662,7 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     }
     function startLlmMode() {
       rounds = 0; history = [];
-      area.innerHTML = '<div class="tool-io"><div class="tool-btns"><input id="gs-input" placeholder="想一个 4 位不重复数字（别告诉 AI）" style="flex:1;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px;">' +
+      area.innerHTML = '<div class="tool-io"><div class="tool-btns" style="width:100%;"><input id="gs-input" class="tool-flex1" placeholder="想一个 4 位不重复数字（别告诉 AI）">' +
         '<button class="btn tool-run" id="gs-begin">开始挑战</button></div></div>' +
         '<div class="tool-kv" id="gs-log"></div>';
       setStatus("输入你的数字后点击开始");
@@ -2708,15 +2725,13 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;vertical-align:-4px;color:var(--accent);"><circle cx="7" cy="7" r="3"/><circle cx="17" cy="17" r="3"/><circle cx="17" cy="7" r="3" fill="currentColor"/><circle cx="7" cy="17" r="3" fill="currentColor"/></svg>',
       "评分引擎 / LLM 落子",
       '<p class="tool-intro">9×9 棋盘，五连即胜。你是黑棋先手。「算法」对手基于活/冲棋型评分即时应对；「LLM 落子」模式把棋盘交给大模型解析（解析失败自动回退算法）。</p>' +
-      '<div class="tool-btns" style="margin-bottom:14px;flex-wrap:wrap;align-items:center;">' +
-      '<span style="align-self:center;">对手</span>' +
-      '<select id="gk-mode" style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;">' +
-      '<option value="algo">评分算法</option><option value="llm">LLM 落子</option></select>' +
-      '<select id="gk-llm-model" style="display:none;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;max-width:300px;">' + chatOpts + "</select>" +
+      '<div class="tool-bar"><span>对手</span>' +
+      '<select id="gk-mode"><option value="algo">评分算法</option><option value="llm">LLM 落子</option></select>' +
+      '<select id="gk-llm-model" style="display:none;">' + chatOpts + "</select>" +
       '<button class="btn tool-run" id="gk-restart">重新开始</button>' +
-      '<span id="gk-status" style="align-self:center;color:var(--accent);font-weight:600;"></span></div>' +
-      '<div class="gk-board" id="gk-board"></div>' +
-      '<div id="gk-result" class="tool-result"></div>');
+      '<span class="tool-status" id="gk-status">轮到你了（黑棋）</span></div>' +
+      '<div class="tt-layout"><div class="gk-board" id="gk-board"></div>' +
+      '<div class="tt-side" id="gk-result"></div></div>');
     var N = 9;
     var board = [];
     var over = false;
@@ -2871,15 +2886,13 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;vertical-align:-4px;color:var(--accent);"><path d="M4 4h16v16H4z"/><path d="M4 9.33h16M4 14.67h16M9.33 4v16M14.67 4v16"/></svg>',
       "minimax / LLM 对手",
       '<p class="tool-intro">你是 <b>✕</b>，对手是 <b>◯</b>。「算法」对手使用 minimax 全量搜索，理论上不可战胜（最好结果逼平）；「LLM 模型」对手由你选择的 AI 模型实时思考落子——试试能不能抓住大模型的逻辑漏洞。</p>' +
-      '<div class="tool-btns" style="margin-bottom:14px;flex-wrap:wrap;align-items:center;">' +
-      '<span style="align-self:center;">对手</span>' +
-      '<select id="tt-mode" style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;">' +
-      '<option value="algo">minimax 算法</option><option value="llm">LLM 模型</option></select>' +
-      '<select id="tt-llm-model" style="display:none;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;max-width:300px;">' + chatOpts + "</select>" +
+      '<div class="tool-bar"><span>对手</span>' +
+      '<select id="tt-mode"><option value="algo">minimax 算法</option><option value="llm">LLM 模型</option></select>' +
+      '<select id="tt-llm-model" style="display:none;">' + chatOpts + "</select>" +
       '<button class="btn tool-run" id="tt-restart">重新开始</button>' +
-      '<span id="tt-status" style="align-self:center;color:var(--accent);font-weight:600;"></span></div>' +
-      '<div class="tt-board" id="tt-board"></div>' +
-      '<div id="tt-result" class="tool-result"></div>');
+      '<span class="tool-status" id="tt-status">轮到你了（✕）</span></div>' +
+      '<div class="tt-layout"><div class="tt-board" id="tt-board"></div>' +
+      '<div class="tt-side" id="tt-result"></div></div>');
     var board = Array(9).fill("");
     var over = false;
     var WINS = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
@@ -3005,8 +3018,8 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
       "chat 端点驱动",
       '<p class="tool-intro">粘贴长文，一键提炼为要点列表、一段话总结或文章大纲。</p>' +
       '<div class="tool-io"><textarea id="sum-input" rows="8" placeholder="粘贴文章、报告、聊天记录等长文本…"></textarea>' +
-      '<div class="tool-btns"><span style="align-self:center;">模式</span>' + modes +
-      '<button class="btn tool-run" id="sum-run">生成摘要</button></div></div>' +
+      '<div class="tool-bar"><span>模式</span>' + modes +
+      '<button class="btn tool-run" id="sum-run">生成摘要</button></div>' +
       '<div id="sum-result" class="tool-result"></div>');
     var run = document.getElementById("sum-run");
     run.addEventListener("click", function () {
@@ -3057,8 +3070,8 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
       "chat 端点驱动",
       '<p class="tool-intro">多语种互译，源语言可自动检测。底层由 AQUA 网关对话模型驱动，译文自然流畅。</p>' +
       '<div class="tool-io"><textarea id="tr-input" rows="6" placeholder="粘贴要翻译的文本…"></textarea>' +
-      '<div class="tool-btns"><span style="align-self:center;">译为</span><select id="tr-lang" style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;">' + langOpts + "</select>" +
-      '<button class="btn tool-run" id="tr-run">开始翻译</button></div></div>' +
+      '<div class="tool-bar"><span>译为</span><select id="tr-lang">' + langOpts + "</select>" +
+      '<button class="btn tool-run" id="tr-run">开始翻译</button></div>' +
       '<div id="tr-result" class="tool-result"></div>');
     var run = document.getElementById("tr-run");
     run.addEventListener("click", function () {
