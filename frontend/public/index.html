@@ -2327,7 +2327,130 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     if (name === "summary") return renderToolSummary(el);
     if (name === "tictactoe") return renderToolTicTacToe(el);
     if (name === "gomoku") return renderToolGomoku(el);
+    if (name === "guess") return renderToolGuess(el);
     el.innerHTML = '<div class="model-empty">该工具正在建设中，敬请期待</div>';
+  }
+
+  /* ---- 游戏：猜数字 1A2B（人猜 AI / LLM 挑战模式） ---- */
+  function renderToolGuess(el) {
+    var chatOpts = models.filter(pgModelOk).map(function (m) { return '<option value="' + esc(m) + '">' + esc(m) + "</option>"; }).join("");
+    el.innerHTML = toolShell("猜数字 1A2B",
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;vertical-align:-4px;color:var(--accent);"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>',
+      "纯算法 / LLM 推理",
+      '<p class="tool-intro">4 位不重复数字。<b>A</b> = 数字和位置都对，<b>B</b> = 数字对位置不对。「你猜 AI」模式下 AI 出题你猜；「LLM 挑战」模式下你想一个数字，看 AI 需要几步推理出来。</p>' +
+      '<div class="tool-btns" style="margin-bottom:14px;flex-wrap:wrap;align-items:center;">' +
+      '<span style="align-self:center;">模式</span>' +
+      '<select id="gs-mode" style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;">' +
+      '<option value="user">你猜 AI 出题</option><option value="llm">LLM 挑战模式</option></select>' +
+      '<select id="gs-llm-model" style="display:none;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;max-width:300px;">' + chatOpts + "</select>" +
+      '<button class="btn tool-run" id="gs-restart">重新开始</button>' +
+      '<span id="gs-status" style="align-self:center;color:var(--accent);font-weight:600;"></span></div>' +
+      '<div id="gs-area"></div>' +
+      '<div id="gs-result" class="tool-result"></div>');
+    var area = document.getElementById("gs-area");
+    var secret = "";
+    var rounds = 0;
+    var history = [];
+    function randSecret() {
+      var digits = [0,1,2,3,4,5,6,7,8,9];
+      for (var i = digits.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = digits[i]; digits[i] = digits[j]; digits[j] = t; }
+      return digits.slice(0, 4).join("");
+    }
+    function judge(guess, ans) {
+      var a = 0, b = 0;
+      for (var i = 0; i < 4; i++) {
+        if (guess[i] === ans[i]) a++;
+        else if (ans.indexOf(guess[i]) !== -1) b++;
+      }
+      return [a, b];
+    }
+    function valid(s) { return /^[0-9]{4}$/.test(s) && new Set(s.split("")).size === 4; }
+    function setStatus(t) { document.getElementById("gs-status").textContent = t; }
+    function addHistory(guess, ab) {
+      history.push([guess, ab]);
+      var el = document.getElementById("gs-log");
+      if (el) el.innerHTML = history.map(function (h) {
+        return '<div class="pg-hrow"><span>第 ' + (history.indexOf(h) + 1) + " 次 · " + h[0] + '</span><b>' + h[1][0] + "A" + h[1][1] + "B</b></div>";
+      }).join("");
+    }
+    function startUserMode() {
+      secret = randSecret(); rounds = 0; history = [];
+      area.innerHTML = '<div class="tool-io"><div class="tool-btns"><input id="gs-input" placeholder="输入 4 位不重复数字" style="flex:1;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px;">' +
+        '<button class="btn tool-run" id="gs-go">猜！</button></div></div>' +
+        '<div class="tool-kv" id="gs-log"></div>';
+      document.getElementById("gs-go").addEventListener("click", userGuess);
+      document.getElementById("gs-input").addEventListener("keydown", function (e) { if (e.key === "Enter") userGuess(); });
+      setStatus("AI 已出题，开始猜吧");
+    }
+    function userGuess() {
+      var inp = document.getElementById("gs-input");
+      var g = (inp.value || "").trim();
+      if (!valid(g)) { setStatus("格式错误：需要 4 位不重复数字"); return; }
+      inp.value = "";
+      rounds++;
+      var ab = judge(g, secret);
+      addHistory(g, ab);
+      if (ab[0] === 4) {
+        setStatus("🎉 " + rounds + " 次猜中！");
+        document.getElementById("gs-result").innerHTML = '<div class="tool-ai-box"><b>胜利</b><div class="tool-ai-text">答案就是 ' + secret + "，你用了 " + rounds + " 次。</div></div>";
+      } else setStatus(g + " → " + ab[0] + "A" + ab[1] + "B");
+    }
+    function startLlmMode() {
+      rounds = 0; history = [];
+      area.innerHTML = '<div class="tool-io"><div class="tool-btns"><input id="gs-input" placeholder="想一个 4 位不重复数字（别告诉 AI）" style="flex:1;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px;">' +
+        '<button class="btn tool-run" id="gs-begin">开始挑战</button></div></div>' +
+        '<div class="tool-kv" id="gs-log"></div>';
+      setStatus("输入你的数字后点击开始");
+      document.getElementById("gs-begin").addEventListener("click", function () {
+        var s = (document.getElementById("gs-input").value || "").trim();
+        if (!valid(s)) { setStatus("格式错误：需要 4 位不重复数字"); return; }
+        document.getElementById("gs-input").disabled = true;
+        document.getElementById("gs-begin").disabled = true;
+        secret = s;
+        llmGuess();
+      });
+    }
+    function llmGuess() {
+      var model = document.getElementById("gs-llm-model").value;
+      setStatus("LLM 推理中…");
+      var logText = history.map(function (h) { return h[0] + " → " + h[1][0] + "A" + h[1][1] + "B"; }).join("\n") || "（还没有猜测记录）";
+      fetch(GATEWAY + "/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer sk-playground-demo" },
+        body: JSON.stringify({
+          model: model, temperature: 0.3, max_tokens: 30, stream: false,
+          messages: [
+            { role: "system", content: "你在玩 1A2B 猜数字：目标是 4 位不重复数字。A=数字位置都对，B=数字对位置不对。根据历史猜测反馈推理下一步。只输出一个 4 位数字候选，不要解释。" },
+            { role: "user", content: "历史猜测与反馈：\n" + logText + "\n输出你的下一个猜测（4 位不重复数字）。" }
+          ],
+        }),
+      }).then(function (r) { return r.json(); }).then(function (j) {
+        var out = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+        var g = "";
+        if (out) { var m = String(out).match(/[0-9]{4}/); if (m) g = m[0]; }
+        if (!valid(g)) g = randSecret();
+        rounds++;
+        var ab = judge(g, secret);
+        addHistory(g, ab);
+        if (ab[0] === 4) {
+          setStatus("💥 AI 用 " + rounds + " 次猜中了");
+          document.getElementById("gs-result").innerHTML = '<div class="tool-ai-box"><b>AI 获胜</b><div class="tool-ai-text">你的数字是 ' + secret + "，AI 用了 " + rounds + " 次推理命中。</div></div>";
+        } else {
+          setStatus("AI 猜 " + g + " → " + ab[0] + "A" + ab[1] + "B");
+          setTimeout(llmGuess, 800);
+        }
+      }).catch(function () { setStatus("LLM 调用失败，请重新开始"); });
+    }
+    document.getElementById("gs-mode").addEventListener("change", function () {
+      document.getElementById("gs-llm-model").style.display = this.value === "llm" ? "" : "none";
+      document.getElementById("gs-result").innerHTML = "";
+      if (this.value === "llm") startLlmMode(); else startUserMode();
+    });
+    document.getElementById("gs-restart").addEventListener("click", function () {
+      document.getElementById("gs-result").innerHTML = "";
+      if (document.getElementById("gs-mode").value === "llm") startLlmMode(); else startUserMode();
+    });
+    startUserMode();
   }
 
   /* ---- 游戏：五子棋 9×9（评分引擎 / LLM 落子可切换） ---- */
