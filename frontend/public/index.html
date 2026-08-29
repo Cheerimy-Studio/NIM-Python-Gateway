@@ -2382,6 +2382,164 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
   var capSearchEl = document.getElementById("cap-search");
   if (capSearchEl) capSearchEl.addEventListener("input", renderCapabilities);
 
+  /* ---- Playground（在线体验） ---- */
+  var pgHistory = [];          // {role, content}
+  var pgBusy = false;          // 是否正在流式接收
+  var pgAbort = null;          // AbortController
+  var PG_CHAT_TYPES = ["chat"];  // playground 仅支持对话类模型
+
+  function pgModelOk(id) {
+    var meta = modelMeta[id];
+    if (!meta) return true; // 未知类型保守放行
+    if (meta.type && meta.type !== "chat") return false;
+    return true;
+  }
+  function pgFillModels() {
+    var sel = document.getElementById("pg-model");
+    if (!sel) return;
+    var cur = sel.value;
+    var chatModels = models.filter(pgModelOk);
+    // 无对话模型时退化为全部列表，避免空下拉
+    var list = chatModels.length ? chatModels : models;
+    sel.innerHTML = list.map(function (m) {
+      return '<option value="' + esc(m) + '">' + esc(m) + (modelHealth[m] ? " · " + modelHealth[m].score + "分" : "") + "</option>";
+    }).join("");
+    // 保持原选择；否则默认 acu/deepseek-v4-flash > 第一个健康分最高者 > 第一项
+    if (cur && list.indexOf(cur) !== -1) { sel.value = cur; return; }
+    var prefer = list.indexOf("acu/deepseek-v4-flash");
+    if (prefer !== -1) { sel.selectedIndex = prefer; return; }
+    var best = -1, bestScore = -1;
+    list.forEach(function (m, i) {
+      var s = modelHealth[m] ? modelHealth[m].score : -1;
+      if (s > bestScore) { bestScore = s; best = i; }
+    });
+    if (best !== -1) sel.selectedIndex = best;
+  }
+  function pgAddMsg(role, text, streaming) {
+    var chat = document.getElementById("pg-chat");
+    var div = document.createElement("div");
+    div.className = "pg-msg " + role + (streaming ? " streaming" : "");
+    div.textContent = text;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+    return div;
+  }
+  function pgSetBusy(b) {
+    pgBusy = b;
+    var send = document.getElementById("pg-send");
+    var stop = document.getElementById("pg-stop");
+    if (send) send.disabled = b;
+    if (stop) stop.style.display = b ? "" : "none";
+  }
+  function pgStopStream() {
+    if (pgAbort) { try { pgAbort.abort(); } catch (e) {} }
+  }
+  function pgSend() {
+    if (pgBusy) return;
+    var input = document.getElementById("pg-input");
+    var text = (input.value || "").trim();
+    if (!text) return;
+    var model = document.getElementById("pg-model").value;
+    if (!model) return;
+    var temp = parseFloat(document.getElementById("pg-temp").value || "0.7");
+    input.value = ""; input.style.height = "auto";
+    pgHistory.push({ role: "user", content: text });
+    pgAddMsg("user", text);
+    // 欢迎卡片移除
+    var w = document.querySelector("#pg-chat .pg-welcome");
+    if (w) w.remove();
+    var aiDiv = pgAddMsg("assistant", "", true);
+    pgSetBusy(true);
+    pgAbort = (typeof AbortController !== "undefined") ? new AbortController() : null;
+    var body = {
+      model: model,
+      messages: pgHistory.slice(-20),
+      stream: true,
+      temperature: temp,
+      max_tokens: 2048,
+    };
+    fetch(GATEWAY + "/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer sk-playground-demo" },
+      body: JSON.stringify(body),
+      signal: pgAbort ? pgAbort.signal : undefined,
+    }).then(function (res) {
+      if (!res.ok) {
+        return res.json().catch(function () { return {}; }).then(function (e) {
+          var msg = (e && e.error && e.error.message) || ("请求失败（HTTP " + res.status + "）");
+          throw new Error(msg);
+        });
+      }
+      var reader = res.body.getReader();
+      var dec = new TextDecoder();
+      var buf = "";
+      var full = "";
+      function pump() {
+        return reader.read().then(function (chunk) {
+          if (chunk.done) {
+            aiDiv.classList.remove("streaming");
+            if (!full) aiDiv.innerHTML = '<span class="pg-err">上游未返回任何内容，请换一个模型重试。</span>';
+            else pgHistory.push({ role: "assistant", content: full });
+            pgSetBusy(false);
+            return;
+          }
+          buf += dec.decode(chunk, { stream: true });
+          var lines = buf.split("\n");
+          buf = lines.pop();
+          for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+            if (!line || line.indexOf("data:") !== 0) continue;
+            var payload = line.slice(5).trim();
+            if (payload === "[DONE]") continue;
+            try {
+              var j = JSON.parse(payload);
+              var delta = j.choices && j.choices[0] && j.choices[0].delta;
+              var piece = delta && (delta.content || (Array.isArray(delta.reasoning_content) ? "" : delta.reasoning_content) || "");
+              if (piece) { full += piece; aiDiv.textContent = full; aiDiv.classList.add("streaming");
+                var chat = document.getElementById("pg-chat"); chat.scrollTop = chat.scrollHeight; }
+            } catch (e) {}
+          }
+          return pump();
+        });
+      }
+      return pump();
+    }).catch(function (err) {
+      aiDiv.classList.remove("streaming");
+      var msg = (err && err.name === "AbortError") ? "已停止生成。" : ("出错了：" + (err && err.message ? err.message : "网络异常"));
+      if (!aiDiv.textContent) aiDiv.innerHTML = '<span class="pg-err">' + esc(msg) + "</span>";
+      else aiDiv.textContent += "\n\n[" + msg + "]";
+      // 失败时回滚最后一条用户消息，方便重试
+      if (pgHistory.length && pgHistory[pgHistory.length - 1].role === "user") pgHistory.pop();
+      pgSetBusy(false);
+    });
+  }
+  function pgClear() {
+    pgStopStream();
+    pgHistory = [];
+    var chat = document.getElementById("pg-chat");
+    chat.innerHTML = '<div class="pg-welcome"><b>开始体验 AQUA 网关</b><p>选择上方任意模型，输入消息即可对话。回复为 SSE 流式实时输出，与真实 API 行为完全一致。</p></div>';
+  }
+  function pgInit() {
+    var input = document.getElementById("pg-input");
+    if (!input || input.dataset.pgInit) return;
+    input.dataset.pgInit = "1";
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); pgSend(); }
+    });
+    input.addEventListener("input", function () {
+      input.style.height = "auto";
+      input.style.height = Math.min(input.scrollHeight, 140) + "px";
+    });
+    document.getElementById("pg-send").addEventListener("click", pgSend);
+    document.getElementById("pg-stop").addEventListener("click", pgStopStream);
+    document.getElementById("pg-clear").addEventListener("click", pgClear);
+    var temp = document.getElementById("pg-temp");
+    temp.addEventListener("input", function () {
+      document.getElementById("pg-temp-val").textContent = temp.value;
+    });
+    pgFillModels();
+  }
+
   /* ---- 页面切换（hash 路由） ---- */
   // 根据当前 hash 渲染对应页面（route 与 loadModels 完成后共用，消除加载竞态）
   function renderCurrentPage() {
@@ -2420,6 +2578,7 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     document.querySelectorAll(".nav-tabs a").forEach(function (a) {
       a.classList.toggle("active", a.getAttribute("data-tab") === tab);
     });
+    if (tab === "playground") pgInit();
     renderCurrentPage();
   }
   window.addEventListener("hashchange", route);
@@ -2639,6 +2798,7 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
         modelsLoadErr = false;
         updateModelsNotice();
         renderCurrentPage();
+        pgFillModels();
       })
       .catch(function () {
         modelsLoadErr = true;
