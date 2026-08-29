@@ -3185,12 +3185,18 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
   }
 
   /* ---- 工具：IP 归属地查询 ---- */
+  /* 查询结果字段 → 中文标签（未知字段原样展示，新增字段零维护成本） */
+  var IP_FIELD_LABELS = {
+    ip: "IP 地址", continent: "大洲", country: "国家/地区", province: "省份", city: "城市",
+    isp: "运营商", lat: "纬度", lon: "经度", district: "区县", owner: "所属机构",
+    code: "行政区划代码", asn: "AS 号", radius: "定位半径"
+  };
   function renderToolIp(el) {
     el.innerHTML = toolShell("IP 归属地查询",
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;vertical-align:-4px;color:var(--accent);"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 4 5.6 4 9s-1.5 6.4-4 9c-2.5-2.6-4-5.6-4-9s1.5-6.4 4-9z"/></svg>',
       "/v1/ip_location",
-      '<p class="tool-intro">输入任意公网 IP 查询其地理位置与运营商；留空则查询你当前的出口 IP。查询结果可一键生成 AI 解读。</p>' +
-      '<div class="tool-io"><textarea id="ip-input" rows="2" placeholder="例如 8.8.8.8 或 114.114.114.114，留空查询本机出口 IP"></textarea>' +
+      '<p class="tool-intro">输入任意公网 IP 查询其地理位置与运营商；留空则查询<b>你当前访问本站所用的出口 IP</b>（由网关边缘节点识别）。查询结果可一键生成 AI 解读。</p>' +
+      '<div class="tool-io"><textarea id="ip-input" rows="2" placeholder="例如 8.8.8.8 或 114.114.114.114，留空查询你的出口 IP"></textarea>' +
       '<div class="tool-btns"><button class="btn tool-run" id="ip-run">查询</button><button class="btn tool-ai" id="ip-ai" style="display:none;">AI 解读</button></div></div>' +
       '<div id="ip-result" class="tool-result"></div>');
     var run = document.getElementById("ip-run");
@@ -3207,11 +3213,12 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
       }).then(function (j) {
         lastData = j;
         var flat = [];
-        // 递归展平 JSON 为「字段 · 值」行，方便表格展示
+        // 递归展平 JSON；顶层字段映射为中文标签，嵌套字段保留完整路径
         (function walk(o, prefix) {
           Object.keys(o || {}).forEach(function (k) {
             var v = o[k];
-            var key = prefix ? prefix + " · " + k : k;
+            var label = (!prefix && IP_FIELD_LABELS[k]) ? IP_FIELD_LABELS[k] : k;
+            var key = prefix ? prefix + " · " + label : label;
             if (v && typeof v === "object") walk(v, key);
             else flat.push([key, String(v)]);
           });

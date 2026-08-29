@@ -1196,6 +1196,23 @@ fn is_valid_ip(s: &str) -> bool {
     })
 }
 
+/// 保留/内网 IPv4 无法做公网归属地查询（10/8、172.16/12、192.168/16、127/8、169.254/16、0/8）
+fn is_private_ipv4(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.len() != 4 {
+        return false;
+    }
+    let o: Vec<u16> = parts.iter().filter_map(|p| p.parse::<u16>().ok()).collect();
+    if o.len() != 4 {
+        return false;
+    }
+    let (a, b) = (o[0], o[1]);
+    a == 10 || a == 127 || a == 0
+        || (a == 172 && (16..=31).contains(&b))
+        || (a == 192 && b == 168)
+        || (a == 169 && b == 254)
+}
+
 async fn handle_ip_location(mut req: Request, env: Env) -> Result<Response> {
     let body = match req.bytes().await {
         Ok(b) => b.to_vec(),
@@ -1220,6 +1237,9 @@ async fn handle_ip_location(mut req: Request, env: Env) -> Result<Response> {
     }
     if !is_valid_ip(&ip) {
         return err_res(400, &format!("IP 格式不正确：「{}」不是合法的 IPv4/IPv6 地址，请检查后重试", ip));
+    }
+    if is_private_ipv4(&ip) {
+        return err_res(400, &format!("「{}」是内网/保留 IP，没有公网归属地信息。请查询公网 IP，或留空 ip 字段自动查询调用方出口 IP", ip));
     }
     let Some(cfg) = provider_cfg(&env, "gitee") else {
         return err_res(502, "该模型的上游通道暂不可用，请稍后重试");
