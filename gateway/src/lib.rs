@@ -1175,6 +1175,27 @@ async fn handle_videos(mut req: Request, env: Env) -> Result<Response> {
     }
 }
 
+/// 校验 IP 格式：接受完整 IPv4（0-255 四段）或含冒号的 IPv6 字符串。
+/// 上游 Gitee AI 对留空/非法 IP 会返回不可读的 400，这里提前拦截并给出中文提示。
+fn is_valid_ip(s: &str) -> bool {
+    // IPv6：含冒号且只含十六进制字符/冒号（粗校验，交由上游精确判定）
+    if s.contains(':') {
+        return s.chars().all(|c| c.is_ascii_hexdigit() || c == ':') && s.len() >= 2;
+    }
+    // IPv4：四段 0-255
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.len() != 4 {
+        return false;
+    }
+    parts.iter().all(|p| {
+        !p.is_empty()
+            && p.len() <= 3
+            && p.chars().all(|c| c.is_ascii_digit())
+            && p.parse::<u16>().map(|n| n <= 255).unwrap_or(false)
+            && !(p.len() > 1 && p.starts_with('0'))  // 不允许前导零（如 01.2.3.4）
+    })
+}
+
 async fn handle_ip_location(mut req: Request, env: Env) -> Result<Response> {
     let body = match req.bytes().await {
         Ok(b) => b.to_vec(),
@@ -1182,13 +1203,29 @@ async fn handle_ip_location(mut req: Request, env: Env) -> Result<Response> {
     };
     // 上游 Gitee AI 的 ip_location 是 GET 接口（?ip=xxx），这里解析请求体后转为查询串转发
     let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap_or(serde_json::json!({}));
-    let ip = parsed.get("ip").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
-    let qs = if ip.is_empty() { String::new() } else { format!("?ip={}", ip) };
+    let mut ip = parsed.get("ip").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    // 留空 = 查询调用方出口 IP：上游不支持空 ip 查询（返回不可读 400），
+    // 这里改用 Cloudflare 边缘自带的请求来源头拿到调用方真实 IP 再转发
+    if ip.is_empty() {
+        ip = req
+            .headers()
+            .get("CF-Connecting-IP")
+            .ok()
+            .flatten()
+            .or_else(|| req.headers().get("X-Forwarded-For").ok().flatten().and_then(|v| v.split(',').next().map(|s| s.trim().to_string())))
+            .unwrap_or_default();
+    }
+    if ip.is_empty() {
+        return err_res(400, "缺少 ip 字段：请在请求体中提供要查询的 IP（如 \"ip\": \"8.8.8.8\"）");
+    }
+    if !is_valid_ip(&ip) {
+        return err_res(400, &format!("IP 格式不正确：「{}」不是合法的 IPv4/IPv6 地址，请检查后重试", ip));
+    }
     let Some(cfg) = provider_cfg(&env, "gitee") else {
         return err_res(502, "该模型的上游通道暂不可用，请稍后重试");
     };
     let upstream = build_upstream_req(
-        &format!("{}{}{}", cfg.base, "/ip_location", qs),
+        &format!("{}{}{}", cfg.base, "/ip_location", format!("?ip={}", ip)),
         Some(&format!("Bearer {}", cfg.key)),
         None,
         &[],
