@@ -79,13 +79,30 @@ AQUA 把 **Nvidia NIM、Gitee AI、SiliconFlow、智谱 GLM、讯飞星火、Clo
 
 401 响应会附官网与 QQ 频道/群引导字段，客户端可直接取用展示。
 
-## 快速部署
+## 快速部署（保姆级）
 
-### 前置条件
+> 全程约 15 分钟。不需要付费：Cloudflare 免费套餐即可运行整个网关。
 
-- Rust stable + `wasm32-unknown-unknown` target（`rustup target add wasm32-unknown-unknown`）
-- Node.js ≥ 18 + `npm install`
-- wrangler CLI（`npm install -g wrangler`）并 `wrangler login`
+### 前置条件（逐个检查）
+
+```bash
+# 1. 安装 Rust（Windows 用户下载 rustup-init.exe；已有跳过）
+#    https://rustup.rs/
+rustup --version
+
+# 2. 添加 Wasm 编译目标（必做，否则 cargo build 报错）
+rustup target add wasm32-unknown-unknown
+
+# 3. 安装 Node.js ≥ 18（https://nodejs.org/ 下载 LTS 版）
+node --version
+
+# 4. 安装 wrangler 并登录 Cloudflare（会弹浏览器授权）
+npm install -g wrangler
+wrangler login
+wrangler whoami   # 显示你的账户邮箱即成功
+```
+
+> 中国大陆网络建议保留 `.cargo/config.toml`（rsproxy 镜像加速）；Windows 用户若未装 pwsh，把命令里的 `powershell` 换成 `pwsh` 或安装 PowerShell 7。
 
 ### 1. 配置上游密钥
 
@@ -136,6 +153,61 @@ curl https://your-gateway-domain.example/v1/chat/completions \
   -d '{"model":"acu/deepseek-v4-flash","messages":[{"role":"user","content":"你好"}]}'
 ```
 
+返回模型列表 JSON / 对话回复即为成功。客户端（LobeChat、NextChat、沉浸式翻译等）填：
+
+- **API 地址**：`https://你的网关域名/v1`（或根地址 `https://你的网关域名`，多数客户端自动补 `/v1`）
+- **API Key**：任意非空字符串（默认 open 模式）
+
+## 常见问题（部署排障）
+
+<details>
+<summary><b>cargo build 报错：target wasm32-unknown-unknown not installed</b></summary>
+
+执行 `rustup target add wasm32-unknown-unknown` 后重新构建。
+</details>
+
+<details>
+<summary><b>构建时报 wasm-bindgen 版本不匹配</b></summary>
+
+本项目使用 wasm-bindgen 0.2.127。确认 `.tools/wasm-bindgen/` 下有对应版本可执行文件，或用 `cargo install wasm-bindgen-cli --version 0.2.127` 安装后修改 build.ps1 中的路径。
+</details>
+
+<details>
+<summary><b>wrangler deploy 报错 10054 / 变量过大</b></summary>
+
+单个环境变量超过 CF 5.1KB 上限。NVIDIA_KEYS 密钥太多时，手动分成 `NVIDIA_KEYS`、`NVIDIA_KEYS_2`、`NVIDIA_KEYS_3`... 多片（每片 ≤4800 字符，按逗号边界切），网关运行时自动合并。
+</details>
+
+<details>
+<summary><b>部署成功但请求返回 502</b></summary>
+
+502 = 对应上游未配置或不可达。检查 `vars.toml` 对应通道的密钥是否已通过 secret 或 vars 注入（占位符 `REPLACE_WITH_REAL_KEY` 会被视为未配置）。
+</details>
+
+<details>
+<summary><b>部署成功但请求返回 401</b></summary>
+
+当前为 `AUTH_MODE=key` 模式且密钥不在 `GATEWAY_KEYS` 列表。要么用列表内的密钥，要么把 `AUTH_MODE` 改为 `open`（或直接删除该变量）后重新部署。
+</details>
+
+<details>
+<summary><b>模型列表能出来但对话报 429</b></summary>
+
+Workers AI 日额度用尽（WaiBudget 池）或上游限流。Workers AI 可在 `WAI_ACCOUNTS` 里加更多账号分摊额度。
+</details>
+
+<details>
+<summary><b>前台模型列表加载失败</b></summary>
+
+检查 `frontend/public/index.html` 中的 `var GATEWAY` 是否已改成你的网关地址（含 `/v1`）。
+</details>
+
+<details>
+<summary><b>想只给自己用，不让别人调用</b></summary>
+
+`AUTH_MODE = "key"`，`GATEWAY_KEYS = "我的密钥"`，重新部署。只有知道这把密钥的人能用。
+</details>
+
 ## 环境变量
 
 完整样例见 [gateway/vars.example.toml](gateway/vars.example.toml)：
@@ -151,26 +223,21 @@ curl https://your-gateway-domain.example/v1/chat/completions \
 | `WAI_ACCOUNTS` | — | Workers AI 多账号池，JSON 数组 `[{"name","account_id","token","cap"}]` |
 | `WAI_ACCOUNT_ID` / `WAI_API_TOKEN` / `WAI_CAP_GLOBAL` | — | Workers AI 单账号兜底配置 |
 
-## 项目结构
+## 项目结构（每个文件夹都有独立 README 详解）
 
 ```
 aqua-worker/
-├── gateway/                 # 网关（Rust → Wasm）
-│   ├── src/
-│   │   ├── lib.rs           # 入口：路由 / 鉴权 / 供应商配置 / 代理转发
-│   │   ├── keypool.rs       # NvKeyPool DO：Nvidia 密钥池调度
-│   │   ├── keys.rs          # 环境变量密钥池读取（分片合并）
-│   │   ├── acu_limit.rs     # AcuConcurrency DO：全局并发闸
-│   │   └── workers_ai.rs    # WaiBudget DO：Workers AI 日额度
-│   ├── vars.example.toml    # 环境变量样例（真实值不入库）
-│   └── wrangler.toml        # Workers 配置（KV / D1 / R2 / DO）
-├── frontend/                # 用户前台（Rust Worker）
-│   ├── src/lib.rs           # 静态资源 + SPA 路由
-│   └── public/index.html    # 单页：首页 / 模型列表 / 能力矩阵 / API 文档
-├── scripts/
-│   ├── build.ps1            # 构建脚本（cargo → wasm-bindgen → esbuild）
+├── gateway/                 # 网关核心（Rust → Wasm）→ 详见 gateway/README.md
+│   ├── src/                 #   Rust 源码（路由/鉴权/三个 DO）
+│   ├── vars.example.toml    #   环境变量样例（真实值不入库）
+│   └── wrangler.toml        #   Workers 配置
+├── frontend/                # 用户前台（Rust Worker）→ 详见 frontend/README.md
+│   ├── src/lib.rs           #   静态资源 + SPA 路由
+│   └── public/index.html    #   全部前端内容（单文件单页应用）
+├── scripts/                 # 构建脚本 → 详见 scripts/README.md
+│   ├── build.ps1            #   一键构建（cargo → wasm-bindgen → esbuild）
 │   └── shim.legacy.template.js
-└── .cargo/config.toml       # crates.io 镜像加速（可选）
+└── .cargo/                  # Rust 编译配置（国内镜像加速）→ 详见 .cargo/README.md
 ```
 
 ## 隐私与安全
