@@ -698,6 +698,12 @@
     border: 1px solid rgba(103,232,249,.2); border-radius: 6px; padding: 3px 8px; align-self: flex-start; }
   .tool-card.tool-soon { opacity: .55; }
   .tool-card.tool-soon .tool-tag { color: var(--muted); border-color: var(--border); background: transparent; }
+  .tools-sec { margin: 26px 0 12px; }
+  .tools-sec-t { font-size: 15px; font-weight: 700; color: var(--accent); display: inline-flex; align-items: center; gap: 8px; }
+  .tools-sec-t::after { content: ""; flex: 1; min-width: 60px; height: 1px; background: var(--border); margin-left: 4px; }
+  .tools-api-note { border: 1px solid var(--border); border-radius: 12px; background: var(--card); padding: 14px 18px; }
+  .tools-api-note p { color: var(--muted); font-size: 13px; line-height: 1.8; }
+  .tools-api-note code { font-family: var(--mono); font-size: 12px; color: var(--accent); }
   .back-link { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); text-decoration: none; font-size: 13px; margin-bottom: 14px; }
   .back-link:hover { color: var(--accent); }
   .back-link svg { width: 14px; height: 14px; }
@@ -1406,9 +1412,37 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     <div class="tools-page">
       <div class="tools-head">
         <h1><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>AI 赋能工具箱</h1>
-        <p>基于 AQUA 网关特色模型与对话能力构建的实用小工具——每个工具都是一次真实 API 能力的产品化，开箱即用。</p>
+        <p>基于 AQUA 网关构建的对弈游戏与实用工具——每个工具既是网页应用，也是网关 API，兼容性拉满。</p>
       </div>
+      <div class="tools-sec"><span class="tools-sec-t">AI 对弈游戏</span></div>
       <div class="tools-grid" id="tools-grid">
+        <a class="tool-card" href="#/tools/tictactoe">
+          <span class="tool-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M4 9.33h16M4 14.67h16M9.33 4v16M14.67 4v16"/></svg></span>
+          <b>井字棋对弈</b>
+          <span class="tool-desc">挑战必不败的 minimax 算法，或切换 LLM 模型对手，体验算法与 AI 的思维差异</span>
+          <span class="tool-tag">纯算法 / LLM 对手</span>
+        </a>
+        <a class="tool-card" href="#/tools/gomoku">
+          <span class="tool-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="3"/><circle cx="17" cy="17" r="3"/><circle cx="17" cy="7" r="3" fill="currentColor"/><circle cx="7" cy="17" r="3" fill="currentColor"/></svg></span>
+          <b>五子棋对弈</b>
+          <span class="tool-desc">9×9 棋盘挑战评分算法引擎，也可开启 LLM 落子模式看 AI 怎么想</span>
+          <span class="tool-tag">纯算法 / LLM 辅助</span>
+        </a>
+        <a class="tool-card" href="#/tools/guess">
+          <span class="tool-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span>
+          <b>猜数字 1A2B</b>
+          <span class="tool-desc">经典推理游戏：你猜 AI 的数字，或开启挑战模式让 LLM 猜你的数字</span>
+          <span class="tool-tag">纯算法 / LLM 推理</span>
+        </a>
+        <a class="tool-card tool-soon" href="#/tools/idiom">
+          <span class="tool-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
+          <b>成语接龙</b>
+          <span class="tool-desc">与 LLM 轮流接龙，首尾字自动校验，词穷即输</span>
+          <span class="tool-tag">即将上线</span>
+        </a>
+      </div>
+      <div class="tools-sec"><span class="tools-sec-t">实用工具</span></div>
+      <div class="tools-grid">
         <a class="tool-card" href="#/tools/ip">
           <span class="tool-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 4 5.6 4 9s-1.5 6.4-4 9c-2.5-2.6-4-5.6-4-9s1.5-6.4 4-9z"/></svg></span>
           <b>IP 归属地查询</b>
@@ -1433,6 +1467,22 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
           <span class="tool-desc">长文一键提炼要点、一段话总结或大纲结构</span>
           <span class="tool-tag">chat 端点驱动</span>
         </a>
+        <a class="tool-card" href="#/tools/textstats">
+          <span class="tool-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5h16v2"/><path d="M12 5v14"/><path d="M9 19h6"/></svg></span>
+          <b>文本统计</b>
+          <span class="tool-desc">字数、词频 Top10、阅读时长即时统计，纯算法零等待</span>
+          <span class="tool-tag">/v1/tools/text-stats</span>
+        </a>
+        <a class="tool-card" href="#/tools/devkit">
+          <span class="tool-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/></svg></span>
+          <b>开发者工具箱</b>
+          <span class="tool-desc">UUID 生成、时间戳互转、Base64/URL 编解码、JSON 格式化</span>
+          <span class="tool-tag">/v1/tools/*</span>
+        </a>
+      </div>
+      <div class="tools-sec"><span class="tools-sec-t">工具 API（不只 AI，工具也能调）</span></div>
+      <div class="tools-api-note">
+        <p>上述所有工具的能力同时以 REST API 形式开放在网关上——例如 <code>POST /v1/tools/text-stats</code>、<code>GET /v1/tools/uuid</code>、<code>POST /v1/tools/base64</code>。鉴权方式与主 API 相同，详见 <a href="#/api" style="color:var(--accent);">API 文档</a>。我们不只提供 AI API，也提供工具 API。</p>
       </div>
     </div>
   </section>
