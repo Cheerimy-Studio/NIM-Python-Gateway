@@ -10,6 +10,8 @@ Rust → WebAssembly · Cloudflare Workers 边缘运行 · 多上游聚合 · �
 [![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://rustup.rs/)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-f38020.svg)](https://workers.cloudflare.com/)
 
+**开源仓库：[gitee.com/xiaosu4610/aqua-rust-workers](https://gitee.com/xiaosu4610/aqua-rust-workers) · 觉得不错请点个 Star ⭐**
+
 </div>
 
 ---
@@ -186,3 +188,11 @@ aqua-worker/
 ## 协议
 
 [MIT License](LICENSE)
+
+---
+
+<div align="center">
+
+如果 AQUA 对你有帮助，欢迎到 [Gitee 仓库](https://gitee.com/xiaosu4610/aqua-rust-workers) 点个 **Star ⭐** 支持
+
+</div>
