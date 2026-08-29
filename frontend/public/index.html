@@ -1427,11 +1427,11 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
           <span class="tool-desc">多语种互译，自动识别源语言，译文自然流畅</span>
           <span class="tool-tag">chat 端点驱动</span>
         </a>
-        <a class="tool-card tool-soon" href="#/tools/summary">
+        <a class="tool-card" href="#/tools/summary">
           <span class="tool-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg></span>
           <b>AI 摘要</b>
           <span class="tool-desc">长文一键提炼要点、一段话总结或大纲结构</span>
-          <span class="tool-tag">即将上线</span>
+          <span class="tool-tag">chat 端点驱动</span>
         </a>
       </div>
     </div>
@@ -2251,7 +2251,53 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     if (name === "ip") return renderToolIp(el);
     if (name === "moderation") return renderToolModeration(el);
     if (name === "translate") return renderToolTranslate(el);
+    if (name === "summary") return renderToolSummary(el);
     el.innerHTML = '<div class="model-empty">该工具正在建设中，敬请期待</div>';
+  }
+
+  /* ---- 工具：AI 摘要 ---- */
+  function renderToolSummary(el) {
+    var modes = '<label style="display:inline-flex;align-items:center;gap:4px;"><input type="radio" name="sum-mode" value="points" checked>要点列表</label>' +
+      '<label style="display:inline-flex;align-items:center;gap:4px;"><input type="radio" name="sum-mode" value="para">一段话</label>' +
+      '<label style="display:inline-flex;align-items:center;gap:4px;"><input type="radio" name="sum-mode" value="outline">大纲结构</label>';
+    el.innerHTML = toolShell("AI 摘要",
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;vertical-align:-4px;color:var(--accent);"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>',
+      "chat 端点驱动",
+      '<p class="tool-intro">粘贴长文，一键提炼为要点列表、一段话总结或文章大纲。</p>' +
+      '<div class="tool-io"><textarea id="sum-input" rows="8" placeholder="粘贴文章、报告、聊天记录等长文本…"></textarea>' +
+      '<div class="tool-btns"><span style="align-self:center;">模式</span>' + modes +
+      '<button class="btn tool-run" id="sum-run">生成摘要</button></div></div>' +
+      '<div id="sum-result" class="tool-result"></div>');
+    var run = document.getElementById("sum-run");
+    run.addEventListener("click", function () {
+      var text = document.getElementById("sum-input").value.trim();
+      var mode = (document.querySelector('input[name="sum-mode"]:checked') || {}).value || "points";
+      var box = document.getElementById("sum-result");
+      if (!text) { box.innerHTML = '<div class="tool-empty">请先输入要总结的文本。</div>'; return; }
+      box.innerHTML = '<div class="tool-loading">生成中…</div>';
+      var sys = "你是一位专业的内容总结助手。";
+      var ask = "";
+      if (mode === "points") {
+        ask = "请将以下文本提炼为 3-6 条核心要点，每条一行，以「- 」开头，按重要性排序，不要废话。";
+      } else if (mode === "para") {
+        ask = "请将以下文本总结为一段话（100 字以内），保留最核心的信息。";
+      } else {
+        ask = "请将以下文本整理为层级大纲（用缩进的短句表示层级结构，最多三层），覆盖全部关键信息。";
+      }
+      fetch(GATEWAY + "/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer sk-playground-demo" },
+        body: JSON.stringify({ model: toolChatModel(), messages: [{ role: "system", content: sys }, { role: "user", content: ask + "\n\n【文本】\n" + text }], stream: false, temperature: 0.3, max_tokens: 2048 }),
+      }).then(function (r) { return r.json(); }).then(function (j) {
+        var out = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+        box.innerHTML = out
+          ? '<div class="tool-ai-box"><b>摘要结果</b><div class="tool-ai-text"></div></div>'
+          : '<div class="tool-empty">生成失败，请稍后重试。</div>';
+        if (out) box.querySelector(".tool-ai-text").textContent = out;
+      }).catch(function () {
+        box.innerHTML = '<div class="tool-empty">生成失败，请检查网络后重试。</div>';
+      });
+    });
   }
 
   /* ---- 工具：AI 翻译 ---- */
