@@ -2519,6 +2519,34 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     var chat = document.getElementById("pg-chat");
     chat.innerHTML = '<div class="pg-welcome"><b>开始体验 AQUA 网关</b><p>选择上方任意模型，输入消息即可对话。回复为 SSE 流式实时输出，与真实 API 行为完全一致。</p></div>';
   }
+  function pgRenderHealth() {
+    var box = document.getElementById("pg-health");
+    if (!box) return;
+    var sel = document.getElementById("pg-model");
+    var m = sel ? sel.value : "";
+    if (!m) { box.textContent = "选择模型后展示该模型的实时健康数据"; return; }
+    var h = modelHealth[m];
+    var st = modelStatus[m];
+    var rows = '<div class="pg-hrow"><span>模型</span><b>' + esc(m) + "</b></div>";
+    if (st === "exhausted") rows += '<div class="pg-hrow"><span>状态</span><b style="color:#f87171;">今日额度已用尽</b></div>';
+    else if (st === "unavailable") rows += '<div class="pg-hrow"><span>状态</span><b style="color:#f87171;">暂时不可用</b></div>';
+    else rows += '<div class="pg-hrow"><span>状态</span><b style="color:#34d399;">可用</b></div>';
+    if (h && typeof h.score === "number") {
+      var color = h.score >= 90 ? "#34d399" : h.score >= 70 ? "#fbbf24" : "#f87171";
+      rows += '<div class="pg-hrow"><span>健康分</span><b style="color:' + color + ';">' + h.score + " / 100</b></div>";
+      if (typeof h.ok === "number" && typeof h.total === "number" && h.total > 0) {
+        rows += '<div class="pg-hrow"><span>近 100 次成功率</span><b>' + Math.round((h.ok / h.total) * 100) + "%</b></div>";
+      }
+      if (typeof h.avg_latency_ms === "number") {
+        rows += '<div class="pg-hrow"><span>平均延迟</span><b>' + h.avg_latency_ms + " ms</b></div>";
+      }
+      rows += '<div class="pg-hrow"><span>样本窗口</span><b>近 14 天 · 每次 100 条</b></div>';
+    } else {
+      rows += '<div class="pg-hrow"><span>健康分</span><b>暂无数据</b></div>';
+      rows += '<div class="pg-hrow"><span>说明</span><b>该模型近期未被调用过，发送第一条消息后即可积累数据</b></div>';
+    }
+    box.innerHTML = rows;
+  }
   function pgInit() {
     var input = document.getElementById("pg-input");
     if (!input || input.dataset.pgInit) return;
@@ -2537,7 +2565,9 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     temp.addEventListener("input", function () {
       document.getElementById("pg-temp-val").textContent = temp.value;
     });
+    document.getElementById("pg-model").addEventListener("change", pgRenderHealth);
     pgFillModels();
+    pgRenderHealth();
   }
 
   /* ---- 页面切换（hash 路由） ---- */
@@ -2799,6 +2829,7 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
         updateModelsNotice();
         renderCurrentPage();
         pgFillModels();
+        pgRenderHealth();
       })
       .catch(function () {
         modelsLoadErr = true;
