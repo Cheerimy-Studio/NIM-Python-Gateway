@@ -330,6 +330,26 @@ fn json_res(v: &serde_json::Value) -> Result<Response> {
     Ok(res)
 }
 
+/// 同步构造错误 Response（用于需要直接返回 Response 的场景）
+fn err_plain(status: u16, msg: &str) -> Response {
+    let v = serde_json::json!({
+        "error": {
+            "message": msg,
+            "type": "api_error",
+            "code": status,
+            "help": {
+                "site": SITE_URL,
+                "qq_guild": QQ_GUILD_ID,
+                "qq_guild_url": QQ_GUILD_URL,
+                "qq_group": QQ_GROUP_NUM,
+            }
+        }
+    });
+    let mut res = Response::from_json(&v).expect("json response");
+    let _ = cors_headers(&mut res);
+    res.with_status(status)
+}
+
 /// 官网与社区引导（附在错误响应中，方便用户自助排障）
 const SITE_URL: &str = "https://acu.ltzy.top";
 const QQ_GUILD_URL: &str = "https://pd.qq.com/s/e4ktxw1b8";
@@ -1137,6 +1157,160 @@ async fn handle_ip_location(mut req: Request, env: Env) -> Result<Response> {
     direct_forward(&env, "gitee", "/ip_location", &body, 60000).await
 }
 
+// ---------------------------------------------------------------------------
+// 工具 API（/v1/tools/*）：纯算法实现，不消耗上游额度
+// ---------------------------------------------------------------------------
+async fn read_json_body(mut req: Request) -> std::result::Result<serde_json::Value, Response> {
+    let body = match req.bytes().await {
+        Ok(b) => b.to_vec(),
+        Err(_) => return Err(err_plain(400, "Bad Request")),
+    };
+    match serde_json::from_slice(&body) {
+        Ok(v) => Ok(v),
+        Err(_) => Err(err_plain(400, "Bad Request: invalid JSON body")),
+    }
+}
+
+/// POST /v1/tools/text-stats  {"text": "..."}
+async fn handle_tool_text_stats(req: Request) -> Result<Response> {
+    let body = match read_json_body(req).await {
+        Ok(v) => v,
+        Err(res) => return Ok(res),
+    };
+    let text = body.get("text").and_then(|v| v.as_str()).unwrap_or("");
+    if text.is_empty() {
+        return err_res(400, "缺少 text 字段");
+    }
+    let chars = text.chars().count();
+    let no_space = text.chars().filter(|c| !c.is_whitespace()).count();
+    let cjk = text.chars().filter(|c| ('\u{4e00}'..='\u{9fa5}').contains(c)).count();
+    let words: Vec<&str> = text.split(|c: char| !c.is_ascii_alphanumeric()).filter(|w| !w.is_empty()).collect();
+    let lines = text.lines().count().max(1);
+    let mut freq: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for w in &words {
+        if w.len() > 2 {
+            let lw = w.to_lowercase();
+            *freq.entry(lw).or_insert(0) += 1;
+        }
+    }
+    let mut top: Vec<(String, usize)> = freq.into_iter().collect();
+    top.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    top.truncate(10);
+    let read_min = ((cjk + words.len()) / 400).max(1);
+    json_res(&serde_json::json!({
+        "chars": chars,
+        "chars_no_space": no_space,
+        "cjk_chars": cjk,
+        "words": words.len(),
+        "lines": lines,
+        "read_minutes": read_min,
+        "top_words": top.into_iter().map(|(w, n)| serde_json::json!({"word": w, "count": n})).collect::<Vec<_>>(),
+    }))
+}
+
+/// POST /v1/tools/dice  {"sides": 6, "count": 1}
+async fn handle_tool_dice(req: Request) -> Result<Response> {
+    let body = match read_json_body(req).await {
+        Ok(v) => v,
+        Err(res) => return Ok(res),
+    };
+    let sides = body.get("sides").and_then(|v| v.as_u64()).unwrap_or(6).clamp(2, 1000);
+    let count = body.get("count").and_then(|v| v.as_u64()).unwrap_or(1).clamp(1, 20);
+    let mut rolls = Vec::with_capacity(count as usize);
+    let mut total = 0u64;
+    for _ in 0..count {
+        let v = (js_sys::Math::random() * sides as f64).floor() as u64 + 1;
+        total += v;
+        rolls.push(v);
+    }
+    json_res(&serde_json::json!({
+        "sides": sides,
+        "count": count,
+        "rolls": rolls,
+        "total": total,
+    }))
+}
+
+/// GET /v1/tools/uuid
+async fn handle_tool_uuid() -> Result<Response> {
+    // v4 UUID：js_sys::Math 随机源拼装并设置版本/变体位
+    let mut b = [0u8; 16];
+    for chunk in b.chunks_mut(4) {
+        let r = (js_sys::Math::random() * 4294967296.0) as u32;
+        for (i, cell) in chunk.iter_mut().enumerate() {
+            *cell = (r >> (i * 8)) as u8;
+        }
+    }
+    b[6] = (b[6] & 0x0f) | 0x40; // v4
+    b[8] = (b[8] & 0x3f) | 0x80; // variant
+    let hex: String = b.iter().map(|x| format!("{:02x}", x)).collect();
+    let uuid = format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..32]
+    );
+    json_res(&serde_json::json!({ "uuid": uuid }))
+}
+
+/// GET /v1/tools/timestamp
+async fn handle_tool_timestamp_get() -> Result<Response> {
+    let now = now_ts();
+    json_res(&serde_json::json!({
+        "timestamp": now,
+        "timestamp_ms": now * 1000,
+        "iso_utc": js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default(),
+    }))
+}
+
+/// POST /v1/tools/timestamp  {"timestamp": 1234567890}
+async fn handle_tool_timestamp_post(req: Request) -> Result<Response> {
+    let body = match read_json_body(req).await {
+        Ok(v) => v,
+        Err(res) => return Ok(res),
+    };
+    let ts = match body.get("timestamp").and_then(|v| v.as_i64()) {
+        Some(t) if t > 0 => t,
+        _ => return err_res(400, "缺少有效的 timestamp 字段（秒级）"),
+    };
+    let d = js_sys::Date::new(&(ts as f64 * 1000.0).into());
+    json_res(&serde_json::json!({
+        "timestamp": ts,
+        "timestamp_ms": ts * 1000,
+        "iso_utc": d.to_iso_string().as_string().unwrap_or_default(),
+        "utc": d.to_utc_string().as_string().unwrap_or_default(),
+    }))
+}
+
+/// POST /v1/tools/base64  {"action": "encode|decode", "text": "..."}
+async fn handle_tool_base64(req: Request) -> Result<Response> {
+    let body = match read_json_body(req).await {
+        Ok(v) => v,
+        Err(res) => return Ok(res),
+    };
+    let action = body.get("action").and_then(|v| v.as_str()).unwrap_or("encode");
+    let text = match body.get("text").and_then(|v| v.as_str()) {
+        Some(t) => t,
+        None => return err_res(400, "缺少 text 字段"),
+    };
+    let out = match action {
+        "encode" => {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD.encode(text.as_bytes())
+        }
+        "decode" => {
+            use base64::Engine;
+            match base64::engine::general_purpose::STANDARD.decode(text.as_bytes()) {
+                Ok(bytes) => match String::from_utf8(bytes) {
+                    Ok(s) => s,
+                    Err(_) => return err_res(400, "解码结果不是有效 UTF-8"),
+                },
+                Err(_) => return err_res(400, "无效的 Base64 字符串"),
+            }
+        }
+        _ => return err_res(400, "action 仅支持 encode / decode"),
+    };
+    json_res(&serde_json::json!({ "result": out }))
+}
+
 async fn handle_rerank(mut req: Request, env: Env) -> Result<Response> {
     let body = match req.bytes().await {
         Ok(b) => b.to_vec(),
@@ -1325,6 +1499,24 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         })
         .post_async("/v1/ip_location", |req, ctx| async move {
             handle_ip_location(req, ctx.env).await
+        })
+        .post_async("/v1/tools/text-stats", |req, ctx| async move {
+            handle_tool_text_stats(req).await
+        })
+        .post_async("/v1/tools/dice", |req, ctx| async move {
+            handle_tool_dice(req).await
+        })
+        .get_async("/v1/tools/uuid", |req, ctx| async move {
+            handle_tool_uuid().await
+        })
+        .get_async("/v1/tools/timestamp", |req, ctx| async move {
+            handle_tool_timestamp_get().await
+        })
+        .post_async("/v1/tools/timestamp", |req, ctx| async move {
+            handle_tool_timestamp_post(req).await
+        })
+        .post_async("/v1/tools/base64", |req, ctx| async move {
+            handle_tool_base64(req).await
         })
         .post_async("/v1/rerank", |req, ctx| async move {
             handle_rerank(req, ctx.env).await
