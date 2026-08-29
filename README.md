@@ -239,6 +239,8 @@ Workers AI 日额度用尽（WaiBudget 熔断）或上游限流。等待每天 0
 
 ## 项目结构（每个文件夹都有独立 README 详解）
 
+> 🔧 想二次开发 / 扩展功能 / 深入理解代码？请阅读 **[DEVELOPMENT.md](DEVELOPMENT.md)**——完整的架构导读、扩展实操（新增模型/供应商/工具）、本地调试与排障手册。
+
 ```
 aqua-worker/
 ├── gateway/                 # 网关核心（Rust → Wasm）→ 详见 gateway/README.md
