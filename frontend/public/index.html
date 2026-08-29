@@ -1457,11 +1457,11 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
           <span class="tool-desc">经典推理游戏：你猜 AI 的数字，或开启挑战模式让 LLM 猜你的数字</span>
           <span class="tool-tag">纯算法 / LLM 推理</span>
         </a>
-        <a class="tool-card tool-soon" href="#/tools/idiom">
+        <a class="tool-card" href="#/tools/idiom">
           <span class="tool-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
           <b>成语接龙</b>
           <span class="tool-desc">与 LLM 轮流接龙，首尾字自动校验，词穷即输</span>
-          <span class="tool-tag">即将上线</span>
+          <span class="tool-tag">LLM 驱动</span>
         </a>
       </div>
       <div class="tools-sec"><span class="tools-sec-t">实用工具</span></div>
@@ -2328,7 +2328,87 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     if (name === "tictactoe") return renderToolTicTacToe(el);
     if (name === "gomoku") return renderToolGomoku(el);
     if (name === "guess") return renderToolGuess(el);
+    if (name === "idiom") return renderToolIdiom(el);
     el.innerHTML = '<div class="model-empty">该工具正在建设中，敬请期待</div>';
+  }
+
+  /* ---- 游戏：成语接龙（LLM 驱动 + 首尾字校验） ---- */
+  function renderToolIdiom(el) {
+    var chatOpts = models.filter(pgModelOk).map(function (m) { return '<option value="' + esc(m) + '">' + esc(m) + "</option>"; }).join("");
+    el.innerHTML = toolShell("成语接龙",
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;vertical-align:-4px;color:var(--accent);"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+      "LLM 驱动",
+      '<p class="tool-intro">与 AI 轮流接龙：你出一个四字成语，AI 必须用它的最后一个字开头接一个新成语，如此往复。首尾字自动校验，AI 接不上或接错就判你赢！</p>' +
+      '<div class="tool-btns" style="margin-bottom:14px;flex-wrap:wrap;align-items:center;">' +
+      '<span style="align-self:center;">模型</span>' +
+      '<select id="id-model" style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;max-width:300px;">' + chatOpts + "</select>" +
+      '<button class="btn tool-run" id="id-restart">重新开始</button>' +
+      '<span id="id-status" style="align-self:center;color:var(--accent);font-weight:600;"></span></div>' +
+      '<div class="tool-io"><div class="tool-btns"><input id="id-input" placeholder="输入一个四字成语开始，如：一帆风顺" style="flex:1;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px;">' +
+      '<button class="btn tool-run" id="id-go">接龙</button></div></div>' +
+      '<div class="tool-kv" id="id-log"></div>' +
+      '<div id="id-result" class="tool-result"></div>');
+    var chain = [];
+    var needChar = "";
+    function isIdiom(s) { return /^[\u4e00-\u9fa5]{4}$/.test(s); }
+    function setStatus(t) { document.getElementById("id-status").textContent = t; }
+    function addLog(who, word) {
+      chain.push([who, word]);
+      document.getElementById("id-log").innerHTML = chain.map(function (c, i) {
+        return '<div class="pg-hrow"><span>第 ' + (i + 1) + " 手 · " + (c[0] === "user" ? "你" : "AI") + '</span><b>' + esc(c[1]) + "</b></div>";
+      }).join("");
+    }
+    function win(msg) {
+      setStatus(msg);
+      document.getElementById("id-result").innerHTML = '<div class="tool-ai-box"><b>对局结束</b><div class="tool-ai-text">' + msg + "</div></div>";
+    }
+    function userGo() {
+      var inp = document.getElementById("id-input");
+      var w = (inp.value || "").trim();
+      inp.value = "";
+      if (!isIdiom(w)) { setStatus("请输入四字成语"); return; }
+      if (needChar && w[0] !== needChar) { setStatus('接龙失败：需要以「' + needChar + "」开头"); return; }
+      if (chain.some(function (c) { return c[1] === w; })) { setStatus("这个成语已经用过了"); return; }
+      addLog("user", w);
+      needChar = w[3];
+      setStatus("AI 思考中…（需以「" + needChar + "」开头）");
+      aiGo(w, needChar);
+    }
+    function aiGo(prevWord, startChar) {
+      var model = document.getElementById("id-model").value;
+      var used = chain.map(function (c) { return c[1]; }).join("、");
+      fetch(GATEWAY + "/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer sk-playground-demo" },
+        body: JSON.stringify({
+          model: model, temperature: 0.6, max_tokens: 30, stream: false,
+          messages: [
+            { role: "system", content: "你在玩成语接龙。只输出一个四字成语本身，不要标点不要解释。成语必须以指定汉字开头，且不能与已用过的成语重复。" },
+            { role: "user", content: "上一个成语是「" + prevWord + "」。你必须输出一个以「" + startChar + "」开头的四字成语。已用过的成语（禁止重复）：" + (used || "无") }
+          ],
+        }),
+      }).then(function (r) { return r.json(); }).then(function (j) {
+        var out = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+        var w = out ? String(out).replace(/[^一-鿿]/g, "").slice(0, 4) : "";
+        if (!isIdiom(w) || w[0] !== startChar || chain.some(function (c) { return c[1] === w; })) {
+          return win("🎉 AI 接不上「" + startChar + "」开头的成语，你赢了！共 " + chain.length + " 手");
+        }
+        addLog("ai", w);
+        needChar = w[3];
+        setStatus('轮到你了（需以「' + needChar + '」开头）');
+      }).catch(function () {
+        win("AI 调用失败，本轮不计胜负，请重新开始");
+      });
+    }
+    document.getElementById("id-go").addEventListener("click", userGo);
+    document.getElementById("id-input").addEventListener("keydown", function (e) { if (e.key === "Enter") userGo(); });
+    document.getElementById("id-restart").addEventListener("click", function () {
+      chain = []; needChar = "";
+      document.getElementById("id-log").innerHTML = "";
+      document.getElementById("id-result").innerHTML = "";
+      setStatus("输入一个四字成语开始");
+    });
+    setStatus("输入一个四字成语开始");
   }
 
   /* ---- 游戏：猜数字 1A2B（人猜 AI / LLM 挑战模式） ---- */
