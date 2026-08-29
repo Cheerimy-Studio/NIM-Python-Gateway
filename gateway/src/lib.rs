@@ -330,9 +330,26 @@ fn json_res(v: &serde_json::Value) -> Result<Response> {
     Ok(res)
 }
 
+/// 官网与社区引导（附在错误响应中，方便用户自助排障）
+const SITE_URL: &str = "https://acu.ltzy.top";
+const QQ_GUILD_URL: &str = "https://pd.qq.com/s/e4ktxw1b8";
+const QQ_GUILD_ID: &str = "pd57362562";
+const QQ_GROUP_NUM: i64 = 1103667832;
+
+/// 通用错误响应（OpenAI 兼容结构 + 官网/社区引导字段）
 fn err_res(status: u16, msg: &str) -> Result<Response> {
     let v = serde_json::json!({
-        "error": {"message": msg, "type": "api_error", "code": status}
+        "error": {
+            "message": msg,
+            "type": "api_error",
+            "code": status,
+            "help": {
+                "site": SITE_URL,
+                "qq_guild": QQ_GUILD_ID,
+                "qq_guild_url": QQ_GUILD_URL,
+                "qq_group": QQ_GROUP_NUM,
+            }
+        }
     });
     let mut res = Response::from_json(&v)?.with_status(status);
     cors_headers(&mut res)?;
@@ -1180,16 +1197,19 @@ async fn handle_assets(req: Request, env: Env) -> Result<Response> {
 // ---------------------------------------------------------------------------
 // 入口
 // ---------------------------------------------------------------------------
-/// 401 无效密钥响应（中文提示 + 引导加 QQ 频道/群）
+/// 401 无效密钥响应（中文提示 + 官网/频道/群引导）
 fn err_invalid_key() -> Result<Response> {
     let v = serde_json::json!({
         "error": {
-            "message": "API 密钥无效或已过期。请加入 AQUA 开源社区 QQ 频道（频道号 pd57362562，链接 https://pd.qq.com/s/e4ktxw1b8 ）获取最新密钥后重试。",
+            "message": "API 密钥无效或已过期（仅指定密钥模式下会出现）。请访问官网 acu.ltzy.top，或加入 AQUA 开源社区 QQ 频道（频道号 pd57362562）获取最新密钥；日常交流可加 QQ 群 1103667832。",
             "type": "invalid_api_key",
             "code": 401,
-            "qq_guild": "pd57362562",
-            "qq_guild_url": "https://pd.qq.com/s/e4ktxw1b8",
-            "qq_group": 1103667832,
+            "help": {
+                "site": SITE_URL,
+                "qq_guild": QQ_GUILD_ID,
+                "qq_guild_url": QQ_GUILD_URL,
+                "qq_group": QQ_GROUP_NUM,
+            }
         }
     });
     let mut res = Response::from_json(&v)?.with_status(401);
@@ -1230,13 +1250,13 @@ fn key_valid(env: &Env, key: &str) -> bool {
 }
 
 /// 鉴权模式（环境变量 AUTH_MODE）：
-///   "key"  = 指定密钥制：仅 GATEWAY_KEYS 中的密钥可用（防滥用，默认）
-///   "open" = 开放模式：任意非空密钥均可使用（个人自部署 / 公益开放）
-/// 其他取值一律按 "key" 处理（安全兜底）。
+///   "open" = 开放模式：任意非空密钥均可使用（默认；个人自部署 / 公益开放）
+///   "key"  = 指定密钥制：仅 GATEWAY_KEYS 中的密钥可用（防滥用，可选）
+/// 未配置 / 其他取值一律按 "open" 处理（恢复平台开放传统）。
 fn auth_mode(env: &Env) -> &'static str {
     match env.var("AUTH_MODE").map(|v| v.to_string()).as_deref() {
-        Ok("open") => "open",
-        _ => "key",
+        Ok("key") => "key",
+        _ => "open",
     }
 }
 
@@ -1252,8 +1272,8 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
     // 鉴权白名单：健康检查根路径 + 公开模型列表（营销入口）。
     // 其余端点鉴权模式由 AUTH_MODE 决定：
-    //   key  → 仅 GATEWAY_KEYS 中的密钥放行（默认，防滥用）
-    //   open → 任意非空密钥放行（个人自部署场景）
+    //   open（默认）→ 任意非空密钥放行（开放传统）
+    //   key  → 仅 GATEWAY_KEYS 中的密钥放行（防滥用，可选）
     let path = req.path().to_string();
     let is_public = path == "/" || path == "/v1/models";
     if !is_public {

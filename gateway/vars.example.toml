@@ -8,11 +8,11 @@
 
 # ---- 网关鉴权 ----
 # AUTH_MODE 鉴权模式（二选一，改完即生效）：
-#   "key"  = 指定密钥制：仅 GATEWAY_KEYS 中的密钥可用（防滥用，默认）
-#   "open" = 开放模式：任意非空密钥均可使用（个人自部署推荐）
-AUTH_MODE = "key"
+#   "open" = 开放模式：任意非空密钥均可使用（默认；中英文密钥皆可）
+#   "key"  = 指定密钥制：仅 GATEWAY_KEYS 中的密钥可用（防滥用，可选）
+AUTH_MODE = "open"
 
-# 群密钥（AUTH_MODE=key 时生效；逗号分隔支持多把平滑轮换）
+# 群密钥（仅 AUTH_MODE=key 时生效；逗号分隔支持多把平滑轮换）
 GATEWAY_KEYS = "sk-aqua-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 # ---- Nvidia NIM 上游密钥池（逗号分隔，可上百个）----

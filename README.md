@@ -89,12 +89,12 @@ aqua-worker/
 
 | AUTH_MODE | 行为 | 适用场景 |
 |---|---|---|
-| `key`（默认） | 仅 `GATEWAY_KEYS` 中列出的密钥可用，其他密钥返回 401 | 公开服务 / 防滥用 |
-| `open` | 任意非空密钥均可使用（如 `sk-anything`） | 个人自用 / 朋友间共享 |
+| `open`（默认） | 任意非空密钥均可使用（如 `sk-anything`，中英文皆可） | 个人自用 / 公益开放 |
+| `key` | 仅 `GATEWAY_KEYS` 中列出的密钥可用，其他密钥返回 401 | 防滥用 / 私有部署 |
 
 ```toml
-# vars.toml 示例：只想自己用，改成 open 即可
-AUTH_MODE = "open"
+# vars.toml 示例：想开启密钥门槛，改成 key 并配好 GATEWAY_KEYS 即可
+AUTH_MODE = "key"
 ```
 
 ## 快速开始
@@ -170,8 +170,8 @@ curl https://your-gateway-domain.example/v1/chat/completions \
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
-| `AUTH_MODE` | 否 | 鉴权模式：`key`（指定密钥制，默认）/ `open`（任意密钥可用，个人自部署推荐） |
-| `GATEWAY_KEYS` | 是* | 用户调用网关的密钥，逗号分隔支持多把平滑轮换（`AUTH_MODE=open` 时可不配） |
+| `AUTH_MODE` | 否 | 鉴权模式：`open`（任意密钥可用，默认）/ `key`（指定密钥制，防滥用） |
+| `GATEWAY_KEYS` | 否* | 用户调用网关的密钥，逗号分隔支持多把平滑轮换（仅 `AUTH_MODE=key` 时生效） |
 | `NVIDIA_KEYS` | 否 | Nvidia 密钥池（逗号分隔，可上百个；支持 `_2.._N` 分片） |
 | `GITEE_KEY` / `SILICONFLOW_KEY` / `ZHIPU_KEY` / `SPARK_KEY` | 否 | 各上游密钥，未配置则对应通道 502 |
 | `ACU_BASE` / `ACU_KEY` | 否 | 自定义专属上游地址与密钥（未配置则 `acu/*` 502） |
