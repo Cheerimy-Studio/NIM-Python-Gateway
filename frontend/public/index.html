@@ -3638,6 +3638,14 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     document.getElementById("pg-model").addEventListener("change", pgRenderHealth);
     pgFillModels();
     pgRenderHealth();
+    // 二次保险：若进入时下拉仍为空（极端时序），从离线表立即补填
+    if (!document.getElementById("pg-model").options.length) {
+      if (!models.length) {
+        models = fallbackModels.slice().sort(smartSort);
+        models.forEach(function (m) { if (!modelMeta[m]) modelMeta[m] = classify(m); });
+      }
+      pgFillModels();
+    }
   }
 
   /* ---- 页面切换（hash 路由） ---- */
@@ -3924,7 +3932,18 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
       .then(function () { if (timer) clearTimeout(timer); });
   }
   // DOM 就绪保护：脚本在 body 末尾执行，但个别浏览器时序差异下等一下更稳
-  function bootModels() { loadModels(); }
+  function bootModels() {
+    // 关键：启动时立即用离线内置表预填（先有后优）——
+    // 首次直连 #/playground 时在线列表尚未返回，pgInit 只能拿到空 models，
+    // 之前没有任何后续触发点，下拉就一直空白；预填后在线列表回来再覆盖刷新。
+    if (!models.length) {
+      models = fallbackModels.slice().sort(smartSort);
+      models.forEach(function (m) { if (!modelMeta[m]) modelMeta[m] = classify(m); });
+    }
+    pgFillModels();
+    pgRenderHealth();
+    loadModels();
+  }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", bootModels);
   } else {
