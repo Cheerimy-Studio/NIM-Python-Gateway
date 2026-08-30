@@ -762,7 +762,11 @@
   .dev-tabs .pill { cursor: pointer; }
   /* 下拉与输入统一（游戏区） */
   .pg-toolbar select, .tool-btns select, .tool-io select { background: var(--card2); color: var(--text);
-    border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; font-size: 13px; max-width: 320px; }
+    border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; font-size: 13px; max-width: 320px;
+    font-family: inherit; appearance: none; -webkit-appearance: none; -moz-appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: calc(100% - 18px) 55%, calc(100% - 13px) 55%;
+    background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; padding-right: 32px; cursor: pointer; }
   .pg-toolbar select:focus, .tool-btns select:focus, .tool-io select:focus { outline: none; border-color: var(--accent); }
   /* 工具/游戏控制行：替代散落的内联样式 */
   .tool-bar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
@@ -3514,8 +3518,29 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
           throw new Error(msg);
         });
       }
+      // 兼容性降级：老浏览器无 ReadableStream（res.body 为空）→ 改用整段文本读取（非逐字，但功能完整）
+      if (!res.body || typeof res.body.getReader !== "function") {
+        return res.text().then(function (raw) {
+          var full = "";
+          raw.split("\n").forEach(function (line) {
+            line = line.trim();
+            if (line.indexOf("data:") !== 0) return;
+            var payload = line.slice(5).trim();
+            if (payload === "[DONE]") return;
+            try {
+              var j = JSON.parse(payload);
+              var c = j.choices && j.choices[0] && (j.choices[0].delta || j.choices[0].message);
+              if (c && c.content) full += c.content;
+            } catch (e) {}
+          });
+          aiDiv.classList.remove("streaming");
+          if (full) { aiDiv.textContent = full; pgHistory.push({ role: "assistant", content: full }); }
+          else aiDiv.innerHTML = '<span class="pg-err">上游未返回任何内容，请换一个模型重试。</span>';
+          pgSetBusy(false);
+        });
+      }
       var reader = res.body.getReader();
-      var dec = new TextDecoder();
+      var dec = (typeof TextDecoder !== "undefined") ? new TextDecoder() : null;
       var buf = "";
       var full = "";
       function pump() {
@@ -3527,7 +3552,8 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
             pgSetBusy(false);
             return;
           }
-          buf += dec.decode(chunk, { stream: true });
+          // TextDecoder 缺失的极老内核：按 UTF-8 可打印字符近似解码（兼容兜底）
+          buf += dec ? dec.decode(chunk, { stream: true }) : String.fromCharCode.apply(null, new Uint8Array(chunk.value));
           var lines = buf.split("\n");
           buf = lines.pop();
           for (var i = 0; i < lines.length; i++) {
@@ -3839,11 +3865,22 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     }
   }
   function loadModels() {
+    // 兼容性保护：极老浏览器（IE11 等）无 fetch，直接走离线兜底列表，不让页面空转
+    if (typeof fetch !== "function") {
+      modelsLoadErr = true;
+      models = fallbackModels.slice();
+      models.forEach(function (m) { modelMeta[m] = classify(m); });
+      updateModelsNotice();
+      renderCurrentPage();
+      pgFillModels();
+      pgRenderHealth();
+      return;
+    }
     // 请求超时保护：15s 未返回视为失败，避免页面无限等待
     var controller = (typeof AbortController !== "undefined") ? new AbortController() : null;
     var timer = null;
     if (controller) {
-      timer = setTimeout(function () { controller.abort(); }, 15000);
+      timer = setTimeout(function () { try { controller.abort(); } catch (e) {} }, 15000);
     }
     fetch(GATEWAY + "/models", controller ? { signal: controller.signal } : undefined)
       .then(function (r) { if (!r.ok) throw new Error("status " + r.status); return r.json(); })
@@ -3881,10 +3918,18 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
         models = fallbackModels.slice();
         models.forEach(function (m) { modelMeta[m] = classify(m); });
         renderCurrentPage();
+        pgFillModels();   // 兜底：加载失败也填充在线体验下拉，避免"其他浏览器不加载"
+        pgRenderHealth();
       })
       .then(function () { if (timer) clearTimeout(timer); });
   }
-  loadModels();
+  // DOM 就绪保护：脚本在 body 末尾执行，但个别浏览器时序差异下等一下更稳
+  function bootModels() { loadModels(); }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootModels);
+  } else {
+    bootModels();
+  }
   // 每 60 秒自动刷新（模型列表与 Workers AI 额度状态自动更新）
   setInterval(loadModels, 60000);
   route();
