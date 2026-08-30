@@ -6,9 +6,9 @@
 
 极致简单易用，常见环境轻松兼容。
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://rustup.rs/)
-[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-f38020.svg)](https://workers.cloudflare.com/)
+[![License: AGPL](https://img.shields.io/badge/License-AGPL-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-stable-orange.svg)](https://www.python.org/)
+[![连山云](https://img.shields.io/badge/连山云-orange.svg)](https://idc.mcvps.top/)
 
 **基于仓库：[gitee.com/xiaosu4610/aqua-rust-workers](https://gitee.com/xiaosu4610/aqua-rust-workers) · 觉得不错请点个 Star ⭐**
 
