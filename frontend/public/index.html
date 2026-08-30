@@ -1710,6 +1710,15 @@ print(r.choices[<span class="tok">0</span>].message.content)</code></pre>
     return location.origin + "/v1";
   })();
 
+  // 首页「Base URL」卡片展示真实可复制的接口地址（跟随探测结果，开源部署同样自动适配）
+  (function fillBaseUrl() {
+    var el = document.getElementById("base-url");
+    if (!el) return;
+    var shown = GATEWAY;
+    if (shown.charAt(0) === "/") shown = location.origin + shown;  // 同源相对路径补全为完整 URL
+    el.textContent = shown;
+  })();
+
   /* ---- 主题切换 ---- */
   function setTheme(t) {
     document.documentElement.setAttribute("data-theme", t);
