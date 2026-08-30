@@ -1,5 +1,6 @@
-# AQUA 二创 - NIM-Python-Gateway
-
+<div align="center">
+### AQUA 二创 - NIM-Python-Gateway
+</div>
 <div align="center">
 
 **免费 · 极速 · 免注册的 OpenAI 兼容 AI 网关**
