@@ -1,7 +1,12 @@
 # NIM Python Gateway
 
+**免费 · 极速 · 免注册的 OpenAI 兼容 AI 网关**
+
 面向 **NVIDIA NIM**（以及任意 OpenAI 兼容上游）的多账号 API 网关。单文件进程、JSON 存储、无外部依赖，
 内置账号池调度、多维限速、分级冷却与熔断、排队保护、完整 OpenAI / Anthropic 协议兼容，以及一个自带的管理后台。
+
+[![License: AGPL](https://img.shields.io/badge/License-AGPL-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-orange.svg)](https://www.python.org/)
 
 - 纯异步（FastAPI + httpx），单进程可支撑高并发
 - 无数据库、无 Redis：状态存于 `data/db.json`，原子写入
@@ -231,6 +236,15 @@ data/                运行时数据（db.json，已 gitignore）
 
 ---
 
+## 致谢
+
+账号调度部分的设计（粘性密钥、同钥重试、错误分级、渠道耗尽判定）参考了 [AQUA](https://gitee.com/xiaosu4610/acu-aqua) 的思路，在此致谢。
+
+---
+
 ## 许可
 
-[MIT](LICENSE)
+本项目采用 [AGPL-3.0](LICENSE) 许可。
+
+这意味着：**任何下游 Fork 与二次分发都必须完整开源**；如果你把修改后的版本作为网络服务对外提供，
+也必须向使用者提供对应的完整源码。
