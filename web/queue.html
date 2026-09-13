@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>队列状态 · NVIDIA Gateway</title>
+<style>
+body{font-family:system-ui,Segoe UI,sans-serif;background:#f5f7fb;color:#212529;margin:0}
+.hdr{background:#0e1726;color:#94a3b8;padding:12px 24px;font-size:14px;display:flex;justify-content:space-between;align-items:center}
+.hdr b{color:#fff;font-size:15px}
+.wrap{max-width:720px;margin:24px auto;padding:0 16px}
+.stat{display:flex;gap:12px;margin-bottom:20px}
+.stat-card{flex:1;background:#fff;border:1px solid #e5eaf1;border-radius:10px;padding:14px 16px;text-align:center}
+.stat-card .num{font-size:1.6rem;font-weight:700}
+.stat-card .lbl{font-size:11px;color:#64748b}
+.ok{color:#16a34a}.warn{color:#d97706}.err{color:#dc2626}
+table{width:100%;border-collapse:collapse;font-size:13px;background:#fff;border-radius:8px;overflow:hidden;border:1px solid #e5eaf1}
+th{background:#f8fafc;color:#64748b;font-weight:600;text-align:left;padding:8px 12px;border-bottom:1px solid #e5eaf1}
+td{padding:7px 12px;border-bottom:1px solid #f1f5f9}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}
+.dot.g{background:#16a34a}.dot.y{background:#d97706}
+.muted{color:#94a3b8;font-size:12px}
+</style>
+</head>
+<body>
+<div class="hdr"><b>NVIDIA Gateway</b><span class="muted">队列状态</span></div>
+<div class="wrap">
+  <div class="stat" id="stats"></div>
+  <table>
+    <thead><tr><th>#</th><th>等待时间</th><th>模型</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <p class="muted" style="margin-top:12px">当所有账号暂不可用时，请求进入排队等待；队首优先获得下一个可用账号。刷新本页查看排队最新状态。</p>
+</div>
+<script>
+async function refresh(){
+  try{
+    const r = await fetch('/api/queue/public');
+    const d = await r.json();
+    const s = document.getElementById('stats');
+    const n = d.length || 0;
+    const cls = n === 0 ? 'ok' : n < 5 ? 'warn' : 'err';
+    s.innerHTML = `
+      <div class="stat-card"><div class="num ${cls}">${n}</div><div class="lbl">排队中</div></div>
+      <div class="stat-card"><div class="num ${n?'warn':'ok'}">${d.max_wait}s</div><div class="lbl">最长等待</div></div>
+      <div class="stat-card"><div class="num ok">✓</div><div class="lbl">服务正常</div></div>`;
+    const tb = document.getElementById('rows');
+    tb.innerHTML = '';
+    if(!n){ tb.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#94a3b8;padding:20px">队列为空</td></tr>'; return; }
+    d.rows.forEach((q,i)=>{
+      const cls = q.wait > d.max_wait/2 ? 'y' : 'g';
+      tb.innerHTML += `<tr><td>${i+1}</td><td><span class="dot ${cls}"></span>${q.wait}s</td><td>${q.model||'-'}</td></tr>`;
+    });
+  }catch(e){ console.error(e); }
+}
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+.git
+.gitignore
+data/
+tests/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.log

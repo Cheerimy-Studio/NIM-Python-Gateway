@@ -1,0 +1,35 @@
+# ---------- 运行时数据（含真实 API Key、密码哈希、会话密钥，绝不能提交）----------
+data/
+*.log
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ---------- 虚拟环境 ----------
+.venv/
+venv/
+env/
+ENV/
+
+# ---------- 工具 ----------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.idea/
+.vscode/
+*.swp
+
+# ---------- 系统 ----------
+.DS_Store
+Thumbs.db
+desktop.ini
