@@ -69,7 +69,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "log_max": 200,
     "session_log_max": 100,
     "timezone": "Asia/Shanghai",
-    "models_cache_ttl": 600,
     "verify_tls": True,
     "admin_username": "admin",
 }
@@ -192,7 +191,6 @@ class Store:
             "stats": {},
             "logs": [],
             "queue": [],
-            "models_cache": None,
             "sessions": [],
             "channel_presets": {},
         }

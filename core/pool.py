@@ -14,6 +14,14 @@ from .util import mask_email, str_cut, upstream_snippet
 # 进程内在途请求计数：key_id -> 数量（账户/渠道并发限制用，重启归零）
 _inflight: dict[str, int] = {}
 
+# 可靠性按「渠道 + 模型」统计时的最小样本数；不足则退回渠道整体成功率
+_MODEL_RECENT_MIN = 3
+
+
+def _model_key(uid: str, model: str) -> str:
+    """「渠道 + 模型」联合键。用 NUL 分隔，避免模型名里含分隔符造成歧义。"""
+    return f"{uid}\x00{model}"
+
 
 def _apply_ban(k: dict, until: int, reason: str) -> None:
     if until > (k.get("banned_until") or 0):
@@ -63,6 +71,10 @@ def _classify(http_status: int, errno: int, error: str) -> str:
         return "model"
     if http_status == 429:
         return "429"
+    if http_status == 402:
+        # 402 Payment Required：账号额度/余额已耗尽。重试多少次都注定失败，
+        # 必须按硬失败处理（封禁→禁用），否则这个账号会被反复选中反复失败。
+        return "payment"
     if http_status in (401, 403):
         return "auth"
     if errno == 28 or "timed out" in low or "timeout" in low:
@@ -497,8 +509,13 @@ def _acquire_fn(db: dict, out: dict, est_tokens: int, model: str) -> None:
 
     pool_ids = list(pools)
     scores = {}
+    recent = db.get("up_recent", {})
     for pid in pool_ids:
-        rec = db.get("up_recent", {}).get(pid) or []
+        # 可靠性按「渠道 + 模型」定：同一个上游对不同模型的可用性差别很大
+        # （某些模型经常排队/下线，而另一些一直正常），用整体成功率会让好模型
+        # 被差模型拖累、差模型被好模型掩盖。样本不足时退回渠道整体成功率。
+        rec_m = recent.get(_model_key(pid, model)) or []
+        rec = rec_m if len(rec_m) >= _MODEL_RECENT_MIN else (recent.get(pid) or [])
         ok_n = sum(1 for v in rec if v)
         scores[pid] = (ok_n + 5) / (len(rec) + 10)
     pool_ids.sort(key=lambda p: (scores[p], pools[p]["w"]), reverse=True)
@@ -621,16 +638,19 @@ def release(
                         if base > 0:
                             cool = min(base * (2 ** min(streak - 1, 4)), 300)
                             k["cooldown_until"] = max(k.get("cooldown_until") or 0, now + cool)
-                    elif cls == "auth":
+                    elif cls in ("auth", "payment"):
+                        # 401/403 鉴权失败、402 余额不足：都按「硬失败」处理，走同一套
+                        # 阶梯（先封禁，累计到阈值后禁用一天）。
                         k["consecutive_failures"] = k.get("consecutive_failures", 0) + 1
                         k["hard_fail_count"] = k.get("hard_fail_count", 0) + 1
+                        reason = "no_credit" if cls == "payment" else "invalid_key"
                         limit = eff("hard_fail_disable_count", _cfgint(cfg, "hard_fail_disable_count", 3))
                         if limit > 0 and k["hard_fail_count"] >= limit:
-                            _apply_ban(k, now + 86400, "invalid_key")
+                            _apply_ban(k, now + 86400, reason)
                         else:
                             ban_s = eff("hard_fail_ban_seconds", _cfgint(cfg, "hard_fail_ban_seconds", 600))
                             if ban_s > 0:
-                                _apply_ban(k, now + ban_s, "auth_fail")
+                                _apply_ban(k, now + ban_s, reason)
                     else:
                         # 5xx / 超时 / 连接失败：阶梯封禁 + 分级冷却
                         k["consecutive_failures"] = k.get("consecutive_failures", 0) + 1
@@ -693,12 +713,20 @@ def release(
                 )
                 del recent[10:]
 
-                # 渠道近期可行性（最近 20 次成功率，供取号智能路由）
+                # 渠道近期可行性（最近 20 次成功率，供取号智能路由）。
+                # 同时记两份：渠道整体 + 「渠道+模型」，路由时优先用按模型的那份。
                 uid = str(k.get("upstream_id") or "")
                 if uid:
-                    rec = db.setdefault("up_recent", {}).setdefault(uid, [])
-                    rec.insert(0, 1 if success else 0)
+                    flag = 1 if success else 0
+                    recent = db.setdefault("up_recent", {})
+                    rec = recent.setdefault(uid, [])
+                    rec.insert(0, flag)
                     del rec[20:]
+                    m_name = str_cut(str(log.get("model")) if log else "", 80)
+                    if m_name and m_name != "-":
+                        rec_m = recent.setdefault(_model_key(uid, m_name), [])
+                        rec_m.insert(0, flag)
+                        del rec_m[20:]
 
                 # 模型熔断：仅统计真实上游侧失败（5xx / 超时 / 连接失败）。
                 # 请求类错误（400/404/410 等，多因下游参数或模型下线）、鉴权、限流不计，

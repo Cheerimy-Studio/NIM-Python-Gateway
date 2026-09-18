@@ -511,7 +511,6 @@ INT_SETTINGS = {
     "request_timeout",
     "connect_timeout",
     "log_max",
-    "models_cache_ttl",
     "acct_concurrency",
     "total_concurrency",
     "pool_rpm_cap",

@@ -472,7 +472,11 @@ def _upstream_fail(key: dict | None, res: dict | None, cfg: dict, anthropic: boo
             return Response(content=body, status_code=status, media_type="application/json")
         msg = str((res or {}).get("error") or "") or "上游请求失败"
         return _error(code, msg, "upstream_error", anthropic=anthropic)
-    msg = {
+    # rstatus=0（连接层异常）以前统一落到「渠道暂不可用」，看不出是超时还是连不上。
+    # 按错误分级给出具体原因，客户端和管理员都能据此判断。
+    cls = pool._classify(status, 0, str((res or {}).get("error") or ""))
+    specific = {"timeout": "上游响应超时，请稍后重试", "conn": "无法连接上游，请稍后重试"}.get(cls)
+    msg = specific or {
         "429": "渠道限流，请稍后重试",
         "401": "渠道鉴权失败，请联系管理员",
         "403": "渠道鉴权失败，请联系管理员",
@@ -496,67 +500,33 @@ async def v1_models(request: Request):
     entry = _token_entry(request, cfg)
     if _has_auth(cfg) and entry is None:
         return _error(401, "访问令牌无效", "invalid_request_error", "invalid_api_key")
-    cached = STORE.load().get("models_cache") or {}
-    ttl = _cfgint(cfg, "models_cache_ttl", 600)
-    if cached and time.time() - cached.get("fetched_at", 0) < ttl:
-        return JSONResponse(_filter_models(cached["data"], entry, cfg), headers=_cors())
-    acq_holder: dict = {}
-    await STORE.aupdate(lambda db: acq_holder.update(pool.acquire(db, 0, "")))
-    key = acq_holder.get("key") if acq_holder.get("result") == "ok" else None
-    if key:
-        base = upstreams.base_for(key)
-        t0 = time.time()
-        body, status, rerr = "", 0, ""
-        try:
-            r = await get_http(cfg).get(
-                base + "/models", headers={"Authorization": "Bearer " + key["apikey"]}, timeout=20
-            )
-            body, status = r.text, r.status_code
-        except (httpx.HTTPError, OSError) as e:
-            rerr = str(e)
-        try:
-            data = json.loads(body)
-        except Exception:
-            data = None
-        ok = 200 <= status < 400 and isinstance(data, dict) and "data" in data
-        err = "" if ok else upstream_snippet({"status": status, "body": body, "error": rerr})
-        ip = _client_ip(request)
-        await pool.arelease(
-            key["id"],
-            ok,
-            status,
-            err,
-            build_usage({"status": status, "body": body, "streamed": False, "out_bytes": 0}, ""),
-            _release_log("models", "-", status, int((time.time() - t0) * 1000), err, 1, key, ip),
-        )
-        if ok:
-            await STORE.aupdate(
-                lambda db: db.__setitem__("models_cache", {"fetched_at": int(time.time()), "data": data})
-            )
-            return JSONResponse(_filter_models(data, entry, cfg), headers=_cors())
-    return JSONResponse(
-        {
-            "object": "list",
-            "data": [
-                {"id": m, "object": "model", "created": 0, "owned_by": "nvidia"} for m in FALLBACK_MODELS
-            ],
-        },
-        headers=_cors(),
-    )
-
-
-def _filter_models(data: dict, token_entry: dict | None, cfg: dict) -> dict:
-    curated = upstreams.curated_models()
-    items = data.get("data") or []
-    if curated:
-        items = [{"id": m, "object": "model", "created": 0, "owned_by": "gateway"} for m in curated]
-    out = dict(data)
-    out["data"] = [
-        m
-        for m in items
-        if ModelPolicy.allowed(m.get("id") if isinstance(m, dict) else str(m), token_entry, cfg)
+    out = [
+        {"id": m, "object": "model", "created": 0, "owned_by": "gateway"}
+        for m in gateway_model_ids()
+        if ModelPolicy.allowed(m, entry, cfg)
     ]
-    return out
+    return JSONResponse({"object": "list", "data": out}, headers=_cors())
+
+
+def gateway_model_ids() -> list[str]:
+    """网关对外支持的模型清单。
+
+    只由渠道配置决定：各启用渠道显式配置的 models 白名单 + model_map 的客户端别名。
+    刻意不访问上游 —— 上游真实模型清单对网关使用者没有意义（其中大部分并未被渠道
+    放行），而且每次拉取都要占用一个账号额度，还引入缓存、TTL 与超时一整套开销。
+    渠道都没配白名单时无从枚举，退回 model_map 别名 / 内置清单兜底。
+    """
+    names = upstreams.curated_models()
+    if names:
+        return names
+    aliases: list[str] = []
+    for u in upstreams.all_upstreams():
+        if not u.get("enabled"):
+            continue
+        for k in u.get("model_map") or {}:
+            if k not in aliases:
+                aliases.append(k)
+    return aliases or list(FALLBACK_MODELS)
 
 
 def _release_log(
@@ -698,9 +668,47 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                 send_task = asyncio.create_task(client.send(_req, stream=True))
                 _ttfb_cfg = float(int(cfg.get("ttfb_timeout") or 0))
                 commit_after = 12.0 if _ttfb_cfg <= 0 else min(12.0, _ttfb_cfg)
-                try:
-                    r = await asyncio.wait_for(asyncio.shield(send_task), timeout=commit_after)
-                except asyncio.TimeoutError:
+                # 分片等待响应头：期间轮询客户端断连。断连则取消上游请求并释放账号，
+                # 否则为死连接白占账号（配合 acct_concurrency 会把账号卡死）。
+                r = None
+                waited = 0.0
+                while waited < commit_after:
+                    try:
+                        if await request.is_disconnected():
+                            send_task.cancel()
+                            try:
+                                ms = int((time.time() - t0) * 1000)
+                                await pool.arelease(
+                                    key["id"],
+                                    True,
+                                    499,
+                                    "客户端已断开",
+                                    {"prompt_tokens": -(-len(body) // 3), "completion_tokens": 0},
+                                    _release_log(
+                                        ep_tag,
+                                        model,
+                                        499,
+                                        ms,
+                                        "客户端已断开",
+                                        attempt,
+                                        key,
+                                        ip,
+                                        up_model=up_model,
+                                        stream=True,
+                                        ttfb_ms=ms,
+                                    ),
+                                )
+                            except Exception:
+                                pass
+                            return Response(status_code=499)
+                    except Exception:
+                        pass
+                    try:
+                        r = await asyncio.wait_for(asyncio.shield(send_task), timeout=0.5)
+                        break
+                    except asyncio.TimeoutError:
+                        waited += 0.5
+                if r is None:
                     return _slow_stream_response(
                         send_task,
                         client,
@@ -950,6 +958,7 @@ class _StreamPump:
     def __init__(self, ait) -> None:
         self.q: asyncio.Queue = asyncio.Queue()
         self.done = object()
+        self.error = ""  # 上游中断原因（连接被掐断/读超时等），供下游判断截断
         self._ait = ait
         self.task = asyncio.create_task(self._run())
 
@@ -957,8 +966,9 @@ class _StreamPump:
         try:
             async for ch in self._ait:
                 await self.q.put(ch)
-        except Exception:
-            pass
+        except Exception as e:
+            # 不能静默吞掉：上游中途断流若被当作正常结束，下游会把截断内容当完整回复
+            self.error = f"{type(e).__name__}: {e}"
         finally:
             await self.q.put(self.done)
 
@@ -1004,26 +1014,15 @@ def _proxy_stream(
 
     async def gen() -> AsyncGenerator[bytes, None]:
         nonlocal up_bytes, buf, first_chunk_at
-        # 复用外层已启动的读取任务（否则对同一 ait 二次迭代必然立刻结束）
-        if pump is not None:
-            q, sentinel, task = pump.q, pump.done, pump.task
-        else:
-            sentinel = object()
-            q = asyncio.Queue()
-
-            async def _feed() -> None:
-                try:
-                    async for ch in (ait if ait is not None else r.aiter_bytes()):
-                        await q.put(ch)
-                except Exception:
-                    pass
-                finally:
-                    await q.put(sentinel)
-
-            task = asyncio.create_task(_feed())
+        # 复用外层已启动的读取任务（否则对同一 ait 二次迭代必然立刻结束）。
+        # 注意用独立局部名：在嵌套函数里给 pump 赋值会把它变成局部变量，
+        # 之后 `pump is None` 这个读取会抛 UnboundLocalError（响应头已发出 → 客户端只看到截断）。
+        p = pump if pump is not None else _StreamPump(ait if ait is not None else r.aiter_bytes())
+        q, sentinel, task = p.q, p.done, p.task
         idle = 0.0
         started = False
         outcome = ""
+        truncated = ""  # 已开始下发后上游异常收尾（断流/空闲超时），需显式告知下游
         try:
             # 先发外层预读的首帧
             if first_chunk:
@@ -1058,10 +1057,14 @@ def _proxy_stream(
                     if limit > 0 and idle >= limit:
                         if not started:
                             outcome = f"上游首字节超时（{int(limit)}s）"
+                        else:
+                            truncated = f"上游空闲超时（{int(limit)}s）"
                         break
                     yield _keepalive_frame(ep_tag, model)
                     continue
                 if item is sentinel:
+                    if p.error and started:
+                        truncated = f"上游流中断：{p.error}"
                     break
                 idle = 0.0
                 started = True
@@ -1078,6 +1081,10 @@ def _proxy_stream(
                     continue
                 out, buf = buf[: cut + 1], buf[cut + 1 :]
                 yield model_re.sub(model_to, out)
+            # 上游异常收尾：以下发 error 事件 + [DONE] 收口，让下游 SDK 识别到截断，
+            # 而不是把半截内容当成完整回复（静默截断比显式报错危险得多）
+            if truncated and not outcome:
+                yield _sse_error_event(truncated)
         except GeneratorExit:
             outcome = "客户端已断开"
             raise
@@ -1098,18 +1105,19 @@ def _proxy_stream(
                 "completion_tokens": estimate_output_tokens(up_bytes),
             }
             st = 499 if outcome == "客户端已断开" else status
+            note = outcome or truncated  # 截断原因同样要落进日志，便于排查上游可用性
             await pool.arelease(
                 key["id"],
                 True,
                 st,
-                outcome,
+                note,
                 usage,
                 _release_log(
                     ep_tag,
                     model,
                     st,
                     ms,
-                    outcome,
+                    note,
                     attempt,
                     key,
                     ip,
@@ -1201,68 +1209,15 @@ def _slow_stream_response(
     async def gen() -> AsyncGenerator[bytes, None]:
         r: httpx.Response | None = None
         outcome = ""
-        waited = 0.0
-        # 进入兜底流时已经静默了 commit_after 秒，立刻先发一个心跳占住连接，
-        # 不能等满一个 HB 间隔（否则代理仍有被掐断的窗口）
-        yield _keepalive_frame(ep_tag, model, first=True)
-        # 阶段一：等响应头，期间每 HB 秒发一个心跳帧
-        while r is None:
-            if request is not None:
-                try:
-                    if await request.is_disconnected():
-                        outcome = "客户端已断开"
-                        break
-                except Exception:
-                    pass
-            try:
-                r = await asyncio.wait_for(asyncio.shield(send_task), timeout=HB)
-            except asyncio.TimeoutError:
-                waited += HB
-                if waited >= deadline:
-                    outcome = f"上游首字节超时（{int(deadline)}s）"
-                    break
-                yield _keepalive_frame(ep_tag, model)
-            except (httpx.HTTPError, OSError) as e:
-                outcome = str(e)
-                break
-        if r is None:
-            send_task.cancel()
+        released = False
+        handed = False
+        inner_it = None
+
+        async def _fail(status: int, err: str) -> None:
+            # 失败释放：记入冷却/封禁，仍按真实状态码归类
+            nonlocal released
+            released = True
             ms = int((time.time() - t0) * 1000)
-            yield _sse_error_event(outcome or "上游无响应")
-            await pool.arelease(
-                key["id"],
-                False,
-                504,
-                outcome,
-                _est(),
-                _release_log(
-                    ep_tag,
-                    model,
-                    504,
-                    ms,
-                    outcome,
-                    attempt,
-                    key,
-                    ip,
-                    up_model=up_model,
-                    stream=True,
-                    ttfb_ms=ms,
-                ),
-            )
-            return
-        status = r.status_code
-        ctype = r.headers.get("content-type", "")
-        if not (200 <= status < 400):
-            # 上游报错：读错误体 -> 流内报错，并按真实状态码释放（仍触发冷却/封禁）
-            try:
-                raw = await r.aread()
-                err = upstream_snippet(
-                    {"status": status, "body": raw.decode("utf-8", "replace"), "error": ""}
-                )
-            except Exception as e:
-                err = str(e)
-            ms = int((time.time() - t0) * 1000)
-            yield _sse_error_event(err or f"上游返回 HTTP {status}")
             await pool.arelease(
                 key["id"],
                 False,
@@ -1283,33 +1238,123 @@ def _slow_stream_response(
                     ttfb_ms=ms,
                 ),
             )
+
+        try:
+            # 进入兜底流时已经静默了 commit_after 秒，立刻先发一个心跳占住连接，
+            # 不能等满一个 HB 间隔（否则代理仍有被掐断的窗口）
+            yield _keepalive_frame(ep_tag, model, first=True)
+            waited = 0.0
+            # 阶段一：等响应头，期间每 HB 秒发一个心跳帧
+            while r is None:
+                if request is not None:
+                    try:
+                        if await request.is_disconnected():
+                            outcome = "客户端已断开"
+                            break
+                    except Exception:
+                        pass
+                try:
+                    r = await asyncio.wait_for(asyncio.shield(send_task), timeout=HB)
+                except asyncio.TimeoutError:
+                    waited += HB
+                    if waited >= deadline:
+                        outcome = f"上游首字节超时（{int(deadline)}s）"
+                        break
+                    yield _keepalive_frame(ep_tag, model)
+                except (httpx.HTTPError, OSError) as e:
+                    outcome = str(e)
+                    break
+            if r is None:
+                # 失败/超时：断连时连接已关闭，无需再发错误帧
+                if outcome != "客户端已断开":
+                    yield _sse_error_event(outcome or "上游无响应")
+                await _fail(499 if outcome == "客户端已断开" else 504, outcome or "上游无响应")
+                return
+            status = r.status_code
+            ctype = r.headers.get("content-type", "")
+            if not (200 <= status < 400):
+                # 上游报错：读错误体 -> 流内报错，并按真实状态码释放（仍触发冷却/封禁）
+                try:
+                    raw = await r.aread()
+                    err = upstream_snippet(
+                        {"status": status, "body": raw.decode("utf-8", "replace"), "error": ""}
+                    )
+                except Exception as e:
+                    err = str(e)
+                yield _sse_error_event(err or f"上游返回 HTTP {status}")
+                await _fail(status, err)
+                try:
+                    await r.aclose()
+                except Exception:
+                    pass
+                return
+            # 阶段二：2xx，交给 _proxy_stream 正常透传（复用改名/心跳/统计/释放逻辑）
+            inner = _proxy_stream(
+                client,
+                r,
+                key,
+                ep_tag,
+                model,
+                up_model,
+                body,
+                ip,
+                attempt,
+                t0,
+                status,
+                ctype,
+                first_chunk=b"",
+                ait=None,
+                request=request,
+                heartbeat=False,
+                ttfb_deadline=deadline,
+            )
+            inner_it = inner.body_iterator
+            handed = True  # 账号释放移交给 _proxy_stream
             try:
-                await r.aclose()
-            except Exception:
-                pass
-            return
-        # 阶段二：2xx，交给 _proxy_stream 正常透传（复用改名/心跳/统计/释放逻辑）
-        inner = _proxy_stream(
-            client,
-            r,
-            key,
-            ep_tag,
-            model,
-            up_model,
-            body,
-            ip,
-            attempt,
-            t0,
-            status,
-            ctype,
-            first_chunk=b"",
-            ait=None,
-            request=request,
-            heartbeat=False,
-            ttfb_deadline=deadline,
-        )
-        async for chunk in inner.body_iterator:
-            yield chunk
+                async for chunk in inner_it:
+                    yield chunk
+            finally:
+                # 外层被关闭（断连）时，内层生成器不会自动结束，必须显式关闭它，
+                # 否则 _proxy_stream 的 finally（释放账号的那一段）永远不执行 → 账号泄漏。
+                try:
+                    await inner_it.aclose()
+                except Exception:
+                    pass
+        except GeneratorExit:
+            outcome = "客户端已断开"
+            raise
+        finally:
+            send_task.cancel()
+            if not released and not handed:
+                # 兜底：断连/异常等一切未交接、未释放的情况，确保账号被回收，
+                # 否则配合 acct_concurrency 会把账号永久卡死在满载。
+                ms = int((time.time() - t0) * 1000)
+                st = 499 if outcome == "客户端已断开" else 504
+                await pool.arelease(
+                    key["id"],
+                    False,
+                    st,
+                    outcome,
+                    _est(),
+                    _release_log(
+                        ep_tag,
+                        model,
+                        st,
+                        ms,
+                        outcome,
+                        attempt,
+                        key,
+                        ip,
+                        up_model=up_model,
+                        stream=True,
+                        ttfb_ms=ms,
+                    ),
+                )
+            if r is not None:
+                try:
+                    await r.aclose()
+                except Exception:
+                    pass
 
     return StreamingResponse(gen(), media_type="text/event-stream", headers=_cors())
 
@@ -1741,13 +1786,8 @@ async def v1_model_retrieve(request: Request, model_id: str):
         return _error(
             404, f"The model '{model_id}' does not exist", "invalid_request_error", "model_not_found"
         )
-    # 有模型缓存时按缓存校验（缓存来自上游真实列表）；无缓存则放行（渠道不限模型时无法判定）
-    cached = STORE.load().get("models_cache") or {}
-    cdata = cached.get("data")
-    if isinstance(cdata, dict):
-        cdata = cdata.get("data") or []
-    ids = {m.get("id") for m in cdata if isinstance(m, dict)}
-    known = ids | set(upstreams.curated_models())
+    # 只有渠道显式配置了模型白名单时才能判定「不支持」；未配置时网关支持任意模型名，放行
+    known = set(upstreams.curated_models())
     if known and model_id not in known:
         return _error(
             404, f"The model '{model_id}' does not exist", "invalid_request_error", "model_not_found"

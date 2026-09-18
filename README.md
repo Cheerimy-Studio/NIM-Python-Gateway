@@ -19,7 +19,8 @@
 
 ### 账号池与调度
 - **多账号池**：批量导入邮箱/密码/API Key，自动在渠道间调度
-- **LRU + 可行度路由**：优先使用最久未用的健康账号，按渠道成功率加权分配
+- **LRU + 可行度路由**：优先使用最久未用的健康账号；渠道选择按**「渠道 + 模型」维度的成功率**
+  加权（同一上游对不同模型的可用性差别很大，用整体成功率会让好模型被差模型拖累）
 - **并发保护**：账号级 / 渠道级并发上限，避免同一把 Key 被并行打爆
 - **多维限速**：账号 RPM、TPM、日请求上限、日 Token 上限、小时请求上限，以及池级 RPM / 日上限
 - **账号预热**：新账号在预热期内按比例限速放开，避免刚导入就被上游风控
@@ -48,7 +49,8 @@
 - `POST /v1/embeddings`
 - `POST /v1/responses`（OpenAI Responses API，含流式事件转换）
 - `POST /v1/messages`（Anthropic Messages API，含流式事件转换）
-- `GET /v1/models`、`GET /v1/models/{id}`
+- `GET /v1/models`、`GET /v1/models/{id}` —— **返回网关对外支持的模型**（由渠道的 `models` 白名单与
+  `model_map` 别名决定），不会泄漏上游真实模型清单，也不为此访问上游（省掉一次账号消耗与缓存超时）
 - CORS 预检、`Authorization: Bearer` 鉴权
 - **响应补全**：上游漏 `usage` 时自动补齐 `total_tokens`；流式强制 `text/event-stream`；
   非流式强制 `application/json`（不原样转发上游可能异常的头）

@@ -382,7 +382,10 @@ def delete(uid: str) -> tuple[bool, str]:
         db["upstreams"] = [u for u in db["upstreams"] if u["id"] != uid]
         db["pool_buckets"].pop(uid, None)
         db["pool_daily"].pop(uid, None)
-        db["up_recent"].pop(uid, None)
+        # 连同该渠道的「渠道+模型」可靠性记录（键为 uid\x00model）一起清掉
+        recent = db.get("up_recent", {})
+        for key in [k for k in recent if k == uid or k.startswith(uid + "\x00")]:
+            recent.pop(key, None)
 
     STORE.update(_fn)
     return True, ""

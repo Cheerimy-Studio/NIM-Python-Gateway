@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import json, os, shutil, subprocess, sys, time
+import json, os, shutil, subprocess, sys, threading, time
 import httpx
 
 # 允许从任意目录运行：定位到项目根
@@ -22,6 +22,12 @@ _c = {"rl": 0, "flaky": 0}
 @app.get("/v1/models")
 async def models():
     return {"object":"list","data":[{"id":"mock-model","object":"model","created":0,"owned_by":"t"}]}
+
+@app.post("/fail/v1/chat/completions")
+async def chat_fail(request: Request):
+    # 只按「渠道」失败的路径：用于验证按模型的可靠性路由
+    await request.json()
+    return JSONResponse({"error":{"message":"this channel is broken for the model"}}, status_code=500)
 
 @app.post("/v1/chat/completions")
 async def chat(request: Request):
@@ -65,6 +71,12 @@ async def chat(request: Request):
             yield "data: " + json.dumps({"model":m,"choices":[{"delta":{"content":"Hdr"}}]}) + "\\n\\n"
             yield "data: [DONE]\\n\\n"
         return StreamingResponse(g5(), media_type="text/event-stream")
+    if m == "brokenstream":
+        # 上游下发一部分后突然断开（无 [DONE]）——网关必须显式报错，不能当正常结束
+        async def g6():
+            yield "data: " + json.dumps({"model": m, "choices": [{"delta": {"content": "part"}}]}) + "\\n\\n"
+            raise RuntimeError("upstream died mid-stream")
+        return StreamingResponse(g6(), media_type="text/event-stream")
     if st:
         async def g():
             for t in ["Hello"," world"]:
@@ -211,9 +223,37 @@ try:
         "/v1/chat/completions", json={"model": "chdown", "messages": [{"role": "user", "content": "hi"}]}
     )
     add("渠道级快速失败", r.status_code >= 400, "st=%s" % r.status_code)
+    # /v1/models 语义：渠道未配置模型白名单时网关是透传的，任意模型名都放行
     add("models 列表", c.get("/v1/models").status_code == 200)
     add("models/{已知}", c.get("/v1/models/mock-model").status_code == 200)
-    add("models/{未知}404", c.get("/v1/models/nope").status_code == 404)
+    add(
+        "models/{未知}放行(未配置白名单)",
+        c.get("/v1/models/nope").status_code == 200,
+        "st=%s" % c.get("/v1/models/nope").status_code,
+    )
+
+    # 配置白名单后：/v1/models 只返回网关支持的模型（绝不能泄漏上游真实模型清单），
+    # 且未知模型必须 404。上游模型列表刻意不访问，所以这里也验证不发生上游请求。
+    allow = "mock-model,kimi,empty,flaky,rl,chdown,nousage,ssejson,slowfirst,slowhdr"
+    a.post(
+        "/api/upstreams",
+        json={"id": uid, "name": "T", "base": "http://127.0.0.1:18212/v1", "enabled": True, "models": allow},
+    )
+    ids = [m["id"] for m in c.get("/v1/models").json()["data"]]
+    add(
+        "models 只返回网关配置的模型",
+        sorted(ids) == sorted(allow.split(",")),
+        "共 %d 个：%s" % (len(ids), ids[:4]),
+    )
+    add(
+        "models/{未知}404(配置白名单后)",
+        c.get("/v1/models/nope").status_code == 404,
+        "st=%s" % c.get("/v1/models/nope").status_code,
+    )
+    a.post(
+        "/api/upstreams",
+        json={"id": uid, "name": "T", "base": "http://127.0.0.1:18212/v1", "enabled": True, "models": ""},
+    )
     add("responses", c.post("/v1/responses", json={"model": "mock-model", "input": "hi"}).status_code == 200)
     add(
         "messages",
@@ -342,6 +382,151 @@ try:
         sum(delta) == 12 and delta[-1] - delta[0] <= 2,
         "增量=%s 累计=%s" % (delta, sorted(now)),
     )
+
+    # 断连回收：客户端在「上游还没返回响应头」时放弃，网关必须检测到并立刻释放账号。
+    # 注意：必须用原始 socket 真实关闭 TCP —— httpx 的 close() 只是把连接还回连接池，
+    # 连接并未断开，服务端不会收到 disconnect，用它测断连会得出错误结论。
+    ids = [k["id"] for k in a.get("/api/keys").json()["rows"]]
+    for kid in ids[1:]:
+        a.post("/api/keys/op", json={"op": "disable", "id": kid})
+    a.post("/api/settings", json={"config": {"acct_concurrency": 1}})
+
+    import socket
+
+    def _slow_disconnect():
+        CRLF = "\r\n"
+        body = json.dumps(
+            {"model": "slowhdr", "stream": True, "messages": [{"role": "user", "content": "hi"}]}
+        ).encode()
+        head = (
+            "POST /v1/chat/completions HTTP/1.1"
+            + CRLF
+            + "Host: 127.0.0.1"
+            + CRLF
+            + "Authorization: Bearer "
+            + toks[0]["t"]
+            + CRLF
+            + "Content-Type: application/json"
+            + CRLF
+            + "Content-Length: "
+            + str(len(body))
+            + CRLF
+            + CRLF
+        ).encode()
+        sk = socket.create_connection(("127.0.0.1", 18213), timeout=10)
+        try:
+            sk.sendall(head + body)
+            time.sleep(3.0)  # 上游 20s 才返回响应头，此刻仍在等待/保活阶段
+        finally:
+            sk.close()  # 真实关闭 TCP，服务端应收到 disconnect
+
+    th = threading.Thread(target=_slow_disconnect, daemon=True)
+    th.start()
+    th.join(10)
+    t0 = time.time()
+    freed = False
+    while time.time() - t0 < 20:
+        r = c.post(
+            "/v1/chat/completions",
+            json={"model": "mock-model", "messages": [{"role": "user", "content": "hi"}]},
+        )
+        if r.status_code == 200:
+            freed = True
+            break
+        time.sleep(1.0)
+    add("断连后账号立即回收", freed, "断开后 %.1fs 内账号可复用" % (time.time() - t0))
+    # 恢复
+    a.post("/api/settings", json={"config": {"acct_concurrency": 0}})
+    for kid in ids[1:]:
+        a.post("/api/keys/op", json={"op": "enable", "id": kid})
+
+    # 上游中途断流（无 [DONE]）必须显式报错：静默截断比报错危险得多 ——
+    # 下游会把半截内容当成完整回复。网关应补发 error 事件 + [DONE] 收口。
+    t0 = time.time()
+    lines = []
+    with c.stream(
+        "POST",
+        "/v1/chat/completions",
+        json={"model": "brokenstream", "stream": True, "messages": [{"role": "user", "content": "hi"}]},
+    ) as r:
+        code = r.status_code
+        for line in r.iter_lines():
+            if line:
+                lines.append(line)
+    body = "|".join(lines)
+    add(
+        "上游断流显式报错(不静默截断)",
+        code == 200 and "上游流中断" in body and "[DONE]" in body,
+        "%d 行，%.1fs" % (len(lines), time.time() - t0),
+    )
+
+    # 可靠性按「渠道+模型」定：同一模型在一个渠道上一直失败、在另一个渠道正常时，
+    # 路由必须学会跳过坏渠道，而不是每次都先撞一次 500 再重试。
+    a.post(
+        "/api/upstreams",
+        json={
+            "id": uid,
+            "name": "T",
+            "base": "http://127.0.0.1:18212/v1",
+            "enabled": True,
+            "models": "mock-model",
+        },
+    )
+    bad = a.post(
+        "/api/upstreams",
+        json={"name": "BAD", "base": "http://127.0.0.1:18212/fail/v1", "enabled": True, "models": "mx"},
+    ).json()["upstream"]["id"]
+    good = a.post(
+        "/api/upstreams",
+        json={"name": "GOOD", "base": "http://127.0.0.1:18212/v1", "enabled": True, "models": "mx"},
+    ).json()["upstream"]["id"]
+    a.post(
+        "/api/keys/import",
+        json={"text": "bad@e.com,p,nvapi-tkbd123456\n" "good@e.com,p,nvapi-tkgd123456", "upstream_id": bad},
+    )
+    a.post("/api/keys/import", json={"text": "good2@e.com,p,nvapi-tkgd234567", "upstream_id": good})
+    a.post("/api/settings", json={"config": {"max_retries": 2, "retry_min_wait_ms": 0}})
+
+    ok_n = 0
+    for _ in range(6):
+        r = c.post(
+            "/v1/chat/completions", json={"model": "mx", "messages": [{"role": "user", "content": "hi"}]}
+        )
+        if r.status_code == 200:
+            ok_n += 1
+    # 日志行格式：[t, ep, model, key, status, ms, err, ip, ...] → model 在 idx 2，status 在 idx 4
+    fails = sum(1 for x in a.get("/api/logs").json()["rows"] if x[2] == "mx" and x[4] == 500)
+    add(
+        "按模型学习渠道可靠性",
+        ok_n == 6 and 0 < fails <= 3,
+        "6/6 成功，坏渠道只被撞 %d 次（撞过即学会跳过）" % fails,
+    )
+
+    # 清理
+    a.post("/api/upstreams/delete", json={"id": bad})
+    a.post("/api/upstreams/delete", json={"id": good})
+    a.post(
+        "/api/upstreams",
+        json={"id": uid, "name": "T", "base": "http://127.0.0.1:18212/v1", "enabled": True, "models": ""},
+    )
+
+    # 错误分级契约：402 必须按硬失败处理（余额耗尽的账号重试无意义，会被反复选中反复失败），
+    # 401/403 归鉴权、429 归限流、0/超时归连接、5xx 归上游故障。
+    sys.path.insert(0, ROOT)
+    from core import pool as _pool
+
+    want = {
+        (402, "payment"),
+        (401, "auth"),
+        (403, "auth"),
+        (429, "429"),
+        (500, "5xx"),
+        (503, "5xx"),
+        (0, "conn"),
+    }
+    got = {st: _pool._classify(st, 0, "") for st, _ in want}
+    wrong = ["%s->%s(期望%s)" % (st, got[st], c) for st, c in want if got[st] != c]
+    add("错误分级契约", not wrong, "；".join(wrong) if wrong else "402/401/403/429/5xx/conn 归类正确")
 
     import asyncio
 
