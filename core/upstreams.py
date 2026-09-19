@@ -8,7 +8,7 @@ import time
 from typing import Any
 
 from .store import STORE
-from .util import parse_model_list
+from .util import as_bool, literal_items, parse_model_list
 
 
 def all_upstreams() -> list[dict]:
@@ -108,11 +108,22 @@ def map_model_for(key: dict, model: str) -> str:
     return model
 
 
+def _join_lines(raw: Any) -> str:
+    """把「列表 / 字典 / 文本 / 字面量字符串」统一成每行一条的文本。"""
+    parts = []
+    for x in literal_items(raw):
+        t = str(x).strip()
+        if len(t) >= 2 and t[0] == t[-1] and t[0] in "\"'":
+            t = t[1:-1].strip()
+        if t:
+            parts.append(t)
+    return "\n".join(parts)[:2000]
+
+
 def parse_model_map(raw: Any) -> dict[str, str]:
-    if isinstance(raw, dict):
-        lines = [f"{k}={v}" for k, v in raw.items()]
-    else:
-        lines = str(raw or "").splitlines()
+    # 统一走 literal_items：字典 / 数组（列表页按钮回传整行）/ 文本 / 字面量字符串都能解析。
+    # 曾经只处理 dict 与「按行 =」文本，前端回传数组或 JSON 字符串时映射会被静默丢掉。
+    lines = literal_items(raw)
     out: dict[str, str] = {}
     for line in lines:
         line = line.strip()
@@ -318,12 +329,19 @@ def validate_save(data: dict) -> tuple[dict | None, str]:
         return None, "Base URL 必须以 http(s):// 开头"
 
     def clamp(field: str, lo: int, hi: int, default: int) -> int:
-        """-1 = 不限制（存为 -1），0 = 继承/默认，正数 = 覆盖值。"""
+        """-1 = 不限制（存为 -1），0 = 继承/默认，正数 = 覆盖值。
+
+        容忍字符串数字与 bool 字符串：前端两种提交路径下同一字段可能是 0/1、
+        "0"、"true"/"false"。以前 "true" 会让 int() 抛错并静默退回默认值。
+        """
+        v = data.get(field, default)
+        if isinstance(v, str) and v.strip().lower() in ("true", "false", "yes", "no", "on", "off"):
+            v = 1 if as_bool(v) else 0
         try:
-            v = int(data.get(field, default))
-            if v == -1:
+            iv = int(v)
+            if iv == -1:
                 return -1
-            return min(hi, max(0, v))
+            return min(hi, max(0, iv))
         except (TypeError, ValueError):
             return default
 
@@ -362,8 +380,11 @@ def validate_save(data: dict) -> tuple[dict | None, str]:
         "hide_errors": clamp("hide_errors", 0, 2, 0),
         "hide_mapped": clamp("hide_mapped", 0, 2, 0),
         "param_overrides": parse_param_overrides(data.get("param_overrides") or {}),
-        "thinking_defaults": str(data.get("thinking_defaults") or ""),
-        "enabled": bool(data.get("enabled", True)),
+        # 思考强度默认值：同样是「表单发文本 / 按钮回传整行对象」两种来源，
+        # 统一归一化成每行一条的文本，避免把 ['kimi=low'] 整段当成一条配置。
+        "thinking_defaults": _join_lines(data.get("thinking_defaults")),
+        # bool("false") 是 True：开关必须按字符串语义解析，否则会反向生效
+        "enabled": as_bool(data.get("enabled", True), True),
     }
     return row, ""
 

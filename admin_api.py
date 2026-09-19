@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, Response
 
 from core import pool, upstreams
 from core.store import STORE, verify_password, session_cookie as _session_cookie, csrf_token as _csrf_token
+from core.util import as_bool
 
 router = APIRouter(prefix="/api")
 
@@ -566,7 +567,8 @@ async def settings_save(request: Request):
                 cfg[k] = incoming[k].strip()
         for k in BOOL_SETTINGS:
             if k in incoming:
-                cfg[k] = bool(incoming[k])
+                # bool("false") 是 True：前端可能把开关序列化成字符串，必须按语义解析
+                cfg[k] = as_bool(incoming[k], bool(cfg.get(k)))
         if "gateway_tokens" in incoming and isinstance(incoming["gateway_tokens"], str):
             struct = []
             for line in incoming["gateway_tokens"].splitlines():
@@ -696,7 +698,8 @@ async def config_import(request: Request):
                 applied += 1
         for k in BOOL_SETTINGS:
             if k in incoming:
-                cfg[k] = bool(incoming[k])
+                # bool("false") 是 True：前端可能把开关序列化成字符串，必须按语义解析
+                cfg[k] = as_bool(incoming[k], bool(cfg.get(k)))
                 applied += 1
         gt = incoming.get("gateway_tokens")
         if isinstance(gt, list):

@@ -514,7 +514,13 @@ async function loadUpstreams() {
       $('#up-form-title').scrollIntoView({block: 'center'});
     });
     mk(u.enabled ? '停用' : '启用', 'btn-outline-secondary', guard(async () => {
-      await api('upstreams', {method: 'POST', json: {...u, enabled: !u.enabled}});
+      // 只回传必要字段。整行回传（{...u}）会把 models（数组）与 model_map（字典）
+      // 原样送回去，一旦后端按文本解析就会把它们改写坏 —— 曾经就是这样把渠道白名单
+      // 写成了 ["['deepseek-v4-flash']"]，那条渠道从此对任何请求都判「模型不匹配」。
+      await api('upstreams', {
+        method: 'POST',
+        json: {id: u.id, name: u.name, base: u.base, enabled: !u.enabled},
+      });
       loadUpstreams();
     }));
     mk('删除', 'btn-outline-danger', guard(async () => {

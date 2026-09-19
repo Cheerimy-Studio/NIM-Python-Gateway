@@ -330,6 +330,50 @@ try:
         "/api/upstreams",
         json={"id": uid, "name": "T", "base": "http://127.0.0.1:18212/v1", "enabled": True, "models": ""},
     )
+
+    # 回归线上真实故障：列表页的「启用/禁用」按钮曾把整行对象回传（models 是数组、
+    # model_map 是字典），后端按文本解析就把白名单写成了 ["['a']"] —— 该渠道从此对
+    # 任何请求都判「渠道模型不匹配」，等于废掉。停用→启用一轮后配置必须原样完好。
+    def _up_row():
+        return next(x for x in (a.get("/api/upstreams").json().get("rows") or []) if x["id"] == uid)
+
+    a.post(
+        "/api/upstreams",
+        json={
+            "id": uid,
+            "name": "T",
+            "base": "http://127.0.0.1:18212/v1",
+            "enabled": True,
+            "models": ["mock-model"],
+            "model_map": {"ali": "upstream-x"},
+        },
+    )
+    row = _up_row()
+    a.post("/api/upstreams", json={**row, "enabled": False})  # 模拟点击「停用」
+    off = _up_row()
+    a.post("/api/upstreams", json={**off, "enabled": True})  # 模拟点击「启用」
+    on = _up_row()
+    add(
+        "停用/启用不改写渠道配置",
+        off["enabled"] is False
+        and on["enabled"] is True
+        and off["models"] == ["mock-model"]
+        and on["models"] == ["mock-model"]
+        and off["model_map"] == {"ali": "upstream-x"}
+        and on["model_map"] == {"ali": "upstream-x"},
+        "models=%s model_map=%s" % (on["models"], on["model_map"]),
+    )
+    a.post(
+        "/api/upstreams",
+        json={
+            "id": uid,
+            "name": "T",
+            "base": "http://127.0.0.1:18212/v1",
+            "enabled": True,
+            "models": "",
+            "model_map": "",
+        },
+    )
     add("responses", c.post("/v1/responses", json={"model": "mock-model", "input": "hi"}).status_code == 200)
     add(
         "messages",
