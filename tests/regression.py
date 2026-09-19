@@ -77,6 +77,11 @@ async def chat(request: Request):
             yield "data: " + json.dumps({"model": m, "choices": [{"delta": {"content": "part"}}]}) + "\\n\\n"
             raise RuntimeError("upstream died mid-stream")
         return StreamingResponse(g6(), media_type="text/event-stream")
+    if m == "hold4":
+        await asyncio.sleep(4)   # 占住并发，用于逼出排队
+        return {"id":"c1","object":"chat.completion","model":m,
+                "choices":[{"index":0,"message":{"role":"assistant","content":"held"},"finish_reason":"stop"}],
+                "usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}
     if m == "emptystream":
         # 流式响应但没有任何内容：会走「空流保护」，属于未交接给透传的失败路径
         async def g7():
@@ -597,6 +602,47 @@ try:
         "/v1/chat/completions",
         json={"model": "mock-model", "messages": [{"role": "user", "content": "hi"}]},
     )
+    # 排队：曾经有人反馈「进了队列就不见动静」。实测排队中的请求会持续重试取号，
+    # 账号/并发一释放就能拿到。这里用 total_concurrency=1 + 一个占 4 秒的请求逼出排队。
+    a.post("/api/settings", json={"config": {"total_concurrency": 1, "queue_max_wait": 15}})
+    _qres = {}
+
+    def _qhold():
+        cc = httpx.Client(
+            base_url="http://127.0.0.1:18213", timeout=60, headers={"Authorization": "Bearer " + toks[0]["t"]}
+        )
+        cc.post(
+            "/v1/chat/completions", json={"model": "hold4", "messages": [{"role": "user", "content": "hold"}]}
+        )
+
+    def _qwait(i):
+        cc = httpx.Client(
+            base_url="http://127.0.0.1:18213", timeout=60, headers={"Authorization": "Bearer " + toks[0]["t"]}
+        )
+        t = time.time()
+        rr = cc.post(
+            "/v1/chat/completions",
+            json={"model": "mock-model", "messages": [{"role": "user", "content": "hi"}]},
+        )
+        _qres[i] = (rr.status_code, round(time.time() - t, 1))
+
+    th0 = threading.Thread(target=_qhold, daemon=True)
+    th0.start()
+    time.sleep(0.6)  # 等它确实占住并发
+    ths = [threading.Thread(target=_qwait, args=(i,), daemon=True) for i in range(2)]
+    for t in ths:
+        t.start()
+    time.sleep(0.8)
+    qlen = a.get("/api/queue").json().get("length")
+    for t in ths:
+        t.join(30)
+    add(
+        "排队中的请求会持续取号",
+        all(v[0] == 200 for v in _qres.values()) and qlen >= 1,
+        "排队长度=%s 结果=%s" % (qlen, sorted(_qres.values())),
+    )
+    a.post("/api/settings", json={"config": {"total_concurrency": 0}})
+
     add(
         "流式失败不泄漏连接池",
         rr.status_code == 200,

@@ -17,17 +17,21 @@ def _cfg_max_wait() -> int:
 
 
 def add(ep: str, model: str, ip: str) -> str:
-    """入队（FIFO），自动清理已崩溃请求的残留条目。"""
+    """入队（FIFO）。
+
+    每次入队都全表过滤一遍是没必要的开销（而且是在存储锁里做）：过期条目
+    stats() 本就会跳过，这里只在超过上限时裁剪，保持 O(1)。
+    """
     qid = "q_" + os.urandom(6).hex()
-    max_wait = _cfg_max_wait()
 
     def _fn(db: dict):
-        cutoff = time.time() - max_wait * 2
-        q = [e for e in list(db.get("queue") or []) if isinstance(e, dict) and e.get("t", 0) >= cutoff]
+        q = db.get("queue")
+        if not isinstance(q, list):
+            q = []
+            db["queue"] = q
         q.append({"id": qid, "t": time.time(), "ip": ip, "ep": ep[:8], "model": model[:60]})
         if len(q) > QUEUE_MAX_ENTRIES:
-            q = q[-QUEUE_MAX_ENTRIES:]  # 只保留最新，防无限增长
-        db["queue"] = q
+            del q[:-QUEUE_MAX_ENTRIES]  # 只保留最新，防无限增长
 
     STORE.update(_fn)
     return qid

@@ -327,15 +327,28 @@ async def take_account(request: Request, ep: str, model: str, est_tokens: int, c
             }
         return {"ok": False, "key": None, "status": 429, "message": f"暂无可用账号：{reason}"}
 
+    # 排队过长：直接快速失败，而不是让请求无限堆积（堆积只会把存储锁和内存拖垮）
+    if _waiting.get(model, 0) >= QUEUE_MAX_WAITING:
+        return {
+            "ok": False,
+            "key": None,
+            "status": 503,
+            "message": f"排队已满（{_waiting.get(model, 0)} 个请求在等账号），请稍后重试",
+        }
     qid = queue.add(ep, model, _client_ip(request))
     deadline = time.time() + max_wait
     poll = max(0.05, _cfgint(cfg, "queue_poll_ms", 400) / 1000)
     # 熔断打开时先不取号，排队等恢复；非熔断则正常取号+排队
     waiting_breaker = br is not None
+    backoff = poll
+    _waiting[model] = _waiting.get(model, 0) + 1
     try:
         while time.time() < deadline:
-            if await request.is_disconnected():
-                return {"ok": False, "key": None, "status": 499, "message": "客户端已断开"}
+            try:
+                if await request.is_disconnected():
+                    return {"ok": False, "key": None, "status": 499, "message": "客户端已断开"}
+            except Exception:
+                pass
             # 熔断中则等恢复（opened_until 过期即恢复），恢复后才尝试取号；
             # 非熔断则直接尝试取号。所有等待者并行重试，不做严格队首串行。
             hint = 0.0
@@ -346,9 +359,22 @@ async def take_account(request: Request, ep: str, model: str, est_tokens: int, c
                 if holder.get("result") == "ok":
                     return {"ok": True, "key": holder["key"], "status": 0, "message": ""}
                 hint = float(holder.get("wait_hint") or 0)
-            # 账号都在冷却/封禁时按最早恢复时间退避（上限 5s），避免空转打风暴
-            await asyncio.sleep(max(poll, hint))
+                # 只在「排队的请求多」时才拉长退避：人多时几百个等待者一起重试会把
+                # 存储锁打满；人少时保持最小间隔，账号一释放就能立刻抢到（否则明明
+                # 空出来了还要再等一个退避周期，白白增加延迟）。
+                crowded = _waiting.get(model, 0) > 4
+                backoff = poll if (hint > 0 or not crowded) else min(backoff * 2, QUEUE_POLL_MAX)
+            else:
+                hint = float((pool.breaker_open(model) or {}).get("left") or 0)
+            # 关键：加上抖动。否则几百个等待者会在同一时刻一起重试、把存储锁打满
+            wait = max(poll, hint if hint > 0 else backoff)
+            await asyncio.sleep(wait * (0.7 + random.random() * 0.6))
     finally:
+        left = _waiting.get(model, 1) - 1
+        if left > 0:
+            _waiting[model] = left
+        else:
+            _waiting.pop(model, None)
         queue.remove(qid)
     if br:
         return {
@@ -997,6 +1023,15 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
             continue
         await asyncio.sleep(_backoff_ms(cfg, attempt, key) / 1000)
     return _upstream_fail(last_key, last, cfg)
+
+
+# 排队退避上限与在排队人数上限。
+# 等待者必须抖动 + 指数退避：否则几百个等待者会在同一时刻一起去抢存储锁
+# （每次 acquire 都要遍历整个号池），把锁打满、连正在服务的请求也拖慢 ——
+# 结果是越等越慢，账号空出来反而抢不到。排队过长则直接快速失败，避免无限堆积。
+QUEUE_POLL_MAX = 3.0
+QUEUE_MAX_WAITING = 200
+_waiting: dict[str, int] = {}
 
 
 class _StreamPump:
