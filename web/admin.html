@@ -58,6 +58,37 @@ tr.krow{cursor:pointer}
 tr.krow.open>td{border-bottom:0}
 .detail-row>td{background:#f8fafc;padding:0!important;border-top:0}
 .kpanel{padding:12px 16px;border-top:1px dashed var(--line)}
+
+/* ---------- 细节打磨 ---------- */
+.btn{border-radius:8px;font-size:13px;transition:all .15s ease}
+.btn-sm{border-radius:7px;padding:.28rem .62rem}
+.btn-primary{background:var(--acc);border-color:var(--acc)}
+.btn-primary:hover{background:#2560d8;border-color:#2560d8}
+.form-control,.form-select{border-radius:8px;border-color:var(--line)}
+.form-control-sm,.form-select-sm{font-size:13px}
+.form-control:focus,.form-select:focus{border-color:var(--acc);box-shadow:0 0 0 .18rem rgba(47,111,237,.12)}
+.form-check-input:checked{background-color:var(--acc);border-color:var(--acc)}
+.badge{font-weight:600;letter-spacing:.2px;border-radius:6px}
+.card{transition:box-shadow .16s ease,border-color .16s ease}
+.card:hover{border-color:#d8e0ea}
+.stat.card:hover{box-shadow:0 4px 16px rgba(15,23,42,.08)}
+.table tbody tr{transition:background .12s ease}
+.pane-title{display:flex;align-items:center;gap:8px}
+summary{user-select:none}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:6px}
+::-webkit-scrollbar-thumb:hover{background:#94a3b8}
+.sidebar nav a{transition:background .13s ease,color .13s ease}
+
+/* 模型测试：对话气泡与诊断 */
+.tchat{min-height:240px;max-height:46vh;overflow:auto;padding:14px 16px}
+.tmsg{max-width:82%;white-space:pre-wrap;word-break:break-word;padding:.5rem .78rem;
+  border-radius:12px;font-size:13px;line-height:1.55;box-shadow:0 1px 2px rgba(15,23,42,.05)}
+.tmsg.me{background:var(--acc);color:#fff;border-bottom-right-radius:4px}
+.tmsg.ai{background:#f1f5f9;color:var(--txt);border-bottom-left-radius:4px}
+.tmsg.pending{opacity:.6}
+.traw{max-height:220px;overflow:auto;margin:6px 0}
 .kpanel .mini{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
 .kpanel .chip{background:#fff;border:1px solid var(--line);border-radius:7px;padding:6px 10px;font-size:12px;min-width:96px}
 .kpanel .chip b{display:block;font-size:14px}
@@ -108,6 +139,7 @@ details.upgrp[open]{background:#fff}
     <a href="javascript:void(0)" data-pane="import"><i class="bi bi-upload"></i>导入</a>
     <a href="javascript:void(0)" data-pane="logs"><i class="bi bi-list-ul"></i>日志</a>
     <a href="javascript:void(0)" data-pane="queue"><i class="bi bi-hourglass-split"></i>排队</a>
+    <a href="javascript:void(0)" data-pane="test"><i class="bi bi-chat-dots"></i>模型测试</a>
     <a href="javascript:void(0)" data-pane="settings"><i class="bi bi-gear"></i>设置</a>
     <a href="javascript:void(0)" data-pane="docs"><i class="bi bi-book"></i>接入</a>
   </nav>
@@ -431,6 +463,50 @@ details.upgrp[open]{background:#fff}
   </div>
 </section>
 
+<!-- 模型测试（后台内部测试：走网关完整链路，用于排查） -->
+<section class="pane" id="pane-test">
+  <h2 class="pane-title">模型测试</h2>
+  <p class="small text-muted mb-2">
+    直接走本网关的完整链路（取号 → 渠道 → 流式透传）对话测试，用于排查"哪个环节出问题"。
+    使用的是网关访问令牌；下方实时显示状态、首字延迟、耗时、用量与原始事件流。
+  </p>
+  <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+    <select id="test-model" class="form-select form-select-sm" style="min-width:240px"></select>
+    <input id="test-system" class="form-control form-control-sm" placeholder="系统提示（可选）" style="max-width:220px">
+    <div class="form-check ms-1">
+      <input class="form-check-input" type="checkbox" id="test-stream" checked>
+      <label class="form-check-label small" for="test-stream">流式</label>
+    </div>
+    <button id="test-reload" class="btn btn-sm btn-outline-secondary">刷新模型</button>
+    <button id="test-clear" class="btn btn-sm btn-outline-secondary">清空对话</button>
+    <span class="small text-muted ms-auto" id="test-hint"></span>
+  </div>
+  <div class="card mb-2">
+    <div class="card-body tchat" id="test-chat">
+      <span class="text-muted small">选择模型后输入消息开始测试。</span>
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <textarea id="test-input" class="form-control form-control-sm" rows="2"
+      placeholder="输入消息后按 Enter 发送（Shift+Enter 换行）"></textarea>
+    <button id="test-send" class="btn btn-primary px-4">发送</button>
+  </div>
+  <div class="card mt-3">
+    <div class="card-header py-1 small d-flex justify-content-between">
+      <span>链路诊断（最近一次）</span>
+      <span class="text-muted" id="test-diag-sum"></span>
+    </div>
+    <div class="card-body py-2">
+      <div id="test-diag" class="small text-muted">尚未发起请求</div>
+      <details class="mt-2 d-none" id="test-raw-wrap">
+        <summary class="small text-primary" style="cursor:pointer">原始事件流</summary>
+        <pre id="test-raw" class="small traw"></pre>
+      </details>
+    </div>
+  </div>
+</section>
+
+
 <!-- 会话日志 -->
 <section class="pane" id="pane-sessions">
   <h2 class="pane-title">会话日志</h2>
@@ -676,6 +752,6 @@ details.upgrp[open]{background:#fff}
 
 <script src="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.3/js/bootstrap.bundle.min.js"></script>
 <script>window.NGW = {base: "/", csrf: window.__csrf || ""};</script>
-<script src="/assets/admin.js?v=1.5.0"></script>
+<script src="/assets/admin.js?v={{VERSION}}"></script>
 </body>
 </html>

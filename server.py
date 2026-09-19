@@ -12,6 +12,7 @@ import hmac
 import json
 import random
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Any, AsyncGenerator
@@ -132,7 +133,11 @@ async def close_http() -> None:
 _page_cache: dict[str, str] = {}
 
 
-def _page(name: str, csrf: str = "", version: str = "1.5.0") -> str:
+# 后台页面/脚本一律不缓存：否则升级后浏览器仍用旧界面（新功能会"打不开"）
+_NOCACHE = {"Cache-Control": "no-cache, must-revalidate"}
+
+
+def _page(name: str, csrf: str = "", version: str = "1.6.0") -> str:
     html = _page_cache.get(name)
     if html is None:
         html = (WEB_DIR / name).read_text(encoding="utf-8")
@@ -1029,19 +1034,24 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
         k_held = hold["key"]
         if k_held is not None:
             hold["key"] = None
+            # 把真实异常写进日志：只记一句固定文案，等于查不到原因
+            _exc = sys.exc_info()[1]
+            _note = "请求处理异常，兜底释放账号：%s" % (
+                ("%s: %s" % (type(_exc).__name__, _exc))[:180] if _exc else "未走到正常释放"
+            )
             try:
                 await pool.arelease(
                     k_held["id"],
                     True,
                     500,
-                    "请求处理异常，兜底释放账号",
+                    _note,
                     None,
                     _release_log(
                         ep_tag,
                         model,
                         500,
                         int((time.time() - t0) * 1000),
-                        "请求处理异常，兜底释放账号",
+                        _note,
                         attempt,
                         k_held,
                         ip,
@@ -1824,19 +1834,23 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
         k_held = hold["key"]
         if k_held is not None:
             hold["key"] = None
+            _exc = sys.exc_info()[1]
+            _note = "请求处理异常，兜底释放账号：%s" % (
+                ("%s: %s" % (type(_exc).__name__, _exc))[:180] if _exc else "未走到正常释放"
+            )
             try:
                 await pool.arelease(
                     k_held["id"],
                     True,
                     500,
-                    "请求处理异常，兜底释放账号",
+                    _note,
                     None,
                     _release_log(
                         ep,
                         model,
                         500,
                         int((time.time() - t0) * 1000),
-                        "请求处理异常，兜底释放账号",
+                        _note,
                         attempt,
                         k_held,
                         ip,
@@ -1987,14 +2001,14 @@ async def admin_page(request: Request):
     cfg = STORE.load()["config"]
     session = request.cookies.get("ngw_session") or ""
     if not (session and hmac.compare_digest(session, _session_cookie(cfg))):
-        return Response(_page("login.html"), media_type="text/html")
+        return Response(_page("login.html"), media_type="text/html", headers=_NOCACHE)
     csrf = _csrf_token(cfg)
-    return Response(_page("admin.html", csrf), media_type="text/html")
+    return Response(_page("admin.html", csrf), media_type="text/html", headers=_NOCACHE)
 
 
 @app.get("/")
 async def root():
-    return Response(_page("landing.html"), media_type="text/html")
+    return Response(_page("landing.html"), media_type="text/html", headers=_NOCACHE)
 
 
 @app.get("/queue")
@@ -2016,4 +2030,9 @@ async def queue_public():
 
 @app.get("/assets/admin.js")
 async def admin_js():
-    return Response((WEB_DIR / "admin.js").read_text(encoding="utf-8"), media_type="application/javascript")
+    # 禁止缓存：否则升级后浏览器仍用旧脚本（新功能会"打不开"）
+    return Response(
+        (WEB_DIR / "admin.js").read_text(encoding="utf-8"),
+        media_type="application/javascript",
+        headers=_NOCACHE,
+    )

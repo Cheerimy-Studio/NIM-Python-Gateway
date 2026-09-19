@@ -595,11 +595,16 @@ try:
     # （例如 http://[bad，仍能通过 http(s):// 前缀校验）会穿透原有捕获，把账号永久
     # 锁在该请求上。现在 _proxy/_convert 的整个重试循环外层有 try/finally 兜底释放。
     a.post("/api/settings", json={"config": {"acct_concurrency": 1}})
-    a.post("/api/upstreams", json={"id": uid, "name": "T", "base": "http://[bad/v1", "enabled": True})
+    # 用会真正抛 httpx.InvalidURL 的地址（IPv6 端口写错）：InvalidURL 不是 HTTPError
+    # 的子类，会穿透原有 except，只有兜底 finally 能救回账号。
+    a.post("/api/upstreams", json={"id": uid, "name": "T", "base": "http://[::1:99999]/v1", "enabled": True})
     r = c.post(
         "/v1/chat/completions", json={"model": "mock-model", "messages": [{"role": "user", "content": "hi"}]}
     )
     bad_st = r.status_code
+    # 兜底日志必须带上真实异常，否则只有一句固定文案、无从定位
+    errs = [x[6] for x in a.get("/api/logs").json()["rows"] if x[2] == "mock-model"]
+    has_reason = any("InvalidURL" in (e or "") for e in errs)
     a.post(
         "/api/upstreams", json={"id": uid, "name": "T", "base": "http://127.0.0.1:18212/v1", "enabled": True}
     )
@@ -616,8 +621,9 @@ try:
         time.sleep(0.5)
     add(
         "异常路径不锁定账号",
-        ok and bad_st >= 400,
-        "非法 base 时 st=%s；恢复后 %.1fs 内账号可用" % (bad_st, time.time() - t0),
+        ok and bad_st >= 400 and has_reason,
+        "非法 base 时 st=%s；兜底日志含异常=%s；恢复后 %.1fs 内账号可用"
+        % (bad_st, has_reason, time.time() - t0),
     )
     a.post("/api/settings", json={"config": {"acct_concurrency": 0}})
 

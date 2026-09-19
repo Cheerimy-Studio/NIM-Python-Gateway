@@ -266,6 +266,25 @@ try:
         "st=%s" % r.status_code,
     )
 
+    # 后台页面/脚本必须禁缓存：否则升级代码后浏览器仍用旧 admin.js，
+    # 新加的界面（如模型测试页）会"打不开"。同时确认模型测试页结构在位。
+    ra = a.get("/admin")
+    rj = a.get("/assets/admin.js?v=1.6.0")
+    add(
+        "后台资源禁缓存",
+        "no-cache" in (ra.headers.get("cache-control") or "")
+        and "no-cache" in (rj.headers.get("cache-control") or ""),
+        "/admin=%s js=%s" % (ra.headers.get("cache-control"), rj.headers.get("cache-control")),
+    )
+    add(
+        "模型测试页在位",
+        ra.status_code == 200
+        and 'id="pane-test"' in ra.text
+        and 'id="test-send"' in ra.text
+        and "loadTestModels" in rj.text,
+        "pane 与 JS 均已包含",
+    )
+
     add(
         "无效令牌拒绝",
         c.post(
