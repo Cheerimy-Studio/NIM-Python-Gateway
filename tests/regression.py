@@ -394,6 +394,18 @@ try:
 
     got_d = _ptd("\n".join(["kimi=max", "qwen3=low", "glm=nonsense"]))
     add("思考强度配置解析", got_d == {"kimi": "max", "qwen3": "low"}, "%s（非法值应被忽略）" % got_d)
+
+    # 参数覆写：值里带逗号的数组不能被切断（以前按逗号盲拆，stop=["a","b"] 只会剩 ["a"），
+    # 且数组/对象要解析成 JSON 原生类型 —— 否则上游按字符串收到数组会直接拒绝。
+    from core.upstreams import _parse_param_pairs as _ppp
+
+    pp = _ppp('stop=["a","b"]')
+    pp2 = _ppp("top_p=0.9,seed=42")
+    add(
+        "参数覆写解析",
+        pp == {"stop": ["a", "b"]} and pp2 == {"top_p": 0.9, "seed": 42},
+        "数组=%s 多组=%s" % (pp, pp2),
+    )
     add(
         "messages",
         c.post(

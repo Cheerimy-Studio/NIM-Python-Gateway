@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
@@ -165,42 +166,52 @@ def parse_param_overrides(raw: Any) -> dict[str, Any]:
 
 
 def _coerce_param_value(val: Any) -> Any:
-    """把参数值归一化为 JSON 原生类型：数字→int/float、布尔→bool、其余字符串。"""
-    if isinstance(val, str):
-        v = val.strip()
-        if v == "true":
-            return True
-        if v == "false":
-            return False
-        if re.fullmatch(r"-?\d+", v):
-            return int(v)
-        if re.fullmatch(r"-?\d+\.\d+", v):
-            return float(v)
-        return v
-    return val
+    """把参数值归一化为 JSON 原生类型。
+
+    字符串数字/布尔 → int/float/bool；以 [ 或 { 开头的合法 JSON → 数组/对象
+    （否则像 stop=["a","b"]、logit_bias={"1":5} 这类参数只能以字符串发上去，
+    上游会直接拒绝）；其余保持字符串。
+    """
+    if not isinstance(val, str):
+        return val
+    v = val.strip()
+    low = v.lower()
+    if low in ("true", "yes"):
+        return True
+    if low in ("false", "no"):
+        return False
+    if re.fullmatch(r"-?\d+", v):
+        return int(v)
+    if re.fullmatch(r"-?\d+\.\d+", v):
+        return float(v)
+    if v[:1] in "[{":
+        try:
+            return json.loads(v)
+        except (ValueError, TypeError):
+            pass
+    return v
 
 
 def _parse_param_pairs(text: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    for piece in re.split(r"[,;]", text):
+    pieces: list[str] = []
+    for line in str(text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # 只有一行里出现多组 k=v 时才按逗号/分号拆 —— 否则逗号可能是值的一部分
+        # （例如数组值 stop=["a","b"]），盲拆会把值切断并静默丢掉后半段。
+        pieces.extend(re.split(r"[,;]", line) if line.count("=") > 1 else [line])
+    for piece in pieces:
         piece = piece.strip()
         if "=" not in piece:
             continue
         name, _, val = piece.partition("=")
         name = name.strip()
         val = val.strip()
-        if not re.fullmatch(r"[a-z_][a-z0-9_]{0,31}", name) or len(val) > 200:
+        if not re.fullmatch(r"[a-z_][a-z0-9_]{0,31}", name) or len(val) > 2000:
             continue
-        if val == "true":
-            out[name] = True
-        elif val == "false":
-            out[name] = False
-        elif re.fullmatch(r"-?\d+", val):
-            out[name] = int(val)
-        elif re.fullmatch(r"-?\d+\.\d+", val):
-            out[name] = float(val)
-        else:
-            out[name] = val
+        out[name] = _coerce_param_value(val)
     return out
 
 
@@ -231,8 +242,6 @@ def _parse_scoped_text(text: str) -> dict[str, dict]:
 
 def apply_param_overrides(key: dict, model: str, body: dict) -> dict:
     """全局 → 渠道(*) → 渠道(模型)，逐级强制覆盖。"""
-    from .store import STORE
-
     cfg = STORE.load()["config"]
     merged = dict(_parse_param_pairs(str(cfg.get("param_overrides") or "")))
     uid = str(key.get("upstream_id") or "")
