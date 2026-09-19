@@ -264,21 +264,46 @@ def model_routable(model: str, hide_mapped_global: bool) -> bool:
     return not any_enabled
 
 
+def hide_original(up: dict | None, cfg: dict | None = None) -> bool:
+    """渠道是否禁用「上游原名」访问：渠道 hide_mapped 1=强制开启，0=继承全局。
+
+    开启后客户端只能用别名（model_map 的键）调用，直接用上游原名会被拒绝。
+    """
+    v = int((up or {}).get("hide_mapped") or 0)
+    if v == 1:
+        return True
+    if v == 0:
+        return bool((cfg or STORE.load()["config"]).get("hide_mapped_names", True))
+    return False
+
+
 def curated_models() -> list[str]:
-    """仅当渠道显式配置了可用模型列表时才收敛列表；映射源名只作附加展示，不触发收敛。"""
+    """网关对外可调用的模型清单（只由渠道配置决定，不访问上游）。
+
+    - 渠道显式配置的 models（客户端侧名称）
+    - model_map 的别名（键）—— 别名始终是可用入口
+
+    渠道禁用原名访问时，上游原名（model_map 的 value）会被拒绝，必须从清单中剔除：
+    否则 /v1/models 会宣传一个调用必然失败的模型名。
+    """
+    ups = [u for u in all_upstreams() if u.get("enabled")]
+    cfg = STORE.load()["config"]
     out: dict[str, None] = {}
     curated = False
-    for u in all_upstreams():
-        if not u.get("enabled"):
-            continue
+    for u in ups:
+        hidden = set((u.get("model_map") or {}).values()) if hide_original(u, cfg) else set()
         for m in u.get("models") or []:
+            if m in hidden:
+                continue
             out[m] = None
             curated = True
-    if not curated:
-        return []
-    for u in all_upstreams():
-        if not u.get("enabled"):
-            continue
+    if curated:
+        for u in ups:
+            for m in u.get("model_map") or {}:
+                out[m] = None
+        return list(out)
+    # 没有渠道配置白名单：配置层面无从枚举，但别名始终可调用，至少列出来
+    for u in ups:
         for m in u.get("model_map") or {}:
             out[m] = None
     return list(out)

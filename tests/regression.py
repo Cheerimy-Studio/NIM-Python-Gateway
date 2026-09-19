@@ -173,6 +173,21 @@ try:
     def add(n, ok, d=""):
         results.append((n, bool(ok), d))
 
+    # RPM 时间戳只能记给「真正被使用」的账号。曾经给所有候选账号都打点，导致每个账号的
+    # 60 秒窗口被无谓塞满、整池一起撞上单账号上限 → 号池假性枯竭（吞吐被压到约等于单账号
+    # RPM，与账号数量无关）。此处号池刚建、窗口为空，正好验证：3 账号 × rpm=4 ⇒ 12 次全过。
+    a.post("/api/settings", json={"config": {"rate_limit_per_minute": 4}})
+    ok_rpm = 0
+    for _ in range(12):
+        r = c.post(
+            "/v1/chat/completions",
+            json={"model": "mock-model", "messages": [{"role": "user", "content": "hi"}]},
+        )
+        if r.status_code == 200:
+            ok_rpm += 1
+    add("RPM 按账号计而非全池", ok_rpm == 12, "rpm=4 × 3 账号，12 次全部成功（%d/12）" % ok_rpm)
+    a.post("/api/settings", json={"config": {"rate_limit_per_minute": 100000}})
+
     r = c.post(
         "/v1/chat/completions", json={"model": "mock-model", "messages": [{"role": "user", "content": "hi"}]}
     )
@@ -252,7 +267,33 @@ try:
     )
     a.post(
         "/api/upstreams",
-        json={"id": uid, "name": "T", "base": "http://127.0.0.1:18212/v1", "enabled": True, "models": ""},
+        json={
+            "id": uid,
+            "name": "T",
+            "base": "http://127.0.0.1:18212/v1",
+            "enabled": True,
+            "models": "mock-model,shadow-model",
+            "model_map": "my-alias=shadow-model",
+            "hide_mapped": 1,
+        },
+    )
+    ids = [m["id"] for m in c.get("/v1/models").json()["data"]]
+    add(
+        "禁用原名时清单剔除原名",
+        "shadow-model" not in ids and "my-alias" in ids and "mock-model" in ids,
+        "清单=%s（上游原名 shadow-model 已剔除）" % ids,
+    )
+    a.post(
+        "/api/upstreams",
+        json={
+            "id": uid,
+            "name": "T",
+            "base": "http://127.0.0.1:18212/v1",
+            "enabled": True,
+            "models": "",
+            "model_map": "",
+            "hide_mapped": 0,
+        },
     )
     add("responses", c.post("/v1/responses", json={"model": "mock-model", "input": "hi"}).status_code == 200)
     add(

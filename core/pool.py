@@ -8,6 +8,7 @@ import os
 import re
 import time
 
+from . import upstreams
 from .store import STORE
 from .util import mask_email, str_cut, upstream_snippet
 
@@ -365,10 +366,7 @@ def _acquire_fn(db: dict, out: dict, est_tokens: int, model: str) -> None:
             "chan_conc": _chan_eff(up, "total_concurrency", cfg_chan_conc),
             "pool_rpm_cap": _chan_eff(up, "rpm_cap", cfg_pool_rpm),
             "pool_daily_cap": _chan_eff(up, "daily_cap", cfg_pool_daily),
-            "hide": (
-                int((up or {}).get("hide_mapped") or 0) == 0 and bool(cfg.get("hide_mapped_names", True))
-            )
-            or int((up or {}).get("hide_mapped") or 0) == 1,
+            "hide": upstreams.hide_original(up, cfg),
             "models": (up or {}).get("models") or [],
             "targets": list(((up or {}).get("model_map") or {}).values()),
         }
@@ -480,9 +478,6 @@ def _acquire_fn(db: dict, out: dict, est_tokens: int, model: str) -> None:
             weight = max(1, int(up.get("weight") or 10))
             pools.setdefault(uid, {"w": weight, "items": []})
             pools[uid]["items"].append(k)
-            # 记录滑动窗口时间戳 + 首次使用时间
-            win.append(now_f)
-            db.setdefault("buckets", {})[k["id"]] = win
             if not first_seen:
                 k["first_seen_at"] = now_f
 
@@ -528,7 +523,12 @@ def _acquire_fn(db: dict, out: dict, est_tokens: int, model: str) -> None:
     k["last_used_at"] = now_f
     k["total_requests"] = k.get("total_requests", 0) + 1
     _inflight[k["id"]] = _inflight.get(k["id"], 0) + 1
-    # 滑动窗口时间戳已在上方 pools 选中前记录到 db["buckets"][k["id"]]
+    # 只给「真正被使用的账号」打 RPM 时间戳。曾经是给所有候选账号都打点，
+    # 于是每个账号的 60 秒窗口被无谓塞满，很快整池一起撞上单账号 RPM 上限
+    # → 号池假性枯竭（不论多少账号，吞吐都被压到约等于单账号 RPM）。
+    kw = [t for t in (db.get("buckets", {}).get(k["id"]) or []) if now_f - t < 60]
+    kw.append(now_f)
+    db.setdefault("buckets", {})[k["id"]] = kw
     if chosen:
         pb = db.setdefault("pool_buckets", {}).setdefault(chosen, {})
         pb[minute] = pb.get(minute, 0) + 1
@@ -937,10 +937,9 @@ def test_key(key_id: str) -> dict:
     key = next((k for k in list(STORE.load().get("keys") or []) if k.get("id") == key_id), None)
     if key is None:
         return {"ok": False, "error": "密钥不存在"}
-    from . import upstreams as ups_mod
     import httpx
 
-    base = ups_mod.base_for(key)
+    base = upstreams.base_for(key)
     t0 = time.time()
     status = 0
     body = ""

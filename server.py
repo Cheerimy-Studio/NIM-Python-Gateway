@@ -415,10 +415,14 @@ def build_usage(res: dict, req_body: str) -> dict:
     )
 
 
-def log_session(
+async def log_session(
     cfg: dict, model: str, key_email: str, req_messages: Any, resp_content: str, status: int, ip: str
 ) -> None:
-    """记录完整会话内容（审计用），只保留最近 N 条。"""
+    """记录完整会话内容（审计用），只保留最近 N 条。
+
+    走异步更新：会话日志是审计用途且只保留最近 N 条，没必要为它在事件循环线程里
+    同步抢存储锁 —— 那会和取号/释放的线程锁互相阻塞，高并发下把请求串行化。
+    """
     max_n = max(0, _cfgint(cfg, "session_log_max", 100))
     if max_n == 0:
         return
@@ -438,10 +442,10 @@ def log_session(
         )
         del sessions[max_n:]
 
-    STORE.update(_fn)
+    await STORE.aupdate(_fn)
 
 
-def _extract_conv_log(cfg: dict, model: str, email: str, req: dict, chat: dict, ip: str) -> None:
+async def _extract_conv_log(cfg: dict, model: str, email: str, req: dict, chat: dict, ip: str) -> None:
     """从 chat 响应中提取文本并记录会话。"""
     msg = (chat.get("choices") or [{}])[0].get("message") or {}
     resp_text = msg.get("content") or ""
@@ -457,7 +461,7 @@ def _extract_conv_log(cfg: dict, model: str, email: str, req: dict, chat: dict, 
         ]
     else:
         req_msgs = [{"role": "user", "content": str(req.get("input") or "")}]
-    log_session(cfg, model, email, req_msgs, resp_text, 200, ip)
+    await log_session(cfg, model, email, req_msgs, resp_text, 200, ip)
 
 
 def _upstream_fail(key: dict | None, res: dict | None, cfg: dict, anthropic: bool = False) -> JSONResponse:
@@ -899,7 +903,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
             try:
                 resp_msg = json.loads(out_body)
                 resp_text = (resp_msg.get("choices") or [{}])[0].get("message", {}).get("content", "")
-                log_session(cfg, model, key["email"], req.get("messages", []), resp_text, rstatus, ip)
+                await log_session(cfg, model, key["email"], req.get("messages", []), resp_text, rstatus, ip)
             except Exception:
                 pass
             if stream:
@@ -1622,7 +1626,7 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                 return _error(502, "上游返回了无法解析的响应", anthropic=anthropic)
             chat["model"] = model
             try:
-                _extract_conv_log(cfg, model, key["email"], req, chat, ip)
+                await _extract_conv_log(cfg, model, key["email"], req, chat, ip)
             except Exception:
                 pass
             if anthropic:
