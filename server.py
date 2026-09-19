@@ -24,6 +24,7 @@ from core.convert import flatten_content
 from core.streams import AnthropicStream, ResponsesStream
 from core.store import STORE, csrf_token as _csrf_token, session_cookie as _session_cookie
 from core.util import (
+    sub_dict,
     estimate_output_tokens,
     estimate_request_tokens,
     mask_email,
@@ -1531,7 +1532,12 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
         "temperature": req.get("temperature"),
         "top_p": req.get("top_p"),
         "max_output_tokens": req.get("max_output_tokens"),
-        "reasoning_effort": (req.get("reasoning") or {}).get("effort"),
+        # reasoning 可能是对象，也可能被客户端简写成字符串（"high"）——
+        # 之前直接 .get 会抛 AttributeError 变成 500
+        "reasoning_effort": (
+            sub_dict(req.get("reasoning")).get("effort")
+            or (req.get("reasoning") if isinstance(req.get("reasoning"), str) else None)
+        ),
     }
     bad = _check_model(model, entry, cfg, anthropic=anthropic)
     if bad:

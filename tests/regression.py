@@ -380,6 +380,20 @@ try:
         },
     )
     add("responses", c.post("/v1/responses", json={"model": "mock-model", "input": "hi"}).status_code == 200)
+    # reasoning 被客户端简写成字符串（"high"）时不能 500：它按 Responses API 是对象，
+    # 但简写很常见；以前 (req.get("reasoning") or {}).get("effort") 会因 str 没有 .get
+    # 抛 AttributeError 变成 500。
+    r = c.post("/v1/responses", json={"model": "mock-model", "input": "hi", "reasoning": "high"})
+    add("reasoning 传字符串不 500", r.status_code == 200, "st=%s" % r.status_code)
+    r = c.post("/v1/responses", json={"model": "mock-model", "input": "hi", "reasoning": {"effort": "high"}})
+    add("reasoning 传对象正常", r.status_code == 200, "st=%s" % r.status_code)
+    # 渠道「思考强度默认值」的取值集合必须覆盖上游实际支持的值（Kimi 文档里就有 max），
+    # 否则配了也会被静默丢弃、退化成「删掉思考参数」。
+    sys.path.insert(0, ROOT)
+    from core.convert import parse_thinking_defaults as _ptd
+
+    got_d = _ptd("\n".join(["kimi=max", "qwen3=low", "glm=nonsense"]))
+    add("思考强度配置解析", got_d == {"kimi": "max", "qwen3": "low"}, "%s（非法值应被忽略）" % got_d)
     add(
         "messages",
         c.post(

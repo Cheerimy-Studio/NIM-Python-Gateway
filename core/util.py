@@ -63,6 +63,17 @@ def literal_items(raw: Any) -> list:
     return _split_loose(text)
 
 
+def sub_dict(v: Any) -> dict:
+    """安全取子字典：值不是 dict 时返回空字典。
+
+    客户端与上游的 JSON 里同一字段可能是对象、也可能是字符串（例如 reasoning 被简写
+    成 "high"、error 直接给一个字符串、function 给成名字）。直接写
+    `(x.get("f") or {}).get("k")` 会因 str 没有 .get 抛 AttributeError —— 在流式状态机
+    里抛异常会直接打断整条响应。
+    """
+    return v if isinstance(v, dict) else {}
+
+
 def as_bool(v: Any, default: bool = False) -> bool:
     """把 bool / 数字 / 字符串（"false"、"0"、"no"）统一成 bool。
 

@@ -10,7 +10,7 @@ import json
 import time
 from typing import Callable
 
-from .util import rand_id
+from .util import rand_id, sub_dict
 
 
 class _Base:
@@ -82,7 +82,7 @@ class ResponsesStream(_Base):
             resp = self._skeleton("failed", True)
             resp["error"] = {
                 "code": "upstream_error",
-                "message": str((c.get("error") or {}).get("message") or "upstream error"),
+                "message": str(sub_dict(c.get("error")).get("message") or "upstream error"),
             }
             self.emit("response.failed", {"response": resp})
             return
@@ -299,7 +299,7 @@ class ResponsesStream(_Base):
                     "oi": self.next_oi,
                     "next_oi": self.next_oi + 0,
                     "call_id": str(tc.get("id") or "") or rand_id("call_"),
-                    "name": str((tc.get("function") or {}).get("name") or ""),
+                    "name": str(sub_dict(tc.get("function")).get("name") or ""),
                     "args": "",
                 }
                 self.next_oi += 1
@@ -313,10 +313,10 @@ class ResponsesStream(_Base):
             t = self.tools[idx]
             if tc.get("id"):
                 t["call_id"] = str(tc["id"])
-            fname = (tc.get("function") or {}).get("name")
+            fname = sub_dict(tc.get("function")).get("name")
             if fname:
                 t["name"] += str(fname)
-            frag = str((tc.get("function") or {}).get("arguments") or "")
+            frag = str(sub_dict(tc.get("function")).get("arguments") or "")
             if frag:
                 t["args"] += frag
                 self.emit(
@@ -411,7 +411,7 @@ class AnthropicStream(_Base):
                     "type": "error",
                     "error": {
                         "type": "api_error",
-                        "message": str((c.get("error") or {}).get("message") or "upstream error"),
+                        "message": str(sub_dict(c.get("error")).get("message") or "upstream error"),
                     },
                 },
             )
@@ -520,7 +520,7 @@ class AnthropicStream(_Base):
                 self.tools[idx] = {
                     "idx": blk,
                     "id": str(tc.get("id") or "") or rand_id("toolu_"),
-                    "name": str((tc.get("function") or {}).get("name") or ""),
+                    "name": str(sub_dict(tc.get("function")).get("name") or ""),
                     "args": "",
                 }
                 self.emit(
@@ -539,10 +539,10 @@ class AnthropicStream(_Base):
             t = self.tools[idx]
             if tc.get("id"):
                 t["id"] = str(tc["id"])
-            fname = (tc.get("function") or {}).get("name")
+            fname = sub_dict(tc.get("function")).get("name")
             if fname:
                 t["name"] += str(fname)
-            frag = str((tc.get("function") or {}).get("arguments") or "")
+            frag = str(sub_dict(tc.get("function")).get("arguments") or "")
             if frag:
                 t["args"] += frag
                 self.emit(

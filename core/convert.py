@@ -363,7 +363,10 @@ def parse_thinking_defaults(raw: str) -> dict[str, str]:
             continue
         k, _, v = line.partition("=")
         k, v = k.strip().lower(), v.strip().lower()
-        if k and v in ("low", "medium", "high"):
+        # 取值集合按上游实际文档来：Kimi 报的是 "low, high, and max"，其它家还常用
+        # minimal/medium。以前只认 low/medium/high，于是配 kimi=max 会被静默丢弃、
+        # 白白退化成「删掉思考参数」。
+        if k and v in ("minimal", "low", "medium", "high", "max"):
             out[k] = v
     return out
 
