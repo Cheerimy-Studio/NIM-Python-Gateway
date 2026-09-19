@@ -636,7 +636,8 @@ def release(
                         k["rl_streak"] = streak
                         base = eff("cool_429_seconds", _cfgint(cfg, "cool_429_seconds", 30))
                         if base > 0:
-                            cool = min(base * (2 ** min(streak - 1, 4)), 300)
+                            # 指数递增封顶 600s：反复被限流的账号需要足够长的静默期
+                            cool = min(base * (2 ** min(streak - 1, 4)), 600)
                             k["cooldown_until"] = max(k.get("cooldown_until") or 0, now + cool)
                     elif cls in ("auth", "payment"):
                         # 401/403 鉴权失败、402 余额不足：都按「硬失败」处理，走同一套

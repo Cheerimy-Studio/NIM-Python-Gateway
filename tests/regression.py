@@ -565,6 +565,36 @@ try:
     for kid in ids[1:]:
         a.post("/api/keys/op", json={"op": "enable", "id": kid})
 
+    # 账户锁定兜底：httpx.InvalidURL 不是 httpx.HTTPError 的子类，非法 base URL
+    # （例如 http://[bad，仍能通过 http(s):// 前缀校验）会穿透原有捕获，把账号永久
+    # 锁在该请求上。现在 _proxy/_convert 的整个重试循环外层有 try/finally 兜底释放。
+    a.post("/api/settings", json={"config": {"acct_concurrency": 1}})
+    a.post("/api/upstreams", json={"id": uid, "name": "T", "base": "http://[bad/v1", "enabled": True})
+    r = c.post(
+        "/v1/chat/completions", json={"model": "mock-model", "messages": [{"role": "user", "content": "hi"}]}
+    )
+    bad_st = r.status_code
+    a.post(
+        "/api/upstreams", json={"id": uid, "name": "T", "base": "http://127.0.0.1:18212/v1", "enabled": True}
+    )
+    t0 = time.time()
+    ok = False
+    while time.time() - t0 < 10:
+        rr = c.post(
+            "/v1/chat/completions",
+            json={"model": "mock-model", "messages": [{"role": "user", "content": "hi"}]},
+        )
+        if rr.status_code == 200:
+            ok = True
+            break
+        time.sleep(0.5)
+    add(
+        "异常路径不锁定账号",
+        ok and bad_st >= 400,
+        "非法 base 时 st=%s；恢复后 %.1fs 内账号可用" % (bad_st, time.time() - t0),
+    )
+    a.post("/api/settings", json={"config": {"acct_concurrency": 0}})
+
     # 上游中途断流（无 [DONE]）必须显式报错：静默截断比报错危险得多 ——
     # 下游会把半截内容当成完整回复。网关应补发 error 事件 + [DONE] 收口。
     t0 = time.time()

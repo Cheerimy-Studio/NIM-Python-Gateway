@@ -280,7 +280,7 @@ async def take_account(request: Request, ep: str, model: str, est_tokens: int, c
     # 请求会以「暂无可用账号」凭空失败（虽然再等几秒本来就能成功）。
     cool429 = _cfgint(cfg, "cool_429_seconds", 30)
     if max_wait > 0 and cool429 > 0:
-        max_wait = max(max_wait, min(cool429 + 2, 300))
+        max_wait = max(max_wait, min(cool429 + 2, 600))
     # 客户端已断开：不再取号/排队，避免为死连接占用账号或排队名额
     try:
         if await request.is_disconnected():
@@ -660,368 +660,409 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
     last_key: dict | None = None
     downgraded = False
     reuse_key: dict | None = None  # 同号重试：复用上一个账号，不走取号（不惩罚账号）
+    # 本请求当前持有的账号：正常释放/交接后置空；异常时由 finally 兜底释放
+    hold: dict = {"key": None}
+    up_model = model
+    t0 = time.time()
     same_key_tried: set = set()
     rl_left = max(1, _cfgint(cfg, "max_retries", 2))  # 429 额外重试预算        # 已做过同号重试的账号 id
 
-    while attempt < max_attempts:
-        attempt += 1
-        if reuse_key is not None:
-            taken = {"ok": True, "key": reuse_key, "status": 0, "message": ""}
-            reuse_key = None
-        else:
-            taken = await take_account(request, ep_tag, model, est, cfg)
-        if not taken["ok"]:
+    try:
+        while attempt < max_attempts:
+            attempt += 1
+            if reuse_key is not None:
+                taken = {"ok": True, "key": reuse_key, "status": 0, "message": ""}
+                reuse_key = None
+            else:
+                taken = await take_account(request, ep_tag, model, est, cfg)
+            if not taken["ok"]:
+                await pool.arelease(
+                    "",
+                    False,
+                    taken["status"],
+                    taken["message"],
+                    None,
+                    _release_log(
+                        ep_tag,
+                        model,
+                        taken["status"],
+                        0,
+                        taken["message"],
+                        attempt,
+                        None,
+                        ip,
+                        up_model=model,
+                        stream=stream,
+                    ),
+                )
+                return _error(taken["status"], taken["message"])
+            key = taken["key"]
+            hold["key"] = key
+            max_attempts = max(
+                attempt,
+                max(1, upstreams.override_for(key, "max_retries", _cfgint(cfg, "max_retries", 3)) + 1),
+            )
+            up_model = upstreams.map_model_for(key, model)
+            # 每次尝试都重写为当前渠道的映射名：换渠道重试时若新渠道无映射，自动回退为原始名
+            req["model"] = up_model
+            req = upstreams.apply_param_overrides(key, model, req)
+            # 客户端可能传字符串数字/布尔（如 "temperature":"0.95"），统一归一化为 JSON 原生类型
+            convert.normalize_body_types(req)
+            body = json.dumps(req, ensure_ascii=False, separators=(",", ":"))
+            t0 = time.time()
+            rerr = ""
+            rstatus = 0
+            ctype = ""
+            rbody = ""
+            client = get_http(cfg)
+            timeout = httpx.Timeout(
+                connect=upstreams.override_for(key, "connect_timeout", int(cfg.get("connect_timeout") or 10)),
+                read=upstreams.override_for(key, "request_timeout", int(cfg.get("request_timeout") or 300)),
+                write=30,
+                pool=10,
+            )
+            r: httpx.Response | None = None
+            _hdr = {
+                "Accept": "text/event-stream" if stream else "application/json",
+                "Authorization": "Bearer " + key["apikey"],
+            }
+            _url = upstreams.base_for(key) + "/" + endpoint
+            try:
+                if stream:
+                    # 关键：必须 stream=True 才是真流式；client.post() 会把整个响应体读完再返回，
+                    # 导致首字节=总耗时（长响应直接撞超时、下游毫无实时性）
+                    _req = client.build_request(
+                        "POST", _url, content=body.encode(), headers=_hdr, timeout=timeout
+                    )
+                    # 上游响应头可能几十秒才返回（推理模型实测 128s），这段时间网关卡在 send() 里
+                    # 什么都发不出去，中间代理会因长时间无数据先掐断连接（客户端只看到失败）。
+                    # 因此限时等一小段；等不到就转入「边发心跳边等响应头」的兜底流。
+                    # shield 保证超时不会取消上游请求本身，兜底流可以继续等它。
+                    send_task = asyncio.create_task(client.send(_req, stream=True))
+                    _ttfb_cfg = float(int(cfg.get("ttfb_timeout") or 0))
+                    commit_after = 12.0 if _ttfb_cfg <= 0 else min(12.0, _ttfb_cfg)
+                    # 分片等待响应头：期间轮询客户端断连。断连则取消上游请求并释放账号，
+                    # 否则为死连接白占账号（配合 acct_concurrency 会把账号卡死）。
+                    r = None
+                    waited = 0.0
+                    while waited < commit_after:
+                        try:
+                            if await request.is_disconnected():
+                                send_task.cancel()
+                                try:
+                                    ms = int((time.time() - t0) * 1000)
+                                    await pool.arelease(
+                                        key["id"],
+                                        True,
+                                        499,
+                                        "客户端已断开",
+                                        {"prompt_tokens": -(-len(body) // 3), "completion_tokens": 0},
+                                        _release_log(
+                                            ep_tag,
+                                            model,
+                                            499,
+                                            ms,
+                                            "客户端已断开",
+                                            attempt,
+                                            key,
+                                            ip,
+                                            up_model=up_model,
+                                            stream=True,
+                                            ttfb_ms=ms,
+                                        ),
+                                    )
+                                except Exception:
+                                    pass
+                                return Response(status_code=499)
+                        except Exception:
+                            pass
+                        try:
+                            r = await asyncio.wait_for(asyncio.shield(send_task), timeout=0.5)
+                            break
+                        except asyncio.TimeoutError:
+                            waited += 0.5
+                    if r is None:
+                        return _slow_stream_response(
+                            send_task,
+                            client,
+                            key,
+                            ep_tag,
+                            model,
+                            up_model,
+                            body,
+                            ip,
+                            attempt,
+                            t0,
+                            request,
+                            _ttfb_cfg,
+                        )
+                else:
+                    r = await client.post(_url, content=body.encode(), headers=_hdr, timeout=timeout)
+                rstatus = r.status_code
+                ctype = r.headers.get("content-type", "")
+            except (httpx.HTTPError, OSError) as e:
+                rerr = _conn_reason(e)
+                rstatus = 0
+            if stream and 200 <= rstatus < 400:
+                # 流式请求：只读第一个 chunk 判断是否为 SSE 错误事件（错误事件通常很小）。
+                # 是错误则降级重试，不是则把首帧传给 _proxy_stream 正常透传。
+                if r is not None:
+                    ait = r.aiter_bytes()
+                    # 独立读取任务：外层预读超时时不会取消到上游读取本身，
+                    # 之后 _proxy_stream 复用同一个队列继续取数据。
+                    sp = _StreamPump(ait)
+                    first_chunk = b""
+                    ttfb_to = int(cfg.get("ttfb_timeout") or 0)
+                    # 预读首帧只为「识别立即返回的 SSE 错误事件」以便换号/降级重试。
+                    # 因此只等一小段：上游推理慢时立刻转入心跳透传，绝不能把客户端
+                    # 干等几十秒（代理空闲超时会先断开，客户端只看到失败）。
+                    pre_to = 8.0 if ttfb_to <= 0 else min(8.0, float(ttfb_to))
+                    try:
+                        item = await asyncio.wait_for(sp.q.get(), timeout=pre_to)
+                        if item is not sp.done:
+                            first_chunk = item
+                    except asyncio.TimeoutError:
+                        # 上游迟迟不吐数据：已无法再改状态码，转为「带心跳的流式透传」，
+                        # 让连接保活到上游真正开始输出为止。
+                        return _proxy_stream(
+                            client,
+                            r,
+                            key,
+                            ep_tag,
+                            model,
+                            up_model,
+                            body,
+                            ip,
+                            attempt,
+                            t0,
+                            rstatus,
+                            ctype,
+                            first_chunk=b"",
+                            ait=ait,
+                            request=request,
+                            heartbeat=True,
+                            ttfb_deadline=float(ttfb_to),
+                            pump=sp,
+                        )
+                    except (httpx.HTTPError, OSError) as e:
+                        rerr = _conn_reason(e)
+                    text = first_chunk.decode("utf-8", "replace")
+                    is_sse_error = text.lstrip().startswith(("event: error", 'data: {"error"')) or (
+                        '"error"' in text[:500]
+                        and ("thinking" in text.lower() or "unsupported" in text.lower())
+                    )
+                    # 空流保护：上游 200 但流为空/无内容 → 视为失败，避免下游收到空
+                    is_empty_stream = not text.strip()
+                    if is_sse_error and not downgraded:
+                        downgraded = True
+                        rstatus = 400
+                        tdefs = convert.parse_thinking_defaults(
+                            upstreams.upstream_value(key, "thinking_defaults", "")
+                        )
+                        if convert.downgrade_thinking(req, up_model, tdefs):
+                            sp.task.cancel()
+                            await r.aclose()
+                            body = json.dumps(req, ensure_ascii=False, separators=(",", ":"))
+                            continue
+                        rbody = text
+                        rstatus = 400
+                    elif is_empty_stream:
+                        # 空流：标记 502 走错误路径（换号重试；尝试耗尽后返回 502），
+                        # 绝不给下游透传空流
+                        rstatus = 502
+                        rerr = "上游返回空流"
+                        rbody = ""
+                    else:
+                        return _proxy_stream(
+                            client,
+                            r,
+                            key,
+                            ep_tag,
+                            model,
+                            up_model,
+                            body,
+                            ip,
+                            attempt,
+                            t0,
+                            rstatus,
+                            ctype,
+                            first_chunk=first_chunk,
+                            ait=ait,
+                            request=request,
+                            pump=sp,
+                        )
+            rbody = ""
+            if r is not None:
+                if stream:
+                    # 流式响应没能交接给透传（空流 / SSE 错误且降级失败等），必须显式关闭：
+                    # 否则这条上游连接会一直被占住，反复失败会耗尽共享连接池，
+                    # 之后所有上游请求都卡在「等连接」直到超时 —— 日志表现为清一色
+                    # 「上游返回 HTTP 0」（10s = pool/connect 超时）。同时这里也不能读
+                    # r.text：对流式响应读全文会把整条 SSE 拖进来，甚至挂住。
+                    try:
+                        await r.aclose()
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        rbody = r.text
+                    except Exception:
+                        pass
+            ms = int((time.time() - t0) * 1000)
+            success = 200 <= rstatus < 400
+            # 空响应/伪成功保护：上游 200 但 body 为空、或 body 里带 error 字段，
+            # 视为失败（避免下游收到空内容或把错误当成功透传）
+            if success:
+                _st = rbody.strip()
+                if not _st or _st == "{}":
+                    success = False
+                    rerr = "上游返回空响应"
+                    rstatus = 502
+                elif _st.startswith("{") and '"error"' in _st[:200]:
+                    try:
+                        _j = json.loads(_st)
+                        if isinstance(_j, dict) and _j.get("error"):
+                            success = False
+                            rerr = upstream_snippet({"status": 200, "body": _st, "error": ""})
+                            rstatus = 502
+                    except Exception:
+                        pass
+            err = "" if success else upstream_snippet({"status": rstatus, "body": rbody, "error": rerr})
+            # 瞬态错误（连接失败/超时/5xx/空响应）先同号快速重试一次：
+            # 上游抖动往往重试即成功，避免误判账号故障而冷却/封禁。只重试一次且不 release（不惩罚）。
+            if (
+                not success
+                and key["id"] not in same_key_tried
+                and (rstatus == 0 or rstatus >= 500)
+                and attempt < max_attempts
+            ):
+                same_key_tried.add(key["id"])
+                reuse_key = key
+                await asyncio.sleep(_backoff_ms(cfg, attempt, key) / 1000)
+                continue
+            usage = build_usage(
+                {"status": rstatus, "body": rbody, "streamed": False, "out_bytes": 0, "usage": None}, body
+            )
+            hold["key"] = None  # 已正常释放
             await pool.arelease(
-                "",
-                False,
-                taken["status"],
-                taken["message"],
-                None,
+                key["id"],
+                success,
+                rstatus,
+                err,
+                usage,
                 _release_log(
                     ep_tag,
                     model,
-                    taken["status"],
-                    0,
-                    taken["message"],
+                    rstatus,
+                    ms,
+                    err,
                     attempt,
-                    None,
+                    key,
                     ip,
-                    up_model=model,
+                    up_model=up_model,
                     stream=stream,
+                    ttfb_ms=ms,
+                    in_tok=int(usage.get("prompt_tokens") or 0),
+                    out_tok=int(usage.get("completion_tokens") or 0),
                 ),
             )
-            return _error(taken["status"], taken["message"])
-        key = taken["key"]
-        max_attempts = max(
-            attempt, max(1, upstreams.override_for(key, "max_retries", _cfgint(cfg, "max_retries", 3)) + 1)
-        )
-        up_model = upstreams.map_model_for(key, model)
-        # 每次尝试都重写为当前渠道的映射名：换渠道重试时若新渠道无映射，自动回退为原始名
-        req["model"] = up_model
-        req = upstreams.apply_param_overrides(key, model, req)
-        # 客户端可能传字符串数字/布尔（如 "temperature":"0.95"），统一归一化为 JSON 原生类型
-        convert.normalize_body_types(req)
-        body = json.dumps(req, ensure_ascii=False, separators=(",", ":"))
-        t0 = time.time()
-        rerr = ""
-        rstatus = 0
-        ctype = ""
-        rbody = ""
-        client = get_http(cfg)
-        timeout = httpx.Timeout(
-            connect=upstreams.override_for(key, "connect_timeout", int(cfg.get("connect_timeout") or 10)),
-            read=upstreams.override_for(key, "request_timeout", int(cfg.get("request_timeout") or 300)),
-            write=30,
-            pool=10,
-        )
-        r: httpx.Response | None = None
-        _hdr = {
-            "Accept": "text/event-stream" if stream else "application/json",
-            "Authorization": "Bearer " + key["apikey"],
-        }
-        _url = upstreams.base_for(key) + "/" + endpoint
-        try:
-            if stream:
-                # 关键：必须 stream=True 才是真流式；client.post() 会把整个响应体读完再返回，
-                # 导致首字节=总耗时（长响应直接撞超时、下游毫无实时性）
-                _req = client.build_request(
-                    "POST", _url, content=body.encode(), headers=_hdr, timeout=timeout
+            if success:
+                out_body = rbody
+                # 统一改写 model 并补全 usage：部分上游不返回 usage，严格客户端
+                # （New-API 渠道测试 / 计费）会因缺字段判定失败，与 HTTP 200 无关。
+                try:
+                    j = json.loads(rbody)
+                    if isinstance(j, dict):
+                        if up_model != model:
+                            j["model"] = model
+                        if not isinstance(j.get("usage"), dict):
+                            j["usage"] = _full_usage(usage)
+                        else:
+                            j["usage"] = _full_usage(j["usage"])
+                        out_body = json.dumps(j, ensure_ascii=False, separators=(",", ":"))
+                except Exception:
+                    pass
+                try:
+                    resp_msg = json.loads(out_body)
+                    resp_text = (resp_msg.get("choices") or [{}])[0].get("message", {}).get("content", "")
+                    await log_session(
+                        cfg, model, key["email"], req.get("messages", []), resp_text, rstatus, ip
+                    )
+                except Exception:
+                    pass
+                if stream:
+                    pass  # 流式已在上方 return
+                # 非流式一律声明 application/json：不能原样转发上游的 Content-Type，
+                # 否则上游给出异常头时严格客户端会按错的格式解析。
+                return Response(content=out_body, status_code=rstatus, media_type="application/json")
+            last = {"status": rstatus, "body": rbody, "error": rerr, "content_type": ctype}
+            last_key = key
+            # 401/403 为账号级鉴权失败：立即返回（账号已被硬封禁，重试只会得到 429 封禁掩码）
+            if rstatus in (401, 403):
+                return _upstream_fail(key, last, cfg)
+            # 400 且报思考参数不兼容：自动降级（去除或改用默认强度）后原渠道重试一次
+            if rstatus == 400 and convert.thinking_unsupported(rbody, rstatus) and not downgraded:
+                downgraded = True
+                tdefs = convert.parse_thinking_defaults(
+                    upstreams.upstream_value(key, "thinking_defaults", "")
                 )
-                # 上游响应头可能几十秒才返回（推理模型实测 128s），这段时间网关卡在 send() 里
-                # 什么都发不出去，中间代理会因长时间无数据先掐断连接（客户端只看到失败）。
-                # 因此限时等一小段；等不到就转入「边发心跳边等响应头」的兜底流。
-                # shield 保证超时不会取消上游请求本身，兜底流可以继续等它。
-                send_task = asyncio.create_task(client.send(_req, stream=True))
-                _ttfb_cfg = float(int(cfg.get("ttfb_timeout") or 0))
-                commit_after = 12.0 if _ttfb_cfg <= 0 else min(12.0, _ttfb_cfg)
-                # 分片等待响应头：期间轮询客户端断连。断连则取消上游请求并释放账号，
-                # 否则为死连接白占账号（配合 acct_concurrency 会把账号卡死）。
-                r = None
-                waited = 0.0
-                while waited < commit_after:
-                    try:
-                        if await request.is_disconnected():
-                            send_task.cancel()
-                            try:
-                                ms = int((time.time() - t0) * 1000)
-                                await pool.arelease(
-                                    key["id"],
-                                    True,
-                                    499,
-                                    "客户端已断开",
-                                    {"prompt_tokens": -(-len(body) // 3), "completion_tokens": 0},
-                                    _release_log(
-                                        ep_tag,
-                                        model,
-                                        499,
-                                        ms,
-                                        "客户端已断开",
-                                        attempt,
-                                        key,
-                                        ip,
-                                        up_model=up_model,
-                                        stream=True,
-                                        ttfb_ms=ms,
-                                    ),
-                                )
-                            except Exception:
-                                pass
-                            return Response(status_code=499)
-                    except Exception:
-                        pass
-                    try:
-                        r = await asyncio.wait_for(asyncio.shield(send_task), timeout=0.5)
-                        break
-                    except asyncio.TimeoutError:
-                        waited += 0.5
-                if r is None:
-                    return _slow_stream_response(
-                        send_task,
-                        client,
-                        key,
-                        ep_tag,
-                        model,
-                        up_model,
-                        body,
-                        ip,
-                        attempt,
-                        t0,
-                        request,
-                        _ttfb_cfg,
-                    )
-            else:
-                r = await client.post(_url, content=body.encode(), headers=_hdr, timeout=timeout)
-            rstatus = r.status_code
-            ctype = r.headers.get("content-type", "")
-        except (httpx.HTTPError, OSError) as e:
-            rerr = _conn_reason(e)
-            rstatus = 0
-        if stream and 200 <= rstatus < 400:
-            # 流式请求：只读第一个 chunk 判断是否为 SSE 错误事件（错误事件通常很小）。
-            # 是错误则降级重试，不是则把首帧传给 _proxy_stream 正常透传。
-            if r is not None:
-                ait = r.aiter_bytes()
-                # 独立读取任务：外层预读超时时不会取消到上游读取本身，
-                # 之后 _proxy_stream 复用同一个队列继续取数据。
-                sp = _StreamPump(ait)
-                first_chunk = b""
-                ttfb_to = int(cfg.get("ttfb_timeout") or 0)
-                # 预读首帧只为「识别立即返回的 SSE 错误事件」以便换号/降级重试。
-                # 因此只等一小段：上游推理慢时立刻转入心跳透传，绝不能把客户端
-                # 干等几十秒（代理空闲超时会先断开，客户端只看到失败）。
-                pre_to = 8.0 if ttfb_to <= 0 else min(8.0, float(ttfb_to))
-                try:
-                    item = await asyncio.wait_for(sp.q.get(), timeout=pre_to)
-                    if item is not sp.done:
-                        first_chunk = item
-                except asyncio.TimeoutError:
-                    # 上游迟迟不吐数据：已无法再改状态码，转为「带心跳的流式透传」，
-                    # 让连接保活到上游真正开始输出为止。
-                    return _proxy_stream(
-                        client,
-                        r,
-                        key,
-                        ep_tag,
-                        model,
-                        up_model,
-                        body,
-                        ip,
-                        attempt,
-                        t0,
-                        rstatus,
-                        ctype,
-                        first_chunk=b"",
-                        ait=ait,
-                        request=request,
-                        heartbeat=True,
-                        ttfb_deadline=float(ttfb_to),
-                        pump=sp,
-                    )
-                except (httpx.HTTPError, OSError) as e:
-                    rerr = _conn_reason(e)
-                text = first_chunk.decode("utf-8", "replace")
-                is_sse_error = text.lstrip().startswith(("event: error", 'data: {"error"')) or (
-                    '"error"' in text[:500] and ("thinking" in text.lower() or "unsupported" in text.lower())
-                )
-                # 空流保护：上游 200 但流为空/无内容 → 视为失败，避免下游收到空
-                is_empty_stream = not text.strip()
-                if is_sse_error and not downgraded:
-                    downgraded = True
-                    rstatus = 400
-                    tdefs = convert.parse_thinking_defaults(
-                        upstreams.upstream_value(key, "thinking_defaults", "")
-                    )
-                    if convert.downgrade_thinking(req, up_model, tdefs):
-                        sp.task.cancel()
-                        await r.aclose()
-                        body = json.dumps(req, ensure_ascii=False, separators=(",", ":"))
-                        continue
-                    rbody = text
-                    rstatus = 400
-                elif is_empty_stream:
-                    # 空流：标记 502 走错误路径（换号重试；尝试耗尽后返回 502），
-                    # 绝不给下游透传空流
-                    rstatus = 502
-                    rerr = "上游返回空流"
-                    rbody = ""
-                else:
-                    return _proxy_stream(
-                        client,
-                        r,
-                        key,
-                        ep_tag,
-                        model,
-                        up_model,
-                        body,
-                        ip,
-                        attempt,
-                        t0,
-                        rstatus,
-                        ctype,
-                        first_chunk=first_chunk,
-                        ait=ait,
-                        request=request,
-                        pump=sp,
-                    )
-        rbody = ""
-        if r is not None:
-            if stream:
-                # 流式响应没能交接给透传（空流 / SSE 错误且降级失败等），必须显式关闭：
-                # 否则这条上游连接会一直被占住，反复失败会耗尽共享连接池，
-                # 之后所有上游请求都卡在「等连接」直到超时 —— 日志表现为清一色
-                # 「上游返回 HTTP 0」（10s = pool/connect 超时）。同时这里也不能读
-                # r.text：对流式响应读全文会把整条 SSE 拖进来，甚至挂住。
-                try:
-                    await r.aclose()
-                except Exception:
-                    pass
-            else:
-                try:
-                    rbody = r.text
-                except Exception:
-                    pass
-        ms = int((time.time() - t0) * 1000)
-        success = 200 <= rstatus < 400
-        # 空响应/伪成功保护：上游 200 但 body 为空、或 body 里带 error 字段，
-        # 视为失败（避免下游收到空内容或把错误当成功透传）
-        if success:
-            _st = rbody.strip()
-            if not _st or _st == "{}":
-                success = False
-                rerr = "上游返回空响应"
-                rstatus = 502
-            elif _st.startswith("{") and '"error"' in _st[:200]:
-                try:
-                    _j = json.loads(_st)
-                    if isinstance(_j, dict) and _j.get("error"):
-                        success = False
-                        rerr = upstream_snippet({"status": 200, "body": _st, "error": ""})
-                        rstatus = 502
-                except Exception:
-                    pass
-        err = "" if success else upstream_snippet({"status": rstatus, "body": rbody, "error": rerr})
-        # 瞬态错误（连接失败/超时/5xx/空响应）先同号快速重试一次：
-        # 上游抖动往往重试即成功，避免误判账号故障而冷却/封禁。只重试一次且不 release（不惩罚）。
-        if (
-            not success
-            and key["id"] not in same_key_tried
-            and (rstatus == 0 or rstatus >= 500)
-            and attempt < max_attempts
-        ):
-            same_key_tried.add(key["id"])
-            reuse_key = key
+                if convert.downgrade_thinking(req, up_model, tdefs):
+                    body = json.dumps(req, ensure_ascii=False, separators=(",", ":"))
+                    continue
+            # 400 且报 JSON 反序列化/类型错误（字符串数字被上游拒绝）：激进转换后重试一次
+            if rstatus == 400 and convert.is_deserialize_error(rbody, rstatus) and not downgraded:
+                downgraded = True
+                if convert.coerce_all_types(req):
+                    body = json.dumps(req, ensure_ascii=False, separators=(",", ":"))
+                    continue
+            # 400 且报「不支持的参数」（如 enable_thinking）：移除被点名参数后重试一次
+            if rstatus == 400 and convert.is_unsupported_param_error(rbody, rstatus) and not downgraded:
+                downgraded = True
+                if convert.strip_unsupported_params(req, rbody):
+                    body = json.dumps(req, ensure_ascii=False, separators=(",", ":"))
+                    continue
+            # 渠道级不可用（no available channel）：同一渠道所有账号共享渠道池，
+            # 换号/重试都注定失败 → 快速失败，不浪费重试
+            if convert.is_channel_exhausted(rbody):
+                return _upstream_fail(key, last, cfg)
+            if not (rstatus in (0, 429) or rstatus >= 500):
+                return _upstream_fail(key, last, cfg)
+            # 429 吸收：上游限流是暂时的，延长重试预算让它走排队等账号冷却，
+            # 尽量不把 429 透传给下游（下游 429 往往直接失败或降级）
+            if rstatus == 429 and rl_left > 0 and cfg.get("queue_enabled", True):
+                rl_left -= 1
+                max_attempts += 1
+                await asyncio.sleep(_backoff_ms(cfg, attempt, key) / 1000)
+                continue
             await asyncio.sleep(_backoff_ms(cfg, attempt, key) / 1000)
-            continue
-        usage = build_usage(
-            {"status": rstatus, "body": rbody, "streamed": False, "out_bytes": 0, "usage": None}, body
-        )
-        await pool.arelease(
-            key["id"],
-            success,
-            rstatus,
-            err,
-            usage,
-            _release_log(
-                ep_tag,
-                model,
-                rstatus,
-                ms,
-                err,
-                attempt,
-                key,
-                ip,
-                up_model=up_model,
-                stream=stream,
-                ttfb_ms=ms,
-                in_tok=int(usage.get("prompt_tokens") or 0),
-                out_tok=int(usage.get("completion_tokens") or 0),
-            ),
-        )
-        if success:
-            out_body = rbody
-            # 统一改写 model 并补全 usage：部分上游不返回 usage，严格客户端
-            # （New-API 渠道测试 / 计费）会因缺字段判定失败，与 HTTP 200 无关。
+    finally:
+        # 异常兜底：任何没走到正常释放的路径（非 httpx 异常、序列化失败、
+        # 上游地址非法等）都必须把账号还回去，否则会被永久锁定在这个请求上。
+        k_held = hold["key"]
+        if k_held is not None:
+            hold["key"] = None
             try:
-                j = json.loads(rbody)
-                if isinstance(j, dict):
-                    if up_model != model:
-                        j["model"] = model
-                    if not isinstance(j.get("usage"), dict):
-                        j["usage"] = _full_usage(usage)
-                    else:
-                        j["usage"] = _full_usage(j["usage"])
-                    out_body = json.dumps(j, ensure_ascii=False, separators=(",", ":"))
+                await pool.arelease(
+                    k_held["id"],
+                    True,
+                    500,
+                    "请求处理异常，兜底释放账号",
+                    None,
+                    _release_log(
+                        ep_tag,
+                        model,
+                        500,
+                        int((time.time() - t0) * 1000),
+                        "请求处理异常，兜底释放账号",
+                        attempt,
+                        k_held,
+                        ip,
+                        up_model=up_model,
+                        stream=stream,
+                    ),
+                )
             except Exception:
                 pass
-            try:
-                resp_msg = json.loads(out_body)
-                resp_text = (resp_msg.get("choices") or [{}])[0].get("message", {}).get("content", "")
-                await log_session(cfg, model, key["email"], req.get("messages", []), resp_text, rstatus, ip)
-            except Exception:
-                pass
-            if stream:
-                pass  # 流式已在上方 return
-            # 非流式一律声明 application/json：不能原样转发上游的 Content-Type，
-            # 否则上游给出异常头时严格客户端会按错的格式解析。
-            return Response(content=out_body, status_code=rstatus, media_type="application/json")
-        last = {"status": rstatus, "body": rbody, "error": rerr, "content_type": ctype}
-        last_key = key
-        # 401/403 为账号级鉴权失败：立即返回（账号已被硬封禁，重试只会得到 429 封禁掩码）
-        if rstatus in (401, 403):
-            return _upstream_fail(key, last, cfg)
-        # 400 且报思考参数不兼容：自动降级（去除或改用默认强度）后原渠道重试一次
-        if rstatus == 400 and convert.thinking_unsupported(rbody, rstatus) and not downgraded:
-            downgraded = True
-            tdefs = convert.parse_thinking_defaults(upstreams.upstream_value(key, "thinking_defaults", ""))
-            if convert.downgrade_thinking(req, up_model, tdefs):
-                body = json.dumps(req, ensure_ascii=False, separators=(",", ":"))
-                continue
-        # 400 且报 JSON 反序列化/类型错误（字符串数字被上游拒绝）：激进转换后重试一次
-        if rstatus == 400 and convert.is_deserialize_error(rbody, rstatus) and not downgraded:
-            downgraded = True
-            if convert.coerce_all_types(req):
-                body = json.dumps(req, ensure_ascii=False, separators=(",", ":"))
-                continue
-        # 400 且报「不支持的参数」（如 enable_thinking）：移除被点名参数后重试一次
-        if rstatus == 400 and convert.is_unsupported_param_error(rbody, rstatus) and not downgraded:
-            downgraded = True
-            if convert.strip_unsupported_params(req, rbody):
-                body = json.dumps(req, ensure_ascii=False, separators=(",", ":"))
-                continue
-        # 渠道级不可用（no available channel）：同一渠道所有账号共享渠道池，
-        # 换号/重试都注定失败 → 快速失败，不浪费重试
-        if convert.is_channel_exhausted(rbody):
-            return _upstream_fail(key, last, cfg)
-        if not (rstatus in (0, 429) or rstatus >= 500):
-            return _upstream_fail(key, last, cfg)
-        # 429 吸收：上游限流是暂时的，延长重试预算让它走排队等账号冷却，
-        # 尽量不把 429 透传给下游（下游 429 往往直接失败或降级）
-        if rstatus == 429 and rl_left > 0 and cfg.get("queue_enabled", True):
-            rl_left -= 1
-            max_attempts += 1
-            await asyncio.sleep(_backoff_ms(cfg, attempt, key) / 1000)
-            continue
-        await asyncio.sleep(_backoff_ms(cfg, attempt, key) / 1000)
     return _upstream_fail(last_key, last, cfg)
 
 
@@ -1513,261 +1554,305 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
     last_key: dict | None = None
     downgraded = False
     reuse_key: dict | None = None  # 同号重试
+    # 本请求当前持有的账号：正常释放/交接后置空；异常时由 finally 兜底释放
+    hold: dict = {"key": None}
+    up_model = model
+    t0 = time.time()
     same_key_tried: set = set()
     rl_left = max(1, _cfgint(cfg, "max_retries", 2))  # 429 额外重试预算
 
-    while attempt < max_attempts:
-        attempt += 1
-        if reuse_key is not None:
-            taken = {"ok": True, "key": reuse_key, "status": 0, "message": ""}
-            reuse_key = None
-        else:
-            taken = await take_account(request, ep, model, est, cfg)
-        if not taken["ok"]:
+    try:
+        while attempt < max_attempts:
+            attempt += 1
+            if reuse_key is not None:
+                taken = {"ok": True, "key": reuse_key, "status": 0, "message": ""}
+                reuse_key = None
+            else:
+                taken = await take_account(request, ep, model, est, cfg)
+            if not taken["ok"]:
+                await pool.arelease(
+                    "",
+                    False,
+                    taken["status"],
+                    taken["message"],
+                    None,
+                    _release_log(
+                        ep,
+                        model,
+                        taken["status"],
+                        0,
+                        taken["message"],
+                        attempt,
+                        None,
+                        ip,
+                        up_model=model,
+                        stream=stream,
+                    ),
+                )
+                return _error(taken["status"], taken["message"], anthropic=anthropic)
+            key = taken["key"]
+            hold["key"] = key
+            max_attempts = max(
+                attempt,
+                max(1, upstreams.override_for(key, "max_retries", _cfgint(cfg, "max_retries", 3)) + 1),
+            )
+            up_model = upstreams.map_model_for(key, model)
+            chat_req["model"] = up_model
+            chat_req = upstreams.apply_param_overrides(key, model, chat_req)
+            # 客户端可能传字符串数字/布尔（如 "temperature":"0.95"），统一归一化为 JSON 原生类型
+            convert.normalize_body_types(chat_req)
+            raw = json.dumps(chat_req, ensure_ascii=False, separators=(",", ":"))
+            t0 = time.time()
+            rerr = ""
+            rstatus = 0
+            ctype = ""
+            rbody = ""
+            out_bytes = 0
+            try:
+                timeout = httpx.Timeout(
+                    connect=upstreams.override_for(
+                        key, "connect_timeout", int(cfg.get("connect_timeout") or 10)
+                    ),
+                    read=upstreams.override_for(
+                        key, "request_timeout", int(cfg.get("request_timeout") or 300)
+                    ),
+                    write=30,
+                    pool=10,
+                )
+                client = get_http(cfg)
+                _hdr2 = {
+                    "Accept": "text/event-stream" if stream else "application/json",
+                    "Authorization": "Bearer " + key["apikey"],
+                }
+                _url2 = upstreams.base_for(key) + "/chat/completions"
+                if stream:
+                    _req2 = client.build_request(
+                        "POST", _url2, content=raw.encode(), headers=_hdr2, timeout=timeout
+                    )
+                    r = await client.send(_req2, stream=True)
+                else:
+                    r = await client.post(_url2, content=raw.encode(), headers=_hdr2, timeout=timeout)
+                rstatus = r.status_code
+                ctype = r.headers.get("content-type", "")
+                if stream and 200 <= rstatus < 400:
+                    # 流式请求：先读第一个 chunk 判断是否为 SSE 错误事件
+                    ait = r.aiter_bytes()
+                    first_chunk = b""
+                    ttfb_to = int(cfg.get("ttfb_timeout") or 0)
+                    try:
+                        if ttfb_to > 0:
+                            first_chunk = await asyncio.wait_for(ait.__anext__(), timeout=ttfb_to)
+                        else:
+                            first_chunk = await ait.__anext__()
+                    except StopAsyncIteration:
+                        pass
+                    except asyncio.TimeoutError:
+                        rerr = f"上游首字节超时（{ttfb_to}s）"
+                        rstatus = 504
+                    text = first_chunk.decode("utf-8", "replace")
+                    is_sse_error = text.lstrip().startswith(("event: error", 'data: {"error"')) or (
+                        '"error"' in text[:500]
+                        and ("thinking" in text.lower() or "unsupported" in text.lower())
+                    )
+                    if is_sse_error and not downgraded:
+                        downgraded = True
+                        rstatus = 400
+                        rbody = text
+                        tdefs = convert.parse_thinking_defaults(
+                            upstreams.upstream_value(key, "thinking_defaults", "")
+                        )
+                        if convert.downgrade_thinking(chat_req, up_model, tdefs):
+                            await r.aclose()
+                            raw = json.dumps(chat_req, ensure_ascii=False, separators=(",", ":"))
+                            continue
+                    elif not text.strip():
+                        # 空流保护：上游 200 但流为空 → 标错误走重试，不透传空流
+                        rstatus = 502
+                        rerr = "上游返回空流"
+                    else:
+                        return await _stream_convert(
+                            request,
+                            client,
+                            r,
+                            key,
+                            ep,
+                            model,
+                            cfg,
+                            up_model,
+                            raw,
+                            ip,
+                            attempt,
+                            t0,
+                            rstatus,
+                            ctype,
+                            protocol,
+                            first_chunk=first_chunk,
+                            ait=ait,
+                        )
+                if stream:
+                    # 流式响应没能交接给转换透传（空流 / SSE 错误且降级失败等）必须显式关闭，
+                    # 否则连接被占住，反复失败会耗尽共享连接池（日志表现为清一色 HTTP 0）。
+                    try:
+                        await r.aclose()
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        rbody = r.text
+                    except Exception:
+                        rbody = ""
+            except (httpx.HTTPError, OSError) as e:
+                rerr = _conn_reason(e)
+                rstatus = 0
+            ms = int((time.time() - t0) * 1000)
+            success = 200 <= rstatus < 400
+            # 空响应/伪成功保护：上游 200 但 body 为空、或 body 里带 error 字段，
+            # 视为失败（避免下游收到空内容或把错误当成功透传）
+            if success:
+                _st = rbody.strip()
+                if not _st or _st == "{}":
+                    success = False
+                    rerr = "上游返回空响应"
+                    rstatus = 502
+                elif _st.startswith("{") and '"error"' in _st[:200]:
+                    try:
+                        _j = json.loads(_st)
+                        if isinstance(_j, dict) and _j.get("error"):
+                            success = False
+                            rerr = upstream_snippet({"status": 200, "body": _st, "error": ""})
+                            rstatus = 502
+                    except Exception:
+                        pass
+            err = "" if success else upstream_snippet({"status": rstatus, "body": rbody, "error": rerr})
+            # 瞬态错误先同号快速重试一次（不惩罚账号）
+            if (
+                not success
+                and key["id"] not in same_key_tried
+                and (rstatus == 0 or rstatus >= 500)
+                and attempt < max_attempts
+            ):
+                same_key_tried.add(key["id"])
+                reuse_key = key
+                await asyncio.sleep(_backoff_ms(cfg, attempt, key) / 1000)
+                continue
+            usage = build_usage(
+                {"status": rstatus, "body": rbody, "streamed": False, "out_bytes": out_bytes, "usage": None},
+                raw,
+            )
+            hold["key"] = None  # 已正常释放
             await pool.arelease(
-                "",
-                False,
-                taken["status"],
-                taken["message"],
-                None,
+                key["id"],
+                success,
+                rstatus,
+                err,
+                usage,
                 _release_log(
                     ep,
                     model,
-                    taken["status"],
-                    0,
-                    taken["message"],
+                    rstatus,
+                    ms,
+                    err,
                     attempt,
-                    None,
+                    key,
                     ip,
-                    up_model=model,
+                    up_model=up_model,
                     stream=stream,
+                    ttfb_ms=ms,
+                    in_tok=int(usage.get("prompt_tokens") or 0),
+                    out_tok=int(usage.get("completion_tokens") or 0),
                 ),
             )
-            return _error(taken["status"], taken["message"], anthropic=anthropic)
-        key = taken["key"]
-        max_attempts = max(
-            attempt, max(1, upstreams.override_for(key, "max_retries", _cfgint(cfg, "max_retries", 3)) + 1)
-        )
-        up_model = upstreams.map_model_for(key, model)
-        chat_req["model"] = up_model
-        chat_req = upstreams.apply_param_overrides(key, model, chat_req)
-        # 客户端可能传字符串数字/布尔（如 "temperature":"0.95"），统一归一化为 JSON 原生类型
-        convert.normalize_body_types(chat_req)
-        raw = json.dumps(chat_req, ensure_ascii=False, separators=(",", ":"))
-        t0 = time.time()
-        rerr = ""
-        rstatus = 0
-        ctype = ""
-        rbody = ""
-        out_bytes = 0
-        try:
-            timeout = httpx.Timeout(
-                connect=upstreams.override_for(key, "connect_timeout", int(cfg.get("connect_timeout") or 10)),
-                read=upstreams.override_for(key, "request_timeout", int(cfg.get("request_timeout") or 300)),
-                write=30,
-                pool=10,
-            )
-            client = get_http(cfg)
-            _hdr2 = {
-                "Accept": "text/event-stream" if stream else "application/json",
-                "Authorization": "Bearer " + key["apikey"],
-            }
-            _url2 = upstreams.base_for(key) + "/chat/completions"
-            if stream:
-                _req2 = client.build_request(
-                    "POST", _url2, content=raw.encode(), headers=_hdr2, timeout=timeout
-                )
-                r = await client.send(_req2, stream=True)
-            else:
-                r = await client.post(_url2, content=raw.encode(), headers=_hdr2, timeout=timeout)
-            rstatus = r.status_code
-            ctype = r.headers.get("content-type", "")
-            if stream and 200 <= rstatus < 400:
-                # 流式请求：先读第一个 chunk 判断是否为 SSE 错误事件
-                ait = r.aiter_bytes()
-                first_chunk = b""
-                ttfb_to = int(cfg.get("ttfb_timeout") or 0)
+            if success:
                 try:
-                    if ttfb_to > 0:
-                        first_chunk = await asyncio.wait_for(ait.__anext__(), timeout=ttfb_to)
-                    else:
-                        first_chunk = await ait.__anext__()
-                except StopAsyncIteration:
+                    chat = json.loads(rbody)
+                except Exception:
+                    chat = None
+                if not isinstance(chat, dict) or "choices" not in chat:
+                    return _error(502, "上游返回了无法解析的响应", anthropic=anthropic)
+                chat["model"] = model
+                try:
+                    await _extract_conv_log(cfg, model, key["email"], req, chat, ip)
+                except Exception:
                     pass
-                except asyncio.TimeoutError:
-                    rerr = f"上游首字节超时（{ttfb_to}s）"
-                    rstatus = 504
-                text = first_chunk.decode("utf-8", "replace")
-                is_sse_error = text.lstrip().startswith(("event: error", 'data: {"error"')) or (
-                    '"error"' in text[:500] and ("thinking" in text.lower() or "unsupported" in text.lower())
-                )
-                if is_sse_error and not downgraded:
-                    downgraded = True
-                    rstatus = 400
-                    rbody = text
-                    tdefs = convert.parse_thinking_defaults(
-                        upstreams.upstream_value(key, "thinking_defaults", "")
+                if anthropic:
+                    return Response(
+                        content=json.dumps(
+                            convert.chat_to_anthropic(chat), ensure_ascii=False, separators=(",", ":")
+                        ),
+                        media_type="application/json",
                     )
-                    if convert.downgrade_thinking(chat_req, up_model, tdefs):
-                        await r.aclose()
-                        raw = json.dumps(chat_req, ensure_ascii=False, separators=(",", ":"))
-                        continue
-                elif not text.strip():
-                    # 空流保护：上游 200 但流为空 → 标错误走重试，不透传空流
-                    rstatus = 502
-                    rerr = "上游返回空流"
-                else:
-                    return await _stream_convert(
-                        request,
-                        client,
-                        r,
-                        key,
-                        ep,
-                        model,
-                        cfg,
-                        up_model,
-                        raw,
-                        ip,
-                        attempt,
-                        t0,
-                        rstatus,
-                        ctype,
-                        protocol,
-                        first_chunk=first_chunk,
-                        ait=ait,
-                    )
-            if stream:
-                # 流式响应没能交接给转换透传（空流 / SSE 错误且降级失败等）必须显式关闭，
-                # 否则连接被占住，反复失败会耗尽共享连接池（日志表现为清一色 HTTP 0）。
-                try:
-                    await r.aclose()
-                except Exception:
-                    pass
-            else:
-                try:
-                    rbody = r.text
-                except Exception:
-                    rbody = ""
-        except (httpx.HTTPError, OSError) as e:
-            rerr = _conn_reason(e)
-            rstatus = 0
-        ms = int((time.time() - t0) * 1000)
-        success = 200 <= rstatus < 400
-        # 空响应/伪成功保护：上游 200 但 body 为空、或 body 里带 error 字段，
-        # 视为失败（避免下游收到空内容或把错误当成功透传）
-        if success:
-            _st = rbody.strip()
-            if not _st or _st == "{}":
-                success = False
-                rerr = "上游返回空响应"
-                rstatus = 502
-            elif _st.startswith("{") and '"error"' in _st[:200]:
-                try:
-                    _j = json.loads(_st)
-                    if isinstance(_j, dict) and _j.get("error"):
-                        success = False
-                        rerr = upstream_snippet({"status": 200, "body": _st, "error": ""})
-                        rstatus = 502
-                except Exception:
-                    pass
-        err = "" if success else upstream_snippet({"status": rstatus, "body": rbody, "error": rerr})
-        # 瞬态错误先同号快速重试一次（不惩罚账号）
-        if (
-            not success
-            and key["id"] not in same_key_tried
-            and (rstatus == 0 or rstatus >= 500)
-            and attempt < max_attempts
-        ):
-            same_key_tried.add(key["id"])
-            reuse_key = key
-            await asyncio.sleep(_backoff_ms(cfg, attempt, key) / 1000)
-            continue
-        usage = build_usage(
-            {"status": rstatus, "body": rbody, "streamed": False, "out_bytes": out_bytes, "usage": None}, raw
-        )
-        await pool.arelease(
-            key["id"],
-            success,
-            rstatus,
-            err,
-            usage,
-            _release_log(
-                ep,
-                model,
-                rstatus,
-                ms,
-                err,
-                attempt,
-                key,
-                ip,
-                up_model=up_model,
-                stream=stream,
-                ttfb_ms=ms,
-                in_tok=int(usage.get("prompt_tokens") or 0),
-                out_tok=int(usage.get("completion_tokens") or 0),
-            ),
-        )
-        if success:
-            try:
-                chat = json.loads(rbody)
-            except Exception:
-                chat = None
-            if not isinstance(chat, dict) or "choices" not in chat:
-                return _error(502, "上游返回了无法解析的响应", anthropic=anthropic)
-            chat["model"] = model
-            try:
-                await _extract_conv_log(cfg, model, key["email"], req, chat, ip)
-            except Exception:
-                pass
-            if anthropic:
                 return Response(
                     content=json.dumps(
-                        convert.chat_to_anthropic(chat), ensure_ascii=False, separators=(",", ":")
+                        convert.chat_to_responses(chat, meta), ensure_ascii=False, separators=(",", ":")
                     ),
                     media_type="application/json",
                 )
-            return Response(
-                content=json.dumps(
-                    convert.chat_to_responses(chat, meta), ensure_ascii=False, separators=(",", ":")
-                ),
-                media_type="application/json",
-            )
-        last = {"status": rstatus, "body": rbody, "error": rerr, "content_type": ctype}
-        last_key = key
-        # 401/403 为账号级鉴权失败：立即返回（账号已被硬封禁，重试只会得到 429 封禁掩码）
-        if rstatus in (401, 403):
-            return _upstream_fail(key, last, cfg, anthropic=anthropic)
-        # 400 且报思考参数不兼容：自动降级（去思考或改用模型默认强度）后重试一次
-        if rstatus == 400 and convert.thinking_unsupported(rbody, rstatus) and not downgraded:
-            downgraded = True
-            tdefs = convert.parse_thinking_defaults(upstreams.upstream_value(key, "thinking_defaults", ""))
-            if convert.downgrade_thinking(chat_req, up_model, tdefs):
-                raw = json.dumps(chat_req, ensure_ascii=False, separators=(",", ":"))
+            last = {"status": rstatus, "body": rbody, "error": rerr, "content_type": ctype}
+            last_key = key
+            # 401/403 为账号级鉴权失败：立即返回（账号已被硬封禁，重试只会得到 429 封禁掩码）
+            if rstatus in (401, 403):
+                return _upstream_fail(key, last, cfg, anthropic=anthropic)
+            # 400 且报思考参数不兼容：自动降级（去思考或改用模型默认强度）后重试一次
+            if rstatus == 400 and convert.thinking_unsupported(rbody, rstatus) and not downgraded:
+                downgraded = True
+                tdefs = convert.parse_thinking_defaults(
+                    upstreams.upstream_value(key, "thinking_defaults", "")
+                )
+                if convert.downgrade_thinking(chat_req, up_model, tdefs):
+                    raw = json.dumps(chat_req, ensure_ascii=False, separators=(",", ":"))
+                    continue
+            # 400 且报 JSON 反序列化/类型错误（字符串数字被上游拒绝）：激进转换后重试一次
+            if rstatus == 400 and convert.is_deserialize_error(rbody, rstatus) and not downgraded:
+                downgraded = True
+                if convert.coerce_all_types(chat_req):
+                    raw = json.dumps(chat_req, ensure_ascii=False, separators=(",", ":"))
+                    continue
+            # 400 且报「不支持的参数」（如 enable_thinking）：移除被点名参数后重试一次
+            if rstatus == 400 and convert.is_unsupported_param_error(rbody, rstatus) and not downgraded:
+                downgraded = True
+                if convert.strip_unsupported_params(chat_req, rbody):
+                    raw = json.dumps(chat_req, ensure_ascii=False, separators=(",", ":"))
+                    continue
+            # 渠道级不可用：快速失败，不浪费重试
+            if convert.is_channel_exhausted(rbody):
+                return _upstream_fail(key, last, cfg, anthropic=anthropic)
+            if not (rstatus in (0, 429) or rstatus >= 500):
+                return _upstream_fail(key, last, cfg, anthropic=anthropic)
+            # 429 吸收：延长重试预算，尽量不把 429 透传给下游
+            if rstatus == 429 and rl_left > 0 and cfg.get("queue_enabled", True):
+                rl_left -= 1
+                max_attempts += 1
+                await asyncio.sleep(_backoff_ms(cfg, attempt, key) / 1000)
                 continue
-        # 400 且报 JSON 反序列化/类型错误（字符串数字被上游拒绝）：激进转换后重试一次
-        if rstatus == 400 and convert.is_deserialize_error(rbody, rstatus) and not downgraded:
-            downgraded = True
-            if convert.coerce_all_types(chat_req):
-                raw = json.dumps(chat_req, ensure_ascii=False, separators=(",", ":"))
-                continue
-        # 400 且报「不支持的参数」（如 enable_thinking）：移除被点名参数后重试一次
-        if rstatus == 400 and convert.is_unsupported_param_error(rbody, rstatus) and not downgraded:
-            downgraded = True
-            if convert.strip_unsupported_params(chat_req, rbody):
-                raw = json.dumps(chat_req, ensure_ascii=False, separators=(",", ":"))
-                continue
-        # 渠道级不可用：快速失败，不浪费重试
-        if convert.is_channel_exhausted(rbody):
-            return _upstream_fail(key, last, cfg, anthropic=anthropic)
-        if not (rstatus in (0, 429) or rstatus >= 500):
-            return _upstream_fail(key, last, cfg, anthropic=anthropic)
-        # 429 吸收：延长重试预算，尽量不把 429 透传给下游
-        if rstatus == 429 and rl_left > 0 and cfg.get("queue_enabled", True):
-            rl_left -= 1
-            max_attempts += 1
             await asyncio.sleep(_backoff_ms(cfg, attempt, key) / 1000)
-            continue
-        await asyncio.sleep(_backoff_ms(cfg, attempt, key) / 1000)
+    finally:
+        # 异常兜底：任何没走到正常释放的路径（非 httpx 异常、序列化失败、
+        # 上游地址非法等）都必须把账号还回去，否则会被永久锁定在这个请求上。
+        k_held = hold["key"]
+        if k_held is not None:
+            hold["key"] = None
+            try:
+                await pool.arelease(
+                    k_held["id"],
+                    True,
+                    500,
+                    "请求处理异常，兜底释放账号",
+                    None,
+                    _release_log(
+                        ep,
+                        model,
+                        500,
+                        int((time.time() - t0) * 1000),
+                        "请求处理异常，兜底释放账号",
+                        attempt,
+                        k_held,
+                        ip,
+                        up_model=up_model,
+                        stream=stream,
+                    ),
+                )
+            except Exception:
+                pass
     return _upstream_fail(last_key, last, cfg, anthropic=anthropic)
 
 

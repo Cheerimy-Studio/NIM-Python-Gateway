@@ -129,6 +129,9 @@ def upstream_snippet(res: dict) -> str:
 
 
 def mask_email(email: str) -> str:
+    # 容忍 None：账号行可能没有邮箱（导入数据不完整），而这里会在释放/记日志的
+    # 路径上被调用 —— 在那里抛异常会把账号释放一起带崩。
+    email = str(email or "")
     at = email.find("@")
     if at < 0:
         return email[:2] + "***"
