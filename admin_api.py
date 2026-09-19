@@ -85,9 +85,12 @@ async def login(request: Request):
     _login_rate.pop(ip, None)
     session = _session_cookie(cfg)
     csrf = _csrf_token(cfg)
+    # https 部署下会话 Cookie 必须带 secure（仅当确为 https 时才设，
+    # 否则反代成 http 的开发/内网部署会无法登录）
+    secure = request.url.scheme == "https"
     resp = JSONResponse({"ok": True, "csrf": csrf})
-    resp.set_cookie("ngw_session", session, httponly=True, samesite="lax")
-    resp.set_cookie(CSRF_COOKIE, csrf, httponly=False, samesite="lax")
+    resp.set_cookie("ngw_session", session, httponly=True, samesite="lax", secure=secure)
+    resp.set_cookie(CSRF_COOKIE, csrf, httponly=False, samesite="lax", secure=secure)
     return resp
 
 

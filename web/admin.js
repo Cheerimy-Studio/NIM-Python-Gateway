@@ -6,6 +6,11 @@ const B = window.NGW.base, CSRF = window.NGW.csrf;
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
+// 渲染「客户端可控」内容（请求/响应原文、模型名等）时必须先转义，否则一段带
+// <script> 的会话文本会在管理员浏览器里执行（存储型 XSS → 偷走会话/CSRF 令牌）。
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+  ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+
 const el = (tag, cls, text) => {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -773,7 +778,7 @@ async function loadPresets() {
     const sel = $('#up-preset');
     sel.innerHTML = '<option value="">— 选择预设 —</option>';
     for (const [id, p] of Object.entries(d.presets || {})) {
-      sel.innerHTML += `<option value="${id}">${p.name}</option>`;
+      sel.innerHTML += `<option value="${esc(id)}">${esc(p.name)}</option>`;
     }
     sel.onchange = () => {
       const p = d.presets[sel.value];
@@ -1079,11 +1084,11 @@ async function loadSessions() {
         <span class="badge text-bg-${s.status >= 400 ? 'danger' : 'success'}">${s.status}</span>
       </div>
       <div class="card-body py-2">
-        <div class="small text-muted mb-1">模型: ${s.model} · 密钥: ${s.key}</div>
+        <div class="small text-muted mb-1">模型: ${esc(s.model)} · 密钥: ${esc(s.key)}</div>
         <details><summary class="small text-primary" style="cursor:pointer">请求</summary>
-          <pre style="font-size:.75em;margin:4px 0">${reqPreview}</pre></details>
+          <pre style="font-size:.75em;margin:4px 0">${esc(reqPreview)}</pre></details>
         <details><summary class="small text-primary" style="cursor:pointer">响应</summary>
-          <pre style="font-size:.75em;margin:4px 0">${respPreview}</pre></details>
+          <pre style="font-size:.75em;margin:4px 0">${esc(respPreview)}</pre></details>
       </div>`;
     box.appendChild(card);
   }

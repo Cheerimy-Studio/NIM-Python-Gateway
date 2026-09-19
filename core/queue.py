@@ -51,8 +51,8 @@ def clear() -> None:
     STORE.update(_fn)
 
 
-def stats() -> dict:
-    """公开队列状态（不含敏感信息）。"""
+def stats(public: bool = False) -> dict:
+    """队列状态。public=True 供 /queue 公开页用：不带来源 IP（隐私）。"""
     db = STORE.load()
     max_wait = _cfg_max_wait()
     cutoff = time.time() - max_wait * 2
@@ -61,14 +61,14 @@ def stats() -> dict:
     for e in sorted(list(db.get("queue") or []), key=lambda e: (e.get("t", 0), e.get("id", ""))):
         if not isinstance(e, dict) or e.get("t", 0) < cutoff:
             continue
-        rows.append(
-            {
-                "wait": max(0, round(now - e["t"], 1)),
-                "ep": e.get("ep", ""),
-                "model": e.get("model", ""),
-                "ip": e.get("ip", "-"),
-            }
-        )
+        row = {
+            "wait": max(0, round(now - e["t"], 1)),
+            "ep": e.get("ep", ""),
+            "model": e.get("model", ""),
+        }
+        if not public:
+            row["ip"] = e.get("ip", "-")  # IP 只给后台，公开页不需要、也不该泄漏
+        rows.append(row)
     return {
         "length": len(rows),
         "max_wait": max_wait,

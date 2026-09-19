@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import random
 import re
@@ -206,9 +207,6 @@ def _token_entry(request: Request, cfg: dict) -> dict | None:
         if given and hmac.compare_digest(str(t.get("t") or ""), given):
             return t
     return None
-
-
-import hmac  # noqa: E402
 
 
 class ModelPolicy:
@@ -2013,7 +2011,7 @@ async def presets_public():
 async def queue_public():
     from core import queue as qm
 
-    return JSONResponse(qm.stats(), headers=_cors())
+    return JSONResponse(qm.stats(public=True), headers=_cors())
 
 
 @app.get("/assets/admin.js")

@@ -33,6 +33,9 @@ td{padding:7px 12px;border-bottom:1px solid #f1f5f9}
   <p class="muted" style="margin-top:12px">当所有账号暂不可用时，请求进入排队等待；队首优先获得下一个可用账号。刷新本页查看排队最新状态。</p>
 </div>
 <script>
+// 排队条目里的模型名来自客户端请求，渲染前必须转义，
+// 否则一条带 <script> 的模型名会在打开本页的任何人浏览器里执行（公开页 XSS）。
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function refresh(){
   try{
     const r = await fetch('/api/queue/public');
@@ -49,7 +52,7 @@ async function refresh(){
     if(!n){ tb.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#94a3b8;padding:20px">队列为空</td></tr>'; return; }
     d.rows.forEach((q,i)=>{
       const cls = q.wait > d.max_wait/2 ? 'y' : 'g';
-      tb.innerHTML += `<tr><td>${i+1}</td><td><span class="dot ${cls}"></span>${q.wait}s</td><td>${q.model||'-'}</td></tr>`;
+      tb.innerHTML += `<tr><td>${i+1}</td><td><span class="dot ${cls}"></span>${esc(q.wait)}s</td><td>${esc(q.model||'-')}</td></tr>`;
     });
   }catch(e){ console.error(e); }
 }
