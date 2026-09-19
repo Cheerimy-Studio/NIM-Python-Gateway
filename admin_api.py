@@ -32,10 +32,22 @@ _login_rate: dict[str, list[float]] = {}
 
 
 def _login_rate_ok(ip: str) -> bool:
+    """登录尝试限流：同一来源 5 分钟内最多 10 次，用于挡口令暴力尝试。
+
+    这里以前只对时间戳做过滤、从不记录本次尝试，于是 len() 恒为 0，限流完全失效
+    （那句 429 成了死代码）；同时每个来源都会在字典里留下一条永不回收的空记录。
+    """
     now = time.time()
     attempts = [t for t in _login_rate.get(ip, []) if now - t < 300]
+    if len(attempts) >= 10:
+        _login_rate[ip] = attempts  # 维持限流状态
+        return False
+    attempts.append(now)
     _login_rate[ip] = attempts
-    return len(attempts) < 10
+    if len(_login_rate) > 1000:  # 顺手回收过期来源，避免字典无限增长
+        for k in [k for k, v in _login_rate.items() if not v or now - v[-1] >= 300]:
+            _login_rate.pop(k, None)
+    return True
 
 
 def _require(request: Request) -> JSONResponse | None:
@@ -69,6 +81,8 @@ async def login(request: Request):
     ok_pass = verify_password(password, str(cfg.get("admin_password_hash") or ""))
     if not (ok_user and ok_pass):
         return JSONResponse({"error": {"message": "账号或密码错误", "type": "auth"}}, status_code=401)
+    # 登录成功即清零：限流是挡暴力尝试的，不该把正常登录也算进去
+    _login_rate.pop(ip, None)
     session = _session_cookie(cfg)
     csrf = _csrf_token(cfg)
     resp = JSONResponse({"ok": True, "csrf": csrf})

@@ -341,7 +341,8 @@ def validate_save(data: dict) -> tuple[dict | None, str]:
             iv = int(v)
             if iv == -1:
                 return -1
-            return min(hi, max(0, iv))
+            # lo 以前是个没人用的参数：下限从未生效（例如 weight 允许存 0）
+            return min(hi, max(lo, iv))
         except (TypeError, ValueError):
             return default
 

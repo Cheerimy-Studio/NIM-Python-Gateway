@@ -100,17 +100,6 @@ async def http_error_handler(request: Request, exc: httpx.HTTPError):
     )
 
 
-# 登录限频：IP → [timestamp, ...]
-_login_rate: dict[str, list[float]] = {}
-
-
-def _login_rate_ok(ip: str) -> bool:
-    now = time.time()
-    attempts = [t for t in _login_rate.get(ip, []) if now - t < 300]
-    _login_rate[ip] = attempts
-    return len(attempts) < 10
-
-
 # ============================================================ 通用
 
 # 进程级共享 HTTP 客户端（连接池复用 TLS 连接，避免每请求新建握手）
@@ -664,8 +653,8 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
     hold: dict = {"key": None}
     up_model = model
     t0 = time.time()
-    same_key_tried: set = set()
-    rl_left = max(1, _cfgint(cfg, "max_retries", 2))  # 429 额外重试预算        # 已做过同号重试的账号 id
+    same_key_tried: set = set()  # 已做过同号重试的账号 id
+    rl_left = max(1, _cfgint(cfg, "max_retries", 2))  # 429 额外重试预算
 
     try:
         while attempt < max_attempts:

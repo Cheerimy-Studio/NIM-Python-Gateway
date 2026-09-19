@@ -806,6 +806,17 @@ try:
         )
     add("20并发x3=60请求", total_ok == 60, "%d/60 %s" % (total_ok, first_bad))
 
+    # 登录限流：以前只过滤时间戳、从不记录本次尝试，len() 恒为 0 → 限流完全失效，
+    # 口令可以无限暴力尝试。这里用错口令连续打满配额，必须被 429 挡住。
+    # 本用例会把这个来源 IP 锁 5 分钟，所以放在最后（成功登录会清零配额，用错口令不会）。
+    lcodes = []
+    for _ in range(12):
+        rr = httpx.post(
+            "http://127.0.0.1:18213/api/login", json={"username": ADMIN_USER, "password": "definitely-wrong"}
+        )
+        lcodes.append(rr.status_code)
+    add("登录尝试限流生效", 401 in lcodes and 429 in lcodes, "末尾状态码=%s" % lcodes[-4:])
+
     print("\n===== RESULTS =====")
     all_ok = True
     for n, ok, d in results:
