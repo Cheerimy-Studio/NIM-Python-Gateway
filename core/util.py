@@ -34,11 +34,45 @@ def estimate_output_tokens(data_bytes: int) -> int:
     return max(0, math.ceil(data_bytes / 3))
 
 
-def parse_model_list(s: str) -> list[str]:
-    parts = re.split(r"[\r\n,;]+", s or "")
+def _split_loose(s: str) -> list[str]:
+    return [p for p in re.split(r"[\r\n,;]+", s or "")]
+
+
+def parse_model_list(s) -> list[str]:
+    """解析渠道可用模型列表，容忍各种粘贴格式：
+
+    - 逗号 / 分号 / 换行分隔：`a, b, c`
+    - 列表字面量（从 Python / JSON 复制来的）：`['a', 'b']`、`["a", "b"]`
+    - 已经是 list / tuple（直接走 API 的情况）
+
+    曾经只按分隔符切分，于是把 `['a']` 整段当成一个模型名存了下来，渠道白名单里
+    就挂着一个永远匹配不上的名字 —— 该渠道对任何真实请求都会被判「渠道模型不匹配」。
+    注意：不能无条件剥方括号，模型名本身可能带 `X[free]` 这类后缀；只在整段看起来
+    就是列表字面量时，才按字面量解析。
+    """
+    if isinstance(s, (list, tuple)):
+        raw = [str(x) for x in s]
+    else:
+        text = str(s or "").strip()
+        raw = None
+        if len(text) >= 2 and text[0] in "[(" and text[-1] in ")]":
+            inner = text[1:-1]
+            try:
+                parsed = json.loads("[" + inner.replace("'", '"') + "]")
+                if isinstance(parsed, list):
+                    raw = [str(x) for x in parsed]
+            except Exception:
+                raw = None
+            if raw is None:
+                raw = _split_loose(inner)
+        if raw is None:
+            raw = _split_loose(text)
     seen: dict[str, None] = {}
-    for p in parts:
-        p = p.strip().strip('"').strip("'").strip()
+    for p in raw:
+        p = p.strip()
+        # 只剥掉成对的引号；方括号保持原样（模型名可能自带 [free] 之类后缀）
+        if len(p) >= 2 and p[0] == p[-1] and p[0] in "\"'":
+            p = p[1:-1].strip()
         if p and len(p) <= 160:
             seen[p] = None
     return list(seen)

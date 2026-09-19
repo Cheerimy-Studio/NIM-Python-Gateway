@@ -356,7 +356,8 @@ def validate_save(data: dict) -> tuple[dict | None, str]:
         "cool_conn_seconds": clamp("cool_conn_seconds", 0, 3600, 0),
         "breaker_threshold": clamp("breaker_threshold", 0, 50, 0),
         "breaker_seconds": clamp("breaker_seconds", 0, 86_400, 0),
-        "models": parse_model_list(str(data.get("models") or ""))[:300],
+        # 不预先 str()：list 入参也能被 parse_model_list 正确识别
+        "models": parse_model_list(data.get("models") or "")[:300],
         "model_map": parse_model_map(data.get("model_map") or {}),
         "hide_errors": clamp("hide_errors", 0, 2, 0),
         "hide_mapped": clamp("hide_mapped", 0, 2, 0),

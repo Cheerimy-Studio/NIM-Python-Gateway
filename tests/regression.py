@@ -304,6 +304,32 @@ try:
             "hide_mapped": 0,
         },
     )
+
+    # 模型清单解析容错：把从 Python/JSON 复制来的 ['a','b'] 粘进输入框，不能整段当成一个
+    # 模型名存下来（否则白名单里挂着一个永远匹配不上的名字，该渠道等于废掉）。
+    # 同时模型名自带 [free] 之类后缀必须原样保留。
+    for raw, want in (
+        ("['mock-model']", ["mock-model"]),
+        ('["mock-model"]', ["mock-model"]),
+        ("mock-model,shadow-model", ["mock-model", "shadow-model"]),
+        ("Suffix-Model[free]", ["Suffix-Model[free]"]),
+    ):
+        a.post(
+            "/api/upstreams",
+            json={
+                "id": uid,
+                "name": "T",
+                "base": "http://127.0.0.1:18212/v1",
+                "enabled": True,
+                "models": raw,
+            },
+        )
+        got = next(x for x in (a.get("/api/upstreams").json().get("rows") or []) if x["id"] == uid)["models"]
+        add("模型清单解析容错", got == want, "%r -> %s" % (raw, got))
+    a.post(
+        "/api/upstreams",
+        json={"id": uid, "name": "T", "base": "http://127.0.0.1:18212/v1", "enabled": True, "models": ""},
+    )
     add("responses", c.post("/v1/responses", json={"model": "mock-model", "input": "hi"}).status_code == 200)
     add(
         "messages",
