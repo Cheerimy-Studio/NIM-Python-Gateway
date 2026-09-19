@@ -464,6 +464,42 @@ async def _extract_conv_log(cfg: dict, model: str, email: str, req: dict, chat: 
     await log_session(cfg, model, email, req_msgs, resp_text, 200, ip)
 
 
+def _conn_reason(e: Exception) -> str:
+    """把连接层异常翻译成人能看懂的原因并附上根因。
+
+    日志里光有「上游返回 HTTP 0」没法定位：可能是 DNS 挂了、出网被拦、TLS 失败，
+    也可能是连接池被泄漏的连接占满。把异常类型、__cause__ 与判断结论一起写进去。
+    """
+    cause = getattr(e, "__cause__", None) or getattr(e, "__context__", None)
+    txt = f"{type(e).__name__}: {e}"
+    if cause is not None:
+        txt += f" | 根因: {type(cause).__name__}: {cause}"
+    low = txt.lower()
+    if any(
+        k in low
+        for k in (
+            "getaddrinfo",
+            "nodename",
+            "name resolution",
+            "name or service not known",
+            "dns",
+            "temporary failure",
+        )
+    ):
+        hint = "（DNS 解析失败：无法解析上游域名）"
+    elif isinstance(e, httpx.PoolTimeout):
+        hint = "（连接池耗尽：上游连接未被释放，检查连接泄漏）"
+    elif any(k in low for k in ("ssl", "certificate", "tls", "handshake")):
+        hint = "（TLS 握手失败：证书/时间/出网被拦）"
+    elif isinstance(e, httpx.ConnectTimeout):
+        hint = "（TCP 连接超时：出网被阻断或上游不可达）"
+    elif isinstance(e, httpx.ReadTimeout):
+        hint = "（读取超时：已连上但上游迟迟不返回）"
+    else:
+        hint = ""
+    return (txt + hint)[:300]
+
+
 def _upstream_fail(key: dict | None, res: dict | None, cfg: dict, anthropic: bool = False) -> JSONResponse:
     status = int((res or {}).get("status") or 0)
     code = status if status >= 400 else 502
@@ -732,7 +768,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
             rstatus = r.status_code
             ctype = r.headers.get("content-type", "")
         except (httpx.HTTPError, OSError) as e:
-            rerr = str(e)
+            rerr = _conn_reason(e)
             rstatus = 0
         if stream and 200 <= rstatus < 400:
             # 流式请求：只读第一个 chunk 判断是否为 SSE 错误事件（错误事件通常很小）。
@@ -776,7 +812,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                         pump=sp,
                     )
                 except (httpx.HTTPError, OSError) as e:
-                    rerr = str(e)
+                    rerr = _conn_reason(e)
                 text = first_chunk.decode("utf-8", "replace")
                 is_sse_error = text.lstrip().startswith(("event: error", 'data: {"error"')) or (
                     '"error"' in text[:500] and ("thinking" in text.lower() or "unsupported" in text.lower())
@@ -823,10 +859,21 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                     )
         rbody = ""
         if r is not None:
-            try:
-                rbody = r.text
-            except Exception:
-                pass
+            if stream:
+                # 流式响应没能交接给透传（空流 / SSE 错误且降级失败等），必须显式关闭：
+                # 否则这条上游连接会一直被占住，反复失败会耗尽共享连接池，
+                # 之后所有上游请求都卡在「等连接」直到超时 —— 日志表现为清一色
+                # 「上游返回 HTTP 0」（10s = pool/connect 超时）。同时这里也不能读
+                # r.text：对流式响应读全文会把整条 SSE 拖进来，甚至挂住。
+                try:
+                    await r.aclose()
+                except Exception:
+                    pass
+            else:
+                try:
+                    rbody = r.text
+                except Exception:
+                    pass
         ms = int((time.time() - t0) * 1000)
         success = 200 <= rstatus < 400
         # 空响应/伪成功保护：上游 200 但 body 为空、或 body 里带 error 字段，
@@ -1554,12 +1601,20 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                         first_chunk=first_chunk,
                         ait=ait,
                     )
-            try:
-                rbody = r.text
-            except Exception:
-                rbody = ""  # 流已部分读取时 r.text 不可用
+            if stream:
+                # 流式响应没能交接给转换透传（空流 / SSE 错误且降级失败等）必须显式关闭，
+                # 否则连接被占住，反复失败会耗尽共享连接池（日志表现为清一色 HTTP 0）。
+                try:
+                    await r.aclose()
+                except Exception:
+                    pass
+            else:
+                try:
+                    rbody = r.text
+                except Exception:
+                    rbody = ""
         except (httpx.HTTPError, OSError) as e:
-            rerr = str(e)
+            rerr = _conn_reason(e)
             rstatus = 0
         ms = int((time.time() - t0) * 1000)
         success = 200 <= rstatus < 400

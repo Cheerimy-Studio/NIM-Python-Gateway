@@ -77,6 +77,12 @@ async def chat(request: Request):
             yield "data: " + json.dumps({"model": m, "choices": [{"delta": {"content": "part"}}]}) + "\\n\\n"
             raise RuntimeError("upstream died mid-stream")
         return StreamingResponse(g6(), media_type="text/event-stream")
+    if m == "emptystream":
+        # 流式响应但没有任何内容：会走「空流保护」，属于未交接给透传的失败路径
+        async def g7():
+            if False:
+                yield b""
+        return StreamingResponse(g7(), media_type="text/event-stream")
     if st:
         async def g():
             for t in ["Hello"," world"]:
@@ -138,6 +144,9 @@ try:
                 "retry_min_wait_ms": 0,
                 "ban_step_seconds": 0,
                 "ban_max_seconds": 0,
+                "daily_request_cap": 0,
+                "daily_token_limit": 0,
+                "hourly_request_limit": 0,
                 "cool_429_seconds": 1,
                 "cool_5xx_seconds": 0,
                 "breaker_enabled": False,
@@ -501,6 +510,29 @@ try:
         "%d 行，%.1fs" % (len(lines), time.time() - t0),
     )
 
+    # 连接泄漏：流式失败路径（空流）曾经不关闭上游响应，连接被一直占住；反复失败会耗尽
+    # 共享连接池（max_connections=100），之后所有上游请求都卡在「等连接」直到超时 ——
+    # 生产日志就表现为清一色「上游返回 HTTP 0」。这里连打 120 次（超过池上限），
+    # 随后普通请求必须仍然可用。
+    n_fail = 0
+    for _ in range(120):
+        rr = c.post(
+            "/v1/chat/completions",
+            json={"model": "emptystream", "stream": True, "messages": [{"role": "user", "content": "hi"}]},
+        )
+        if rr.status_code >= 400:
+            n_fail += 1
+    t0 = time.time()
+    rr = c.post(
+        "/v1/chat/completions",
+        json={"model": "mock-model", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    add(
+        "流式失败不泄漏连接池",
+        rr.status_code == 200,
+        "120 次空流失败（%d）后普通请求 st=%s（%.1fs）" % (n_fail, rr.status_code, time.time() - t0),
+    )
+
     # 可靠性按「渠道+模型」定：同一模型在一个渠道上一直失败、在另一个渠道正常时，
     # 路由必须学会跳过坏渠道，而不是每次都先撞一次 500 再重试。
     a.post(
@@ -543,9 +575,27 @@ try:
         "6/6 成功，坏渠道只被撞 %d 次（撞过即学会跳过）" % fails,
     )
 
-    # 清理
-    a.post("/api/upstreams/delete", json={"id": bad})
-    a.post("/api/upstreams/delete", json={"id": good})
+    # 清理：禁用而非删除 —— 渠道下还有账号时删除接口会拒绝，账号会残留在号池里
+    a.post(
+        "/api/upstreams",
+        json={
+            "id": bad,
+            "name": "BAD",
+            "base": "http://127.0.0.1:18212/fail/v1",
+            "enabled": False,
+            "models": "mx",
+        },
+    )
+    a.post(
+        "/api/upstreams",
+        json={
+            "id": good,
+            "name": "GOOD",
+            "base": "http://127.0.0.1:18212/v1",
+            "enabled": False,
+            "models": "mx",
+        },
+    )
     a.post(
         "/api/upstreams",
         json={"id": uid, "name": "T", "base": "http://127.0.0.1:18212/v1", "enabled": True, "models": ""},
@@ -571,6 +621,8 @@ try:
 
     import asyncio
 
+    first_bad = []
+
     async def w(_):
         async with httpx.AsyncClient(
             base_url="http://127.0.0.1:18213", timeout=60, headers={"Authorization": "Bearer " + toks[0]["t"]}
@@ -583,13 +635,30 @@ try:
                 )
                 if rr.status_code == 200:
                     ok += 1
+                elif len(first_bad) < 2:
+                    first_bad.append("%s %s" % (rr.status_code, rr.text[:150]))
             return ok
 
     async def main():
         return await asyncio.gather(*[w(i) for i in range(20)])
 
     total_ok = sum(asyncio.run(main()))
-    add("20并发x3=60请求", total_ok == 60, "%d/60" % total_ok)
+    if total_ok != 60:
+        kk = a.get("/api/keys").json()["rows"]
+        first_bad.append(
+            " | 账号状态: "
+            + "; ".join(
+                "%s ban=%s daily=%s fails=%s"
+                % (
+                    k["email"][:3],
+                    k.get("ban_reason"),
+                    sum((v or {}).get("requests", 0) for v in (k.get("daily") or {}).values()),
+                    k.get("consecutive_failures"),
+                )
+                for k in kk
+            )
+        )
+    add("20并发x3=60请求", total_ok == 60, "%d/60 %s" % (total_ok, first_bad))
 
     print("\n===== RESULTS =====")
     all_ok = True
