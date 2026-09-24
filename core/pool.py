@@ -120,7 +120,10 @@ def _parse_rows(text: str, loose: bool) -> tuple[list[dict], int]:
         if loose:
             account = _parse_line_loose(line)
         else:
-            cells = [c.strip() for c in re.split(r",+", line) if c.strip()]
+            # 保留中间空列(空密码是合法数据:"email,,apikey"),只去尾部空列
+            cells = [c.strip() for c in re.split(r",+", line)]
+            while cells and not cells[-1]:
+                cells.pop()
             account = _from_cells(cells)
         if account is None:
             invalid += 1
@@ -147,7 +150,13 @@ def _parse_line_loose(line: str) -> dict | None:
         if len(non_empty) >= 2 and "@" in non_empty[0] and "." in non_empty[0].split("@")[-1]:
             email = non_empty[0]
             api_key = non_empty[-1]
-        elif len(non_empty) == 1 and len(non_empty[0]) >= 16:
+        elif (
+            len(non_empty) == 1
+            and len(non_empty[0]) >= 16
+            and "@" not in non_empty[0]
+        ):
+            # 单独成行的长串才可能是 apikey;email 也满足长度条件,必须排除,
+            # 否则会导入一个 email=apikey 的垃圾账号
             api_key = non_empty[0]
     if not api_key or len(api_key) < 8:
         return None
@@ -333,6 +342,7 @@ def _acquire_fn(db: dict, out: dict, est_tokens: int, model: str) -> None:
         "model_hidden": 0,
         "acct_conc": 0,
         "chan_conc": 0,
+        "hourly": 0,
     }
     # 渠道在途总量（进程内计数，release 时递减）
     chan_inflight: dict[str, int] = {}
@@ -426,6 +436,10 @@ def _acquire_fn(db: dict, out: dict, est_tokens: int, model: str) -> None:
         # 滑动窗口 RPM：最近 60 秒内的请求时间戳列表（rpm<=0 表示不限）
         win = [t for t in (db.get("buckets", {}).get(k["id"]) or []) if now_f - t < 60]
         first_seen = float(k.get("first_seen_at") or 0)
+        if not first_seen:
+            # 首次被调度即记录：预热必须覆盖第一个请求，否则新号第一发就吃全额 RPM
+            first_seen = now_f
+            k["first_seen_at"] = now_f
         # 账号预热：新账号逐步提升到全额 RPM
         if rpm > 0:
             # 预热时长：0=关闭（不能用 or 回退，否则 0 配置会被当成未设置）
@@ -455,13 +469,16 @@ def _acquire_fn(db: dict, out: dict, est_tokens: int, model: str) -> None:
             _replace_key(db, k)
             reason["daily"] += 1
             continue
-        if (
-            daily_tok > 0
-            and d.get("tokens", 0) >= daily_tok
-            and hourly > 0
-            and (k.get("hour_requests") or {}).get(hour, 0) >= hourly
-        ):
+        # 日 token 限额是独立闸门：不能挂在小时请求限额上，
+        # 否则 hourly=-1(不限)时日 token 限额会静默失效
+        if daily_tok > 0 and d.get("tokens", 0) >= daily_tok:
+            _apply_ban(k, int(_tomorrow(now)), "daily_token_cap")
+            _replace_key(db, k)
             reason["daily"] += 1
+            continue
+        # 小时请求限额：独立判断（此前被绑在日 token 条件里，从未单独生效）
+        if hourly > 0 and (k.get("hour_requests") or {}).get(hour, 0) >= hourly:
+            reason["hourly"] += 1
             continue
 
         weight = 10
@@ -478,8 +495,6 @@ def _acquire_fn(db: dict, out: dict, est_tokens: int, model: str) -> None:
             weight = max(1, int(up.get("weight") or 10))
             pools.setdefault(uid, {"w": weight, "items": []})
             pools[uid]["items"].append(k)
-            if not first_seen:
-                k["first_seen_at"] = now_f
 
     out["reason"] = _reason_text(reason, total)
     out["total"] = total
@@ -560,6 +575,7 @@ def _reason_text(r: dict, total: int) -> str:
         ("RPM", "rpm"),
         ("TPM", "tpm"),
         ("日限", "daily"),
+        ("小时限", "hourly"),
         ("上游停用", "pool"),
         ("上游RPM", "pool_rpm"),
         ("上游日限", "pool_daily"),
@@ -743,6 +759,9 @@ def release(
                         bs = eff("breaker_seconds", _cfgint(cfg, "breaker_seconds", 60))
                         if th > 0 and bs > 0 and br["fails"] >= th:
                             br["opened_until"] = now + bs
+                            # 触发后清零：否则 fails 永久 >= 阈值，之后任何一次失败都会
+                            # 立即再熔断，阈值形同虚设（退化为「一次失败 = 熔断 N 秒」）
+                            br["fails"] = 0
                 break
 
         # 每日统计（保留 14 天）—— 仅统计实际到达上游的请求
@@ -840,6 +859,9 @@ def set_enabled(key_id: str, enabled: bool) -> bool:
                     k["hard_fail_count"] = 0
                     k["banned_until"] = 0
                     k["ban_reason"] = ""
+                    # 冷却与 429 退避也要清：否则「重新启用」后账号仍在冷却/高阶退避里
+                    k["cooldown_until"] = 0
+                    k["rl_streak"] = 0
                 else:
                     k["status"] = "manual_disabled"
                 k["updated_at"] = int(time.time())
@@ -881,12 +903,14 @@ def reset_stats(key_id: str) -> bool:
                     "hard_fail_count",
                     "prompt_tokens",
                     "completion_tokens",
+                    "rl_streak",
                 ):
                     k[f] = 0
                 k["last_error"] = ""
                 k["last_error_at"] = 0
                 k["banned_until"] = 0
                 k["ban_reason"] = ""
+                k["cooldown_until"] = 0
                 k["daily"] = {}
                 k["recent"] = []
                 if k.get("enabled"):
@@ -919,12 +943,14 @@ def reset_all_stats() -> None:
                 "hard_fail_count",
                 "prompt_tokens",
                 "completion_tokens",
+                "rl_streak",
             ):
                 k[f] = 0
             k["last_error"] = ""
             k["last_error_at"] = 0
             k["banned_until"] = 0
             k["ban_reason"] = ""
+            k["cooldown_until"] = 0
             k["daily"] = {}
             k["recent"] = []
             if k.get("enabled"):

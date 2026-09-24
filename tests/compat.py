@@ -350,6 +350,12 @@ try:
     bad2 = []
     for name, path, payload, want in cases:
         r = a.post(path, json=payload)
+        if name == "password 修改" and r.status_code == 200:
+            # 改密会轮换 session_secret(安全设计:吊销改密前的所有会话),
+            # 需要重新登录(会话与 CSRF 都随之轮换)后才能继续验证后续写操作
+            rl = a.post("/api/login", json={"username": ADMIN_USER, "password": ADMIN_PW})
+            if rl.status_code == 200:
+                a.headers["X-CSRF"] = rl.json()["csrf"]
         if r.status_code != want:
             bad2.append("%s: 期望%s 实际%s %s" % (name, want, r.status_code, r.text[:100]))
     add("写操作接口行为正确", not bad2, "; ".join(bad2) if bad2 else "%d 项全部符合预期" % len(cases))

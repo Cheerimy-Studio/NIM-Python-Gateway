@@ -425,18 +425,22 @@ def save(data: dict) -> tuple[dict | None, str]:
 
 
 def delete(uid: str) -> tuple[bool, str]:
-    db = STORE.load()
-    found = any(u["id"] == uid for u in db.get("upstreams", []))
-    if not found:
-        return False, "上游不存在"
-    used = sum(1 for k in db.get("keys", []) if k.get("upstream_id") == uid)
-    if used:
-        return False, f"该上游仍有 {used} 个账号，请先删除或转移"
-    if len(db.get("upstreams", [])) <= 1:
-        return False, "至少保留一个上游"
+    """检查与删除必须在同一把锁里：否则「计数后、删除前」若有账号被
+    移入/导入该渠道，会留下悬挂 upstream_id 的账号（静默走全局配置被调度）。"""
+    state = {"found": False, "used": 0, "last": False}
 
     def _fn(db: dict):
-        db["upstreams"] = [u for u in db["upstreams"] if u["id"] != uid]
+        ups = db.get("upstreams", [])
+        state["found"] = any(u["id"] == uid for u in ups)
+        if not state["found"]:
+            return
+        state["used"] = sum(1 for k in db.get("keys", []) if k.get("upstream_id") == uid)
+        if state["used"]:
+            return
+        if len(ups) <= 1:
+            state["last"] = True
+            return
+        db["upstreams"] = [u for u in ups if u["id"] != uid]
         db["pool_buckets"].pop(uid, None)
         db["pool_daily"].pop(uid, None)
         # 连同该渠道的「渠道+模型」可靠性记录（键为 uid\x00model）一起清掉
@@ -445,4 +449,10 @@ def delete(uid: str) -> tuple[bool, str]:
             recent.pop(key, None)
 
     STORE.update(_fn)
+    if not state["found"]:
+        return False, "上游不存在"
+    if state["used"]:
+        return False, f"该上游仍有 {state['used']} 个账号，请先删除或转移"
+    if state["last"]:
+        return False, "至少保留一个上游"
     return True, ""

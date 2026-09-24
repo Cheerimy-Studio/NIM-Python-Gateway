@@ -26,7 +26,11 @@ def estimate_request_tokens(body: str, req: dict | None = None) -> int:
         except Exception:
             req = None
     if isinstance(req, dict):
-        max_tokens = int(req.get("max_tokens") or req.get("max_output_tokens") or 300)
+        # 客户端可能把 max_tokens 传成非法值("abc"):估算函数不该因此 500
+        try:
+            max_tokens = int(req.get("max_tokens") or req.get("max_output_tokens") or 300)
+        except (TypeError, ValueError):
+            max_tokens = 300
     return max(1, math.ceil(len(body) / 3) + max(1, max_tokens))
 
 

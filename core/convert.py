@@ -36,15 +36,67 @@ def flatten_content(content: Any) -> str:
     return "".join(parts)
 
 
+def _image_part(c: dict) -> dict | None:
+    """把 Anthropic/Responses 的图片块统一成 OpenAI 的 image_url 内容块。
+
+    Anthropic: {"type":"image","source":{"type":"base64","media_type":...,"data":...}}
+    Responses : {"type":"input_image","image_url":"data:...|https://..."}
+    返回 None 表示无法识别/无图片数据。
+    """
+    t = str(c.get("type") or "")
+    if t == "image":
+        src = c.get("source")
+        if isinstance(src, dict) and src.get("type") == "base64" and src.get("data"):
+            media = str(src.get("media_type") or "image/png")
+            return {"type": "image_url", "image_url": {"url": f"data:{media};base64,{src['data']}"}}
+        if isinstance(src, dict) and src.get("type") == "url" and src.get("url"):
+            return {"type": "image_url", "image_url": {"url": str(src["url"])}}
+    elif t == "input_image":
+        url = c.get("image_url") or c.get("url")
+        if url:
+            return {"type": "image_url", "image_url": {"url": str(url)}}
+    return None
+
+
+def _content_with_images(blocks: Any) -> list | None:
+    """块列表 → OpenAI 多模态 content;无图片时返回 None(调用方退回纯文本)。"""
+    if not isinstance(blocks, list):
+        return None
+    parts: list = []
+    has_image = False
+    for b in blocks:
+        if isinstance(b, str):
+            if b:
+                parts.append({"type": "text", "text": b})
+            continue
+        if not isinstance(b, dict):
+            continue
+        t = str(b.get("type") or "")
+        if t in ("image", "input_image"):
+            img = _image_part(b)
+            if img:
+                parts.append(img)
+                has_image = True
+        elif t in ("text", "input_text", "output_text"):
+            txt = b.get("text")
+            if txt:
+                parts.append({"type": "text", "text": str(txt)})
+    if not has_image:
+        return None
+    return parts
+
+
 def map_usage(u: dict | None) -> dict:
-    tin = (u or {}).get("prompt_tokens")
-    tout = (u or {}).get("completion_tokens")
+    u = u or {}
+    # 强制 int:None 会挂 OpenAI SDK 的 pydantic 校验(input_tokens: int)
+    tin = int(u.get("prompt_tokens") or 0)
+    tout = int(u.get("completion_tokens") or 0)
     return {
         "input_tokens": tin,
         "input_tokens_details": {"cached_tokens": 0},
         "output_tokens": tout,
         "output_tokens_details": {"reasoning_tokens": 0},
-        "total_tokens": (u or {}).get("total_tokens") or (((tin or 0) + (tout or 0)) or None),
+        "total_tokens": int(u.get("total_tokens") or 0) or (tin + tout),
     }
 
 
@@ -72,7 +124,13 @@ def responses_to_chat(req: dict) -> dict:
                 role = str(item.get("role") or "user")
                 if role == "developer":
                     role = "system"
-                messages.append({"role": role, "content": flatten_content(item.get("content"))})
+                # 含图片的块转成 OpenAI 多模态数组(无图片则退回纯文本,
+                # 保持对老上游的最大兼容)
+                multi = _content_with_images(item.get("content"))
+                if multi is not None:
+                    messages.append({"role": role, "content": multi})
+                else:
+                    messages.append({"role": role, "content": flatten_content(item.get("content"))})
             elif typ == "function_call":
                 messages.append(
                     {
@@ -226,6 +284,8 @@ def anthropic_to_chat(req: dict) -> dict:
         if isinstance(content, str):
             messages.append({"role": role, "content": content})
             continue
+        # 含图片的块转成 OpenAI 多模态数组(tool_use/tool_result 不受影响)
+        multi = _content_with_images(content)
         text_parts: list[str] = []
         tool_calls: list[dict] = []
         tool_results: list[dict] = []
@@ -261,11 +321,14 @@ def anthropic_to_chat(req: dict) -> dict:
             messages.append(
                 {"role": "assistant", "content": "".join(text_parts) or None, "tool_calls": tool_calls}
             )
+        elif multi is not None:
+            # 带图片的消息:多模态数组(tool_result 里也带图时走 tool 内容透传)
+            messages.append({"role": role, "content": multi})
         elif text_parts:
             messages.append({"role": role, "content": "".join(text_parts)})
         for tr in tool_results:
             messages.append({"role": "tool", "tool_call_id": tr["tool_call_id"], "content": tr["content"]})
-        if not text_parts and not tool_calls and not tool_results:
+        if not text_parts and not multi and not tool_calls and not tool_results:
             messages.append({"role": role, "content": ""})
     if not has_messages:
         raise ValueError("messages 不能为空")
@@ -275,11 +338,23 @@ def anthropic_to_chat(req: dict) -> dict:
         "messages": messages,
         "max_tokens": max(1, int(req.get("max_tokens") or 4096)),
     }
-    for k in ("temperature", "top_p", "stream"):
+    for k in ("temperature", "top_p", "top_k", "stream"):
         if k in req:
             chat[k] = req[k]
     if req.get("stop_sequences"):
         chat["stop"] = req["stop_sequences"]
+    # Anthropic thinking 参数(budget_tokens)映射为 reasoning_effort:
+    # 上游不支持时网关的思考降级逻辑会自动兜底
+    th = req.get("thinking")
+    if isinstance(th, dict) and str(th.get("type") or "") == "enabled":
+        try:
+            budget = int(th.get("budget_tokens") or 0)
+        except (TypeError, ValueError):
+            budget = 0
+        if budget > 0:
+            chat["reasoning_effort"] = (
+                "high" if budget >= 8192 else ("medium" if budget >= 2048 else "low")
+            )
     tools = []
     for t in req.get("tools") or []:
         if isinstance(t, dict) and t.get("name"):

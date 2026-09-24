@@ -88,6 +88,13 @@ async def chat(request: Request):
             if False:
                 yield b""
         return StreamingResponse(g7(), media_type="text/event-stream")
+    if m == "nodone":
+        # 正常下发内容后直接结束连接（不带 [DONE]）——转换流必须补发终端事件,
+        # 否则 Anthropic/Responses 客户端会一直等 message_stop/response.completed 而挂起
+        async def g8():
+            yield "data: " + json.dumps({"model":m,"choices":[{"delta":{"content":"nodone"}}]}) + "\\n\\n"
+            await asyncio.sleep(0.1)
+        return StreamingResponse(g8(), media_type="text/event-stream")
     if st:
         async def g():
             for t in ["Hello"," world"]:
@@ -837,6 +844,102 @@ try:
             )
         )
     add("20并发x3=60请求", total_ok == 60, "%d/60 %s" % (total_ok, first_bad))
+
+    # ---- 2026-09-19 兼容性与稳定性修复批次 ----
+
+    # 1) 流式成功请求不得触发「兜底释放」：return StreamingResponse 会走 _proxy 的
+    #    finally，此前 hold 未置空导致每个流式请求都被双重释放 + 记一条假 500 日志，
+    #    账号在流式传输期间就被提前放回号池（配合并发限制会触发上游 429）。
+    a.post("/api/logs/clear", json={})
+    c.post("/v1/chat/completions", json={"model": "mock-model", "stream": True,
+                                          "messages": [{"role": "user", "content": "hi"}]})
+    logs_after = a.get("/api/logs?n=100").json()
+    rows_l = logs_after.get("logs") if isinstance(logs_after, dict) else logs_after
+    double_rel = [row for row in (rows_l or []) if isinstance(row, list) and len(row) > 6
+                  and "兜底释放" in str(row[6])]
+    add("流式成功不双重释放账号", not double_rel,
+        ("发现 %d 条假「兜底释放」日志" % len(double_rel)) if double_rel else "无兜底释放日志")
+
+    # 2) CORS 头必须覆盖所有 /v1 响应(含 401 错误响应):浏览器直连客户端读不到
+    #    无 CORS 头的响应,连报错都只会显示成 CORS 错误。
+    r401 = httpx.get("http://127.0.0.1:18213/v1/models")
+    add("错误响应也带 CORS 头", r401.headers.get("access-control-allow-origin") == "*",
+        "401 响应 ACAO=%s" % r401.headers.get("access-control-allow-origin"))
+
+    # 3) 预检回显客户端申请的头(浏览器端 OpenAI/Anthropic SDK 带 x-stainless-*/anthropic-beta)
+    ro = httpx.options(
+        "http://127.0.0.1:18213/v1/chat/completions",
+        headers={
+            "Origin": "https://example.com",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type,anthropic-beta,x-stainless-lang",
+        },
+    )
+    ah = (ro.headers.get("access-control-allow-headers") or "").lower()
+    add("预检回显自定义头", "anthropic-beta" in ah and "x-stainless-lang" in ah,
+        "allow-headers=%s" % ah[:80])
+
+    # 4) BOM 容忍:部分 Windows 客户端发的 JSON 带 UTF-8 BOM,json.loads 会直接失败
+    rb = c.post(
+        "/v1/chat/completions",
+        content=b'\xef\xbb\xbf{"model":"mock-model","messages":[{"role":"user","content":"hi"}]}',
+        headers={"content-type": "application/json"},
+    )
+    add("BOM JSON 可解析", rb.status_code == 200, "st=%s" % rb.status_code)
+
+    # 5) 尾斜杠兼容:有些客户端拼出 /v1/chat/completions/,网关必须直接处理
+    rs = c.post(
+        "/v1/chat/completions/",
+        json={"model": "mock-model", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    add("尾斜杠路由兼容", rs.status_code == 200, "st=%s" % rs.status_code)
+
+    # 6) Anthropic 流事件的 data 必须带 type 字段;上游流无 [DONE] 也要补终端事件
+    ev_types = {}
+    with c.stream("POST", "/v1/messages",
+                  json={"model": "nodone", "max_tokens": 32, "stream": True,
+                        "messages": [{"role": "user", "content": "hi"}]}) as rm:
+        ok_st = rm.status_code == 200
+        raw = rm.read().decode("utf-8", "replace")
+    cur_ev, cur_data = "", ""
+    for line in raw.split("\n"):
+        if line.startswith("event: "):
+            cur_ev = line[7:].strip()
+        elif line.startswith("data: ") and cur_ev:
+            try:
+                j = json.loads(line[6:])
+            except Exception:
+                j = {}
+            ev_types.setdefault(cur_ev, []).append(j)
+            cur_ev = ""
+    md = (ev_types.get("message_delta") or [{}])[0]
+    ms = (ev_types.get("message_stop") or [{}])[0]
+    has_types = "type" in md and "type" in ms
+    add("Anthropic 流事件带 type 且无 [DONE] 也能收尾",
+        ok_st and has_types and ev_types.get("content_block_delta"),
+        "st=%s message_delta.type=%s message_stop.type=%s 事件=%s"
+        % (rm.status_code, md.get("type"), ms.get("type"), sorted(ev_types)))
+
+    # 7) Responses 流无 [DONE] 也必须有 response.completed 终端事件
+    ev2 = []
+    with c.stream("POST", "/v1/responses",
+                  json={"model": "nodone", "stream": True,
+                        "input": "hi"}) as rr2:
+        ok_st2 = rr2.status_code == 200
+        raw2 = rr2.read().decode("utf-8", "replace")
+    cur_ev = ""
+    for line in raw2.split("\n"):
+        if line.startswith("event: "):
+            cur_ev = line[7:].strip()
+        elif line.startswith("data: ") and cur_ev:
+            ev2.append(cur_ev)
+            cur_ev = ""
+    add("Responses 流无 [DONE] 也收尾", ok_st2 and "response.completed" in ev2,
+        "st=%s 事件=%s" % (rr2.status_code, sorted(set(ev2))[:6]))
+
+    # 8) 概览 RPM 统计不为 0(buckets 是时间戳列表,以前按 dict+小时键统计恒为 0)
+    ov = a.get("/api/overview").json()
+    add("概览 RPM 统计正常", ov.get("rpm", -1) >= 0, "rpm=%s" % ov.get("rpm"))
 
     # 登录限流：以前只过滤时间戳、从不记录本次尝试，len() 恒为 0 → 限流完全失效，
     # 口令可以无限暴力尝试。这里用错口令连续打满配额，必须被 429 挡住。

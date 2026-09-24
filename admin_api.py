@@ -113,12 +113,13 @@ async def overview(request: Request):
     db = STORE.load()
     cfg = db["config"]
     now = int(time.time())
-    minute = time.strftime("%Y%m%d%H", time.gmtime(now))
     day = time.strftime("%Y-%m-%d", time.localtime(now))
     counts = {"total": 0, "enabled": 0, "banned": 0, "invalid": 0, "manual_disabled": 0}
     daily_req = daily_tok = 0
     risky = []
-    for k in db["keys"]:
+    # 快照遍历：executor 线程可能在遍历中改 dict/list(新增账号/写桶)，
+    # 直接遍历共享结构会抛 RuntimeError: dictionary changed size during iteration
+    for k in list(db["keys"]):
         counts["total"] += 1
         if k.get("enabled"):
             counts["enabled"] += 1
@@ -144,7 +145,12 @@ async def overview(request: Request):
                 }
             )
     risky.sort(key=lambda x: (x["consecutive"], x["fail_ratio"]), reverse=True)
-    rpm = sum((b.get(minute) or 0) for b in db.get("buckets", {}).values() if isinstance(b, dict))
+    # buckets[kid] 是「最近 60s 请求时间戳列表」（见 pool.acquire），不是 dict。
+    # 以前按 dict+小时键去 get,永远得到 0。
+    rpm = 0
+    for b in list((db.get("buckets") or {}).values()):
+        if isinstance(b, list):
+            rpm += sum(1 for t in b if now - t < 60)
     today = db["stats"].get(day) or {"total": 0, "success": 0, "fail": 0, "models": {}}
     models = sorted(today["models"].items(), key=lambda x: -x[1])[:10]
     recent_errors = [r for r in db.get("logs", []) if (r[4] if len(r) > 4 else 0) >= 400][:8]
@@ -153,7 +159,7 @@ async def overview(request: Request):
         "rpm": rpm,
         "rpm_limit_total": (
             -1
-            if int(cfg.get("rate_limit_per_minute") or 0) == -1
+            if int(cfg.get("rate_limit_per_minute") or 0) <= 0
             else counts["enabled"] * max(1, int(cfg.get("rate_limit_per_minute") or 20))
         ),
         "daily": {"requests": daily_req, "tokens": daily_tok},
@@ -185,14 +191,16 @@ async def keys(request: Request):
 
     q = unquote(str(request.query_params.get("q") or "")).strip().lower()
     status = request.query_params.get("status") or "all"
-    page = max(1, int(request.query_params.get("page") or 1))
+    try:
+        page = max(1, int(request.query_params.get("page") or 1))
+    except (TypeError, ValueError):
+        page = 1
     per = 20
-    minute = time.strftime("%Y%m%d%H", time.gmtime())
     now = int(time.time())
     day = time.strftime("%Y-%m-%d", time.localtime(now))
-    up_names = {u["id"]: u["name"] for u in db.get("upstreams", [])}
+    up_names = {u["id"]: u["name"] for u in list(db.get("upstreams", []))}
     rows = []
-    for k in reversed(db["keys"]):
+    for k in reversed(list(db["keys"])):
         if q and q not in k["email"].lower() and q not in k["apikey"].lower():
             continue
         enabled = bool(k.get("enabled"))
@@ -227,7 +235,7 @@ async def keydetail(request: Request):
 
     kid = request.query_params.get("id") or ""
     db = STORE.load()
-    for k in db["keys"]:
+    for k in list(db["keys"]):
         if k["id"] == kid:
             now = int(time.time())
             day = time.strftime("%Y-%m-%d", time.localtime(now))
@@ -235,7 +243,7 @@ async def keydetail(request: Request):
             k["rpm_used"] = len([t for t in (db.get("buckets", {}).get(kid) or []) if now - t < 60])
             k["today"] = (k.get("daily") or {}).get(day) or {"requests": 0, "tokens": 0}
             k["rate_limit"] = int(db["config"]["rate_limit_per_minute"])
-            for u in db.get("upstreams", []):
+            for u in list(db.get("upstreams", [])):
                 if u["id"] == k.get("upstream_id"):
                     k["upstream_name"] = u["name"]
             return {"key": k, "recent": (k.get("recent") or [])[:10]}
@@ -285,7 +293,7 @@ async def keys_export(request: Request):
         return bad
     db = STORE.load()
     lines = ["email,password,apikey"]
-    for k in db["keys"]:
+    for k in list(db["keys"]):
         lines.append(
             ",".join([_csv_escape(k["email"]), _csv_escape(k["password"]), _csv_escape(k["apikey"])])
         )
@@ -313,7 +321,12 @@ async def keys_op(request: Request):
     kid = str(body.get("id") or "")
     try:
         if op == "test":
-            return {"ok": True, "test": pool.test_key(kid)}
+            # test_key 内部是同步 httpx 调用(最长 20s),直接在 async 路由里跑
+            # 会冻结整个事件循环——期间所有代理/流式请求全部停摆
+            import asyncio
+
+            result = await asyncio.get_event_loop().run_in_executor(None, pool.test_key, kid)
+            return {"ok": True, "test": result}
         fn = {
             "enable": lambda: pool.set_enabled(kid, True),
             "disable": lambda: pool.set_enabled(kid, False),
@@ -338,10 +351,14 @@ async def keys_batch(request: Request):
     if not ids:
         return JSONResponse({"error": {"message": "未选择账号"}}, status_code=400)
     if op == "test":
+        # 批量测试同样走 executor:20 个账号串行同步测试最坏会阻塞事件循环 ~400 秒
+        import asyncio
+
+        loop = asyncio.get_event_loop()
         results = {}
         for i in ids[:20]:
             try:
-                results[i] = pool.test_key(i)
+                results[i] = await loop.run_in_executor(None, pool.test_key, i)
             except Exception as e:
                 results[i] = {"ok": False, "error": str(e)}
         return {"ok": True, "results": results}
@@ -413,7 +430,9 @@ async def queue_clear(request: Request):
 
 def _upstream_row(db: dict, u: dict) -> dict:
     now = int(time.time())
-    minute = time.strftime("%Y%m%d%H", time.gmtime(now))
+    # pool_buckets 的键是分钟精度 %Y%m%d%H%M(见 pool.acquire),
+    # 以前这里按小时精度去查,永远 get 不到 → minute_used 恒为 0
+    minute = time.strftime("%Y%m%d%H%M", time.gmtime(now))
     day = time.strftime("%Y-%m-%d", time.localtime(now))
     keys = [k for k in db["keys"] if k.get("upstream_id") == u["id"]]
     today_req = sum(int(((k.get("daily") or {}).get(day) or {}).get("requests") or 0) for k in keys)
@@ -631,9 +650,14 @@ async def password_change(request: Request):
         return JSONResponse({"error": {"message": "新密码至少 6 位"}}, status_code=400)
 
     def _fn(db: dict):
+        import os
+
         from core.store import _hash_password
 
         db["config"]["admin_password_hash"] = _hash_password(new)
+        # 轮换会话密钥：让改密前的所有登录会话(含已泄漏的 cookie)全部失效。
+        # 会话凭证是 HMAC(secret) 的静态值,secret 不变则旧 cookie 永远有效。
+        db["config"]["session_secret"] = os.urandom(24).hex()
 
     await STORE.aupdate(_fn)
     STORE.flush()
@@ -696,6 +720,9 @@ async def config_import(request: Request):
         body = await request.json()
     except Exception:
         return JSONResponse({"error": {"message": "配置文件不是合法 JSON"}}, status_code=400)
+    # 顶层不是 dict(数组/字符串等)时 body.get 会直接 500
+    if not isinstance(body, dict):
+        return JSONResponse({"error": {"message": "配置文件格式错误：顶层必须是对象"}}, status_code=400)
     incoming = body.get("config") if isinstance(body.get("config"), dict) else body
     applied = 0
 

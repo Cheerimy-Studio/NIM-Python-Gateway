@@ -13,7 +13,12 @@ QUEUE_MAX_ENTRIES = 500
 
 
 def _cfg_max_wait() -> int:
-    return max(5, int(STORE.load()["config"].get("queue_max_wait") or 30))
+    # 显式 0 = 关闭排队;fallback 与 DEFAULT_CONFIG 一致(15)
+    try:
+        v = int(STORE.load()["config"].get("queue_max_wait"))
+    except (TypeError, ValueError):
+        v = 15
+    return 0 if v == 0 else max(5, v)
 
 
 def add(ep: str, model: str, ip: str) -> str:

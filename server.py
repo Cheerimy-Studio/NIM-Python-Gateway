@@ -97,7 +97,7 @@ async def global_error_handler(request: Request, exc: Exception):
 @app.exception_handler(httpx.HTTPError)
 async def http_error_handler(request: Request, exc: httpx.HTTPError):
     return JSONResponse(
-        {"error": {"message": f"上游连接错误：{exc}", "type": "upstream_error"}},
+        {"error": {"message": f"上游连接错误：{exc}", "type": "server_error"}},
         status_code=502,
         headers=_cors(),
     )
@@ -176,7 +176,15 @@ def _cors() -> dict:
     return {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Authorization, Content-Type, X-API-Key, X-Request-Id, anthropic-version",
+        # 覆盖 OpenAI/Anthropic SDK 的浏览器端头(x-stainless-*/anthropic-beta 等):
+        # 预检对这些头做精确匹配,缺一个整个请求都会被浏览器拦下
+        "Access-Control-Allow-Headers": (
+            "Authorization, Content-Type, X-API-Key, X-Request-Id, anthropic-version, "
+            "anthropic-beta, anthropic-dangerous-direct-browser-access, x-stainless-lang, "
+            "x-stainless-package-version, x-stainless-os, x-stainless-arch, x-stainless-runtime, "
+            "x-stainless-runtime-version, x-stainless-retry-count, x-stainless-timeout, "
+            "x-requested-with"
+        ),
         "Access-Control-Max-Age": "86400",
         "Cache-Control": "no-store",
     }
@@ -248,10 +256,28 @@ def _error(
             "400": "invalid_request_error",
             "401": "authentication_error",
             "429": "rate_limit_error",
+            "5xx": "api_error",
         }.get(str(status), "api_error")
-        return JSONResponse({"type": "error", "error": {"type": t, "message": message}}, status_code=status)
+        if status >= 500:
+            t = "api_error"
+        return JSONResponse(
+            {"type": "error", "error": {"type": t, "message": message}},
+            status_code=status,
+            headers=_cors(),
+        )
+    # OpenAI 客户端按 type 分支处理:429 必须是 rate_limit_error,
+    # 5xx 用 server_error,否则 SDK 可能按「参数错误」而非「稍后重试」处理
+    if type_ == "invalid_request_error":
+        if status == 429:
+            type_ = "rate_limit_error"
+        elif status == 502 or status == 503:
+            type_ = "server_error"
+        elif status >= 500:
+            type_ = "server_error"
     return JSONResponse(
-        {"error": {"message": message, "type": type_, "param": None, "code": code}}, status_code=status
+        {"error": {"message": message, "type": type_, "param": None, "code": code}},
+        status_code=status,
+        headers=_cors(),
     )
 
 
@@ -528,7 +554,9 @@ def _upstream_fail(key: dict | None, res: dict | None, cfg: dict, anthropic: boo
     if not hide:
         body = str((res or {}).get("body") or "").strip()
         if status >= 400 and body:
-            return Response(content=body, status_code=status, media_type="application/json")
+            return Response(
+                content=body, status_code=status, media_type="application/json", headers=_cors()
+            )
         msg = str((res or {}).get("error") or "") or "上游请求失败"
         return _error(code, msg, "upstream_error", anthropic=anthropic)
     # rstatus=0（连接层异常）以前统一落到「渠道暂不可用」，看不出是超时还是连不上。
@@ -549,18 +577,26 @@ def _upstream_fail(key: dict | None, res: dict | None, cfg: dict, anthropic: boo
 
 
 @app.options("/v1/{rest:path}")
-async def v1_options(rest: str) -> Response:
-    return Response(status_code=204, headers=_cors())
+async def v1_options(request: Request, rest: str) -> Response:
+    h = _cors()
+    # 预检对 Allow-Headers 做精确匹配:直接回显浏览器申请的头集合,兜住所有客户端
+    req_h = request.headers.get("access-control-request-headers")
+    if req_h:
+        h["Access-Control-Allow-Headers"] = req_h
+    return Response(status_code=204, headers=h)
 
 
 @app.get("/v1/models")
+@app.get("/v1/models/")
 async def v1_models(request: Request):
     cfg = cfg_all()
     entry = _token_entry(request, cfg)
     if _has_auth(cfg) and entry is None:
         return _error(401, "访问令牌无效", "invalid_request_error", "invalid_api_key")
     out = [
-        {"id": m, "object": "model", "created": 0, "owned_by": "gateway"}
+        # permission 字段:旧版 OpenAI 客户端(以及部分严格 SDK)会读取它,
+        # 缺失时把模型列表判为不合法
+        {"id": m, "object": "model", "created": 0, "owned_by": "gateway", "permission": []}
         for m in gateway_model_ids()
         if ModelPolicy.allowed(m, entry, cfg)
     ]
@@ -631,7 +667,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
         return _error(
             401, "访问令牌无效。请在后台「系统设置」中配置访问令牌，并以 Authorization: Bearer <令牌> 调用。"
         )
-    body_text = (await request.body()).decode("utf-8", "replace")
+    body_text = (await request.body()).decode("utf-8", "replace").lstrip("\ufeff")
     if len(body_text) > MAX_BODY:
         return _error(413, "请求体过大，上限 20MB")
     try:
@@ -775,6 +811,9 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                         except asyncio.TimeoutError:
                             waited += 0.5
                     if r is None:
+                        # 释放责任移交兜底流生成器：return 会触发本函数 finally，
+                        # 不置空会被兜底逻辑再释放一次（双重释放 + 假 500 日志）
+                        hold["key"] = None
                         return _slow_stream_response(
                             send_task,
                             client,
@@ -817,6 +856,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                     except asyncio.TimeoutError:
                         # 上游迟迟不吐数据：已无法再改状态码，转为「带心跳的流式透传」，
                         # 让连接保活到上游真正开始输出为止。
+                        hold["key"] = None  # 释放责任移交透传生成器（否则 finally 兜底双释放）
                         return _proxy_stream(
                             client,
                             r,
@@ -866,6 +906,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                         rerr = "上游返回空流"
                         rbody = ""
                     else:
+                        hold["key"] = None  # 释放责任移交透传生成器（否则 finally 兜底双释放）
                         return _proxy_stream(
                             client,
                             r,
@@ -884,7 +925,6 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                             request=request,
                             pump=sp,
                         )
-            rbody = ""
             if r is not None:
                 if stream:
                     # 流式响应没能交接给透传（空流 / SSE 错误且降级失败等），必须显式关闭：
@@ -892,6 +932,8 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                     # 之后所有上游请求都卡在「等连接」直到超时 —— 日志表现为清一色
                     # 「上游返回 HTTP 0」（10s = pool/connect 超时）。同时这里也不能读
                     # r.text：对流式响应读全文会把整条 SSE 拖进来，甚至挂住。
+                    # 注意：不能在这里重置 rbody —— 上面的 SSE 错误分支把错误文本
+                    # 存进了 rbody，重置会把它抹掉，错误就只剩一个干巴巴的 400。
                     try:
                         await r.aclose()
                     except Exception:
@@ -985,9 +1027,13 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                     pass
                 if stream:
                     pass  # 流式已在上方 return
-                # 非流式一律声明 application/json：不能原样转发上游的 Content-Type，
+                # 非流式一律声明 application/json：不能原样转发上游的 Content-Type,
                 # 否则上游给出异常头时严格客户端会按错的格式解析。
-                return Response(content=out_body, status_code=rstatus, media_type="application/json")
+                # CORS 头必须落在这里:浏览器直连的客户端读不到无 CORS 头的响应,
+                # 连报错都只会显示成 CORS 错误。
+                return Response(
+                    content=out_body, status_code=rstatus, media_type="application/json", headers=_cors()
+                )
             last = {"status": rstatus, "body": rbody, "error": rerr, "content_type": ctype}
             last_key = key
             # 401/403 为账号级鉴权失败：立即返回（账号已被硬封禁，重试只会得到 429 封禁掩码）
@@ -1485,26 +1531,31 @@ def _slow_stream_response(
 
 
 @app.post("/v1/responses")
+@app.post("/v1/responses/")
 async def v1_responses(request: Request):
     return await _convert(request, "responses", anthropic=False)
 
 
 @app.post("/v1/messages")
+@app.post("/v1/messages/")
 async def v1_messages(request: Request):
     return await _convert(request, "messages", anthropic=True)
 
 
 @app.post("/v1/chat/completions")
+@app.post("/v1/chat/completions/")
 async def v1_chat_completions(request: Request):
     return await _proxy(request, "chat/completions", "chat")
 
 
 @app.post("/v1/completions")
+@app.post("/v1/completions/")
 async def v1_completions(request: Request):
     return await _proxy(request, "completions", "cmpl")
 
 
 @app.post("/v1/embeddings")
+@app.post("/v1/embeddings/")
 async def v1_embeddings(request: Request):
     return await _proxy(request, "embeddings", "emb")
 
@@ -1520,7 +1571,7 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
         return _error(
             401, "访问令牌无效。请在后台「系统设置」中配置访问令牌，并以 Authorization: Bearer <令牌> 调用。"
         )
-    body_text = (await request.body()).decode("utf-8", "replace")
+    body_text = (await request.body()).decode("utf-8", "replace").lstrip("\ufeff")
     if len(body_text) > MAX_BODY:
         return _error(413, "请求体过大，上限 20MB", anthropic=anthropic)
     try:
@@ -1632,26 +1683,67 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                     _req2 = client.build_request(
                         "POST", _url2, content=raw.encode(), headers=_hdr2, timeout=timeout
                     )
-                    r = await client.send(_req2, stream=True)
+                    # 上游响应头可能几十秒不返回:直接 await send() 期间网关什么都发不出去,
+                    # 中间代理会按空闲超时掐断连接。分片等待,等不到就转「边发保活边等头」。
+                    send_task = asyncio.create_task(client.send(_req2, stream=True))
+                    _ttfb_cfg2 = float(int(cfg.get("ttfb_timeout") or 0))
+                    commit_after = 12.0 if _ttfb_cfg2 <= 0 else min(12.0, _ttfb_cfg2)
+                    r = None
+                    waited = 0.0
+                    while waited < commit_after:
+                        try:
+                            if await request.is_disconnected():
+                                send_task.cancel()
+                                ms = int((time.time() - t0) * 1000)
+                                hold["key"] = None
+                                await pool.arelease(
+                                    key["id"], True, 499, "客户端已断开",
+                                    {"prompt_tokens": -(-len(raw) // 3), "completion_tokens": 0},
+                                    _release_log(ep, model, 499, ms, "客户端已断开", attempt,
+                                                 key, ip, up_model=up_model, stream=True, ttfb_ms=ms),
+                                )
+                                return _error(499, "客户端已断开", anthropic=anthropic)
+                        except Exception:
+                            pass
+                        try:
+                            r = await asyncio.wait_for(asyncio.shield(send_task), timeout=0.5)
+                            break
+                        except asyncio.TimeoutError:
+                            waited += 0.5
+                    if r is None:
+                        hold["key"] = None  # 释放责任移交兜底流
+                        return _slow_convert_response(
+                            send_task, client, key, ep, model, cfg, up_model, raw,
+                            ip, attempt, t0, request, _ttfb_cfg2, protocol, anthropic,
+                        )
                 else:
                     r = await client.post(_url2, content=raw.encode(), headers=_hdr2, timeout=timeout)
                 rstatus = r.status_code
                 ctype = r.headers.get("content-type", "")
                 if stream and 200 <= rstatus < 400:
-                    # 流式请求：先读第一个 chunk 判断是否为 SSE 错误事件
+                    # 流式请求：先读第一个 chunk 判断是否为 SSE 错误事件。
+                    # 用独立泵任务预读——直接 wait_for(anext) 超时会取消协程、
+                    # 打断 httpx 流,之后同一迭代器会立刻结束。
                     ait = r.aiter_bytes()
+                    sp = _StreamPump(ait)
                     first_chunk = b""
                     ttfb_to = int(cfg.get("ttfb_timeout") or 0)
+                    # 预读只为识别立即返回的 SSE 错误事件:等一小段,等不到就
+                    # 转入保活透传(推理模型首字节可能上百秒,不能干等)
+                    pre_to = 8.0 if ttfb_to <= 0 else min(8.0, float(ttfb_to))
                     try:
-                        if ttfb_to > 0:
-                            first_chunk = await asyncio.wait_for(ait.__anext__(), timeout=ttfb_to)
-                        else:
-                            first_chunk = await ait.__anext__()
-                    except StopAsyncIteration:
-                        pass
+                        item = await asyncio.wait_for(sp.q.get(), timeout=pre_to)
+                        if item is not sp.done:
+                            first_chunk = item
                     except asyncio.TimeoutError:
-                        rerr = f"上游首字节超时（{ttfb_to}s）"
-                        rstatus = 504
+                        hold["key"] = None  # 释放责任移交转换透传
+                        return _stream_convert(
+                            request, client, r, key, ep, model, cfg, up_model, raw,
+                            ip, attempt, t0, rstatus, ctype, protocol,
+                            first_chunk=b"", heartbeat=True, ttfb_deadline=float(ttfb_to), pump=sp,
+                        )
+                    except (httpx.HTTPError, OSError) as e:
+                        rerr = _conn_reason(e)
                     text = first_chunk.decode("utf-8", "replace")
                     is_sse_error = text.lstrip().startswith(("event: error", 'data: {"error"')) or (
                         '"error"' in text[:500]
@@ -1665,6 +1757,7 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                             upstreams.upstream_value(key, "thinking_defaults", "")
                         )
                         if convert.downgrade_thinking(chat_req, up_model, tdefs):
+                            sp.task.cancel()
                             await r.aclose()
                             raw = json.dumps(chat_req, ensure_ascii=False, separators=(",", ":"))
                             continue
@@ -1672,25 +1765,13 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                         # 空流保护：上游 200 但流为空 → 标错误走重试，不透传空流
                         rstatus = 502
                         rerr = "上游返回空流"
+                        sp.task.cancel()
                     else:
+                        hold["key"] = None  # 释放责任移交转换透传（否则 finally 兜底双释放）
                         return await _stream_convert(
-                            request,
-                            client,
-                            r,
-                            key,
-                            ep,
-                            model,
-                            cfg,
-                            up_model,
-                            raw,
-                            ip,
-                            attempt,
-                            t0,
-                            rstatus,
-                            ctype,
-                            protocol,
-                            first_chunk=first_chunk,
-                            ait=ait,
+                            request, client, r, key, ep, model, cfg, up_model, raw,
+                            ip, attempt, t0, rstatus, ctype, protocol,
+                            first_chunk=first_chunk, ait=ait, pump=sp,
                         )
                 if stream:
                     # 流式响应没能交接给转换透传（空流 / SSE 错误且降级失败等）必须显式关闭，
@@ -1783,12 +1864,14 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                             convert.chat_to_anthropic(chat), ensure_ascii=False, separators=(",", ":")
                         ),
                         media_type="application/json",
+                        headers=_cors(),
                     )
                 return Response(
                     content=json.dumps(
                         convert.chat_to_responses(chat, meta), ensure_ascii=False, separators=(",", ":")
                     ),
                     media_type="application/json",
+                    headers=_cors(),
                 )
             last = {"status": rstatus, "body": rbody, "error": rerr, "content_type": ctype}
             last_key = key
@@ -1863,6 +1946,157 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
     return _upstream_fail(last_key, last, cfg, anthropic=anthropic)
 
 
+def _slow_convert_response(
+    send_task,
+    client: httpx.AsyncClient,
+    key: dict,
+    ep: str,
+    model: str,
+    cfg: dict,
+    up_model: str,
+    raw: str,
+    ip: str,
+    attempt: int,
+    t0: float,
+    request: Request | None,
+    ttfb_deadline: float,
+    protocol: str,
+    anthropic: bool,
+) -> StreamingResponse:
+    """/v1/responses、/v1/messages 的响应头兜底流:先提交 200 并持续发协议保活,
+    拿到响应头后交给 _stream_convert 正常转换透传。
+
+    代价:响应头发出后无法再改状态码、无法换号重试,上游报错改为流内 error 事件
+    (客户端 SDK 仍能识别为失败),但账号仍按真实状态码释放,冷却/封禁不受影响。
+    """
+    HB = 10.0
+    deadline = ttfb_deadline if ttfb_deadline > 0 else 300.0
+
+    def _est() -> dict:
+        return {"prompt_tokens": -(-len(raw) // 3), "completion_tokens": 0}
+
+    async def gen() -> AsyncGenerator[bytes, None]:
+        r: httpx.Response | None = None
+        outcome = ""
+        released = False
+        handed = False
+        inner_it = None
+
+        async def _fail(status: int, err: str) -> None:
+            nonlocal released
+            released = True
+            ms = int((time.time() - t0) * 1000)
+            await pool.arelease(
+                key["id"], False, status, err, _est(),
+                _release_log(ep, model, status, ms, err, attempt, key, ip,
+                             up_model=up_model, stream=True, ttfb_ms=ms),
+            )
+
+        def _err_event(msg: str) -> bytes:
+            if anthropic:
+                return _sse("error", {"type": "error", "error": {"type": "api_error", "message": msg}})
+            return _sse(
+                "response.failed",
+                {"response": {"id": rand_id("resp_"), "object": "response", "status": "failed",
+                              "error": {"code": "upstream_error", "message": msg}}},
+            )
+
+        try:
+            # 进入兜底流前已静默 commit_after 秒,立即发一帧保活占住连接
+            yield _protocol_keepalive(protocol)
+            waited = 0.0
+            while r is None:
+                if request is not None:
+                    try:
+                        if await request.is_disconnected():
+                            outcome = "客户端已断开"
+                            break
+                    except Exception:
+                        pass
+                try:
+                    r = await asyncio.wait_for(asyncio.shield(send_task), timeout=HB)
+                except asyncio.TimeoutError:
+                    waited += HB
+                    if waited >= deadline:
+                        outcome = f"上游首字节超时（{int(deadline)}s）"
+                        break
+                    yield _protocol_keepalive(protocol)
+                except (httpx.HTTPError, OSError) as e:
+                    outcome = _conn_reason(e)
+                    break
+            if r is None:
+                if outcome != "客户端已断开":
+                    yield _err_event(outcome or "上游无响应")
+                await _fail(499 if outcome == "客户端已断开" else 504, outcome or "上游无响应")
+                return
+            status = r.status_code
+            ctype = r.headers.get("content-type", "")
+            if not (200 <= status < 400):
+                # 上游报错:读错误体 → 流内 error 事件,按真实状态码释放
+                try:
+                    raw_body = await r.aread()
+                    err = upstream_snippet(
+                        {"status": status, "body": raw_body.decode("utf-8", "replace"), "error": ""}
+                    )
+                except Exception as e:
+                    err = str(e)
+                yield _err_event(err or f"上游返回 HTTP {status}")
+                await _fail(status, err)
+                try:
+                    await r.aclose()
+                except Exception:
+                    pass
+                return
+            # 2xx:交给 _stream_convert 正常转换透传
+            inner = _stream_convert(
+                request, client, r, key, ep, model, cfg, up_model, raw,
+                ip, attempt, t0, status, ctype, protocol,
+                first_chunk=b"", ait=None, heartbeat=False, ttfb_deadline=deadline,
+            )
+            inner_it = inner.body_iterator
+            handed = True
+            try:
+                async for chunk in inner_it:
+                    yield chunk
+            finally:
+                try:
+                    await inner_it.aclose()
+                except Exception:
+                    pass
+        except GeneratorExit:
+            outcome = "客户端已断开"
+            raise
+        finally:
+            send_task.cancel()
+            if not released and not handed:
+                ms = int((time.time() - t0) * 1000)
+                st = 499 if outcome == "客户端已断开" else 504
+                await pool.arelease(
+                    key["id"], False, st, outcome, _est(),
+                    _release_log(ep, model, st, ms, outcome, attempt, key, ip,
+                                 up_model=up_model, stream=True, ttfb_ms=ms),
+                )
+            if r is not None:
+                try:
+                    await r.aclose()
+                except Exception:
+                    pass
+
+    return StreamingResponse(gen(), media_type="text/event-stream", headers=_cors())
+
+
+def _protocol_keepalive(protocol: str) -> bytes:
+    """协议转换流的保活帧。
+
+    - Anthropic:标准 ping 事件(Claude SDK 原生忽略)
+    - Responses:OpenAI 官方流没有 ping 概念,用 SSE 注释行(标准 SSE 解析器
+      一律忽略注释,不会进事件回调),保活目标是中间代理而非客户端解析器
+    """
+    if protocol == "messages":
+        return b'event: ping\ndata: {"type":"ping"}\n\n'
+    return b": keepalive\n\n"
+
+
 async def _stream_convert(
     request: Request,
     client: httpx.AsyncClient,
@@ -1881,8 +2115,15 @@ async def _stream_convert(
     protocol: str,
     first_chunk: bytes = b"",
     ait=None,
+    heartbeat: bool = False,
+    ttfb_deadline: float = 0.0,
+    pump: "_StreamPump | None" = None,
 ):
-    """SSE 转换：上游 chunk 流 → Responses / Anthropic 事件流。first_chunk/ait 为外层预读的首帧。"""
+    """SSE 转换：上游 chunk 流 → Responses / Anthropic 事件流。
+
+    first_chunk/ait 为外层预读的首帧与迭代器；heartbeat=True 表示上游首帧迟迟不来，
+    已进入「边发保活边等」模式（此时放弃换号重试）。
+    """
     pend: list = []
     up_bytes = 0
     if protocol == "responses":
@@ -1893,30 +2134,62 @@ async def _stream_convert(
         )
 
     idle_to = int(cfg.get("sse_idle_timeout") or 0)
+    # 心跳间隔必须远小于中间代理空闲超时(nginx 默认 60s)
+    HB = 10.0
+    # 首帧前的等待上限:ttfb_timeout 优先,其次 sse_idle_timeout,最后 300s 兜底
+    byte_limit = ttfb_deadline if ttfb_deadline > 0 else (float(idle_to) if idle_to > 0 else 300.0)
 
     async def gen() -> AsyncGenerator[bytes, None]:
         nonlocal up_bytes
         first_chunk_at = 0.0
+        outcome = ""
+        truncated = ""
+        # 用独立泵任务读上游:直接 wait_for(anext) 超时会取消协程、打断 httpx 流,
+        # 之后同一迭代器会立刻结束(表现为「保活发完流就没了」。
+        p = pump if pump is not None else _StreamPump(ait if ait is not None else r.aiter_bytes())
+        q, sentinel, task = p.q, p.done, p.task
+        idle = 0.0
+        started = False
         try:
             # 先发外层预读的首帧
             if first_chunk:
                 up_bytes += len(first_chunk)
                 first_chunk_at = time.time()
+                started = True
                 conv.feed(first_chunk.decode("utf-8", "replace"))
                 if pend:
                     yield "".join(pend).encode()
                     pend.clear()
-            stream = ait if ait is not None else r.aiter_bytes()
+            if heartbeat:
+                yield _protocol_keepalive(protocol)
             while True:
+                # 客户端已断开:别再占着账号和上游连接
+                if request is not None:
+                    try:
+                        if await request.is_disconnected():
+                            outcome = "客户端已断开"
+                            break
+                    except Exception:
+                        pass
                 try:
-                    if idle_to > 0:
-                        chunk = await asyncio.wait_for(stream.__anext__(), timeout=idle_to)
-                    else:
-                        chunk = await stream.__anext__()
-                except StopAsyncIteration:
-                    break
+                    chunk = await asyncio.wait_for(q.get(), timeout=HB)
                 except asyncio.TimeoutError:
-                    break  # 空闲超时：结束流，避免无限挂起
+                    idle += HB
+                    limit = float(idle_to) if started else byte_limit
+                    if limit > 0 and idle >= limit:
+                        if not started:
+                            outcome = f"上游首字节超时（{int(limit)}s）"
+                        else:
+                            truncated = f"上游空闲超时（{int(limit)}s）"
+                        break
+                    yield _protocol_keepalive(protocol)
+                    continue
+                if chunk is sentinel:
+                    if p.error and started:
+                        truncated = f"上游流中断：{p.error}"
+                    break
+                idle = 0.0
+                started = True
                 up_bytes += len(chunk)
                 if not first_chunk_at:
                     first_chunk_at = time.time()
@@ -1924,25 +2197,46 @@ async def _stream_convert(
                 if pend:
                     yield "".join(pend).encode()
                     pend.clear()
+            # 收尾:上游结束(无论发没发 [DONE])都必须产出终端事件,
+            # 否则严格 SDK 会一直等 message_stop / response.completed 而挂起
+            if truncated and not outcome:
+                conv.fail(truncated)
+            elif not conv.done:
+                conv.finalize()
+            if pend:
+                yield "".join(pend).encode()
+                pend.clear()
+        except GeneratorExit:
+            outcome = "客户端已断开"
+            raise
         finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
             ms = int((time.time() - t0) * 1000)
             ttfb = int((first_chunk_at - t0) * 1000) if first_chunk_at else ms
             usage = {
                 "prompt_tokens": -(-len(raw) // 3),
                 "completion_tokens": estimate_output_tokens(up_bytes),
             }
+            st = 499 if outcome == "客户端已断开" else status
+            note = outcome or truncated  # 截断原因也要落进日志
             await pool.arelease(
                 key["id"],
                 True,
-                status,
-                "",
+                st,
+                note,
                 usage,
                 _release_log(
                     ep,
                     model,
-                    status,
+                    st,
                     ms,
-                    "",
+                    note,
                     attempt,
                     key,
                     ip,

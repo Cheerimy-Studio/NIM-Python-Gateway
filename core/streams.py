@@ -132,13 +132,15 @@ class ResponsesStream(_Base):
 
     def _usage(self) -> dict:
         u = self.usage or {}
-        tin, tout = u.get("prompt_tokens"), u.get("completion_tokens")
+        # 强制 int:None 会挂 OpenAI SDK 的 pydantic 校验(input_tokens: int)
+        tin = int(u.get("prompt_tokens") or 0)
+        tout = int(u.get("completion_tokens") or 0)
         return {
             "input_tokens": tin,
             "input_tokens_details": {"cached_tokens": 0},
             "output_tokens": tout,
             "output_tokens_details": {"reasoning_tokens": 0},
-            "total_tokens": u.get("total_tokens") or (((tin or 0) + (tout or 0)) or None),
+            "total_tokens": int(u.get("total_tokens") or 0) or (tin + tout),
         }
 
     def _build_output(self) -> list:
@@ -348,6 +350,17 @@ class ResponsesStream(_Base):
             )
         status = self._final_status()
         self.emit("response.completed", {"response": self._skeleton(status, True)})
+
+    def fail(self, message: str) -> None:
+        """上游中断/超时:发出 response.failed 事件并终止。"""
+        if self.done:
+            return
+        self.done = True
+        if not self.started:
+            self._start()
+        resp = self._skeleton("failed", True)
+        resp["error"] = {"code": "upstream_error", "message": message}
+        self.emit("response.failed", {"response": resp})
 
     def _open_empty(self) -> None:
         self.part_open = True
@@ -577,14 +590,29 @@ class AnthropicStream(_Base):
         for idx in [self.think_idx, self.text_idx] + [t["idx"] for t in self.tools.values()]:
             if idx is not None:
                 self.emit("content_block_stop", {"type": "content_block_stop", "index": idx})
+        # type 字段是官方协议的一部分:部分客户端按 data.type 路由事件,
+        # 缺失时 message_delta/message_stop 会被当成未知事件丢弃 → 客户端挂起
         self.emit(
             "message_delta",
             {
+                "type": "message_delta",
                 "delta": {"stop_reason": self._stop_reason(), "stop_sequence": None},
                 "usage": {"output_tokens": int((self.usage or {}).get("completion_tokens") or 0)},
             },
         )
-        self.emit("message_stop", {})
+        self.emit("message_stop", {"type": "message_stop"})
+
+    def fail(self, message: str) -> None:
+        """上游中断/超时:发出 error 事件并终止(客户端 SDK 会把它抛成异常)。"""
+        if self.done:
+            return
+        self.done = True
+        if not self.started:
+            self._start()
+        self.emit(
+            "error",
+            {"type": "error", "error": {"type": "api_error", "message": message}},
+        )
 
 
 # ============================================================ 合成整段流
