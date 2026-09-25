@@ -45,6 +45,9 @@ async def chat(request: Request):
     if m == "rl":
         _c["rl"] += 1
         if _c["rl"] <= 2: return JSONResponse({"error":{"message":"rate limited"}}, status_code=429)
+    if m == "authfail":
+        # 401:网关按鉴权失败硬封禁该账号(hard_fail_ban_seconds)
+        return JSONResponse({"error":{"message":"invalid api key"}}, status_code=401)
     if m == "chdown":
         return JSONResponse({"error":{"message":"No available channel"}}, status_code=500)
     if m == "nousage":
@@ -815,6 +818,103 @@ try:
     got = {st: _pool._classify(st, 0, "") for st, _ in want}
     wrong = ["%s->%s(期望%s)" % (st, got[st], c) for st, c in want if got[st] != c]
     add("错误分级契约", not wrong, "；".join(wrong) if wrong else "402/401/403/429/5xx/conn 归类正确")
+
+    # 批量解封:401 触发硬封禁 → 批量 enable 解封 → 账号必须立即可调度
+    a.post("/api/settings", json={"config": {"hard_fail_ban_seconds": 600, "hard_fail_disable_count": 99}})
+    r = c.post(
+        "/v1/chat/completions",
+        json={"model": "authfail", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    now_i = int(time.time())
+    rows_all = a.get("/api/keys").json()["rows"]
+    banned_ids = [k["id"] for k in rows_all if (k.get("banned_until") or 0) > now_i]
+    # 复现断点一:401 是否触发了封禁
+    add("401 触发账号封禁", r.status_code == 401 and bool(banned_ids),
+        "HTTP %s,封禁账号 %d 个" % (r.status_code, len(banned_ids)))
+    if banned_ids:
+        rb = a.post("/api/keys/batch", json={"op": "enable", "ids": banned_ids})
+        rows2 = a.get("/api/keys").json()["rows"]
+        still = [k["id"] for k in rows2 if (k.get("banned_until") or 0) > now_i]
+        st_bad = [k["id"] for k in rows2 if k["id"] in banned_ids and k.get("status") != "active"]
+        r_ok = c.post(
+            "/v1/chat/completions",
+            json={"model": "mock-model", "messages": [{"role": "user", "content": "hi"}]},
+        )
+        add("批量解封生效(enable)", rb.status_code == 200 and not still and not st_bad and r_ok.status_code == 200,
+            "batch=%s 仍封禁=%s status异常=%s 解封后请求=%s" % (rb.status_code, still, st_bad, r_ok.status_code))
+
+    # ---- 训练资料收集 ----
+    # 非流式 chat:成功请求必须收集「完整消息 + 回复」
+    a.post("/api/settings", json={"config": {"training_log_max": 500}})
+    a.post("/api/training/clear", json={})
+    c.post(
+        "/v1/chat/completions",
+        json={
+            "model": "mock-model",
+            "messages": [
+                {"role": "system", "content": "你是测试"},
+                {"role": "user", "content": "你好训练"},
+            ],
+        },
+    )
+    tr = a.get("/api/training?n=10").json()
+    tr_rows = tr.get("rows") or []
+    ent = next((e for e in tr_rows if e.get("model") == "mock-model"), None)
+    add(
+        "训练资料:非流式 chat 收集",
+        ent is not None
+        and len(ent.get("messages") or []) == 2
+        and ent["messages"][0]["role"] == "system"
+        and ent["messages"][1]["content"] == "你好训练"
+        and ent.get("response") == "ok",
+        "entry=%s" % ("有" if ent else "无"),
+    )
+
+    # 流式 chat:SSE 全文提取("Hello world")
+    c.post(
+        "/v1/chat/completions",
+        json={"model": "mock-model", "stream": True, "messages": [{"role": "user", "content": "hi"}]},
+    )
+    tr2 = a.get("/api/training?n=10").json()
+    ent2 = next((e for e in (tr2.get("rows") or []) if e.get("response") == "Hello world"), None)
+    add("训练资料:流式全文提取", ent2 is not None, "response=%r" % (ent2 or {}).get("response"))
+
+    # /v1/messages 流式(协议转换流):text_acc 全文
+    c.post(
+        "/v1/messages",
+        json={"model": "mock-model", "max_tokens": 32, "stream": True,
+              "messages": [{"role": "user", "content": "你好"}]},
+    )
+    tr3 = a.get("/api/training?n=10").json()
+    ent3 = next((e for e in (tr3.get("rows") or []) if (e.get("ep") or "")[:3] == "msg"), None)
+    add("训练资料:Messages 流式收集", ent3 is not None and ent3.get("response") == "Hello world",
+        "ep=%s resp=%r" % ((ent3 or {}).get("ep"), (ent3 or {}).get("response")))
+
+    # 关闭收集(training_log_max=0)
+    a.post("/api/settings", json={"config": {"training_log_max": 0}})
+    c.post(
+        "/v1/chat/completions",
+        json={"model": "mock-model", "messages": [{"role": "user", "content": "不应收集"}]},
+    )
+    time.sleep(0.6)
+    tr4 = a.get("/api/training?n=50").json()
+    off_ok = all((e.get("messages") or [{}])[-1].get("content") != "不应收集" for e in (tr4.get("rows") or []))
+    add("训练资料:关闭后不收集", off_ok, "total=%s" % tr4.get("total"))
+    a.post("/api/settings", json={"config": {"training_log_max": 500}})
+
+    # 导出 JSONL:每行含 assistant 尾条
+    ex = a.get("/api/training/export")
+    ex_lines = [ln for ln in ex.text.split("\n") if ln.strip()]
+    ex_ok = False
+    if ex_lines:
+        j0 = json.loads(ex_lines[0])
+        ex_ok = isinstance(j0.get("messages"), list) and j0["messages"][-1].get("role") == "assistant"
+    add("训练资料:JSONL 导出格式", ex_ok, "%d 行,首行尾角色=%s" % (len(ex_lines), json.loads(ex_lines[0])["messages"][-1]["role"] if ex_lines else "-"))
+
+    # 清空
+    a.post("/api/training/clear", json={})
+    tr5 = a.get("/api/training?n=10").json()
+    add("训练资料:清空", (tr5.get("rows") or []) == [] and tr5.get("total") == 0, "total=%s" % tr5.get("total"))
 
     import asyncio
 

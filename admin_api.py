@@ -209,6 +209,8 @@ async def keys(request: Request):
             continue
         if status == "disabled" and enabled and not banned:
             continue
+        if status == "banned" and not banned:
+            continue
         k = dict(k)
         k["rpm_used"] = len([t for t in (db.get("buckets", {}).get(k["id"]) or []) if now - t < 60])
         k["fail_ratio"] = round(k["total_fail"] * 100 / k["total_requests"]) if k.get("total_requests") else 0
@@ -330,6 +332,7 @@ async def keys_op(request: Request):
         fn = {
             "enable": lambda: pool.set_enabled(kid, True),
             "disable": lambda: pool.set_enabled(kid, False),
+            "unban": lambda: pool.unban(kid),
             "delete": lambda: pool.delete_key(kid),
             "reset": lambda: pool.reset_stats(kid),
         }.get(op)
@@ -366,6 +369,10 @@ async def keys_batch(request: Request):
     if op == "enable":
         for i in ids:
             results[i] = pool.set_enabled(i, True)
+    elif op == "unban":
+        # 解封与启用分离:只清封禁/冷却/退避,不动「手动停用」状态
+        for i in ids:
+            results[i] = pool.unban(i)
     elif op == "disable":
         for i in ids:
             results[i] = pool.set_enabled(i, False)
@@ -548,6 +555,8 @@ INT_SETTINGS = {
     "request_timeout",
     "connect_timeout",
     "log_max",
+    "session_log_max",
+    "training_log_max",
     "acct_concurrency",
     "total_concurrency",
     "pool_rpm_cap",
@@ -671,6 +680,60 @@ async def stats_reset(request: Request):
         return bad
     pool.reset_all_stats()
     return {"ok": True}
+
+
+# ============================================================ 训练资料
+
+
+@router.get("/training")
+async def training_list(request: Request):
+    bad = _require(request)
+    if bad:
+        return bad
+    db = STORE.load()
+    max_n = int(db["config"].get("training_log_max") or 0)
+    try:
+        n = max(1, min(200, int(request.query_params.get("n") or 50)))
+    except (TypeError, ValueError):
+        n = 50
+    rows = list(db.get("training") or [])[:n]
+    total = len(db.get("training") or [])
+    return {"rows": rows, "total": total, "max": max_n}
+
+
+@router.post("/training/clear")
+async def training_clear(request: Request):
+    bad = _require(request)
+    if bad:
+        return bad
+
+    def _fn(db: dict):
+        db["training"] = []
+
+    await STORE.aupdate(_fn)
+    STORE.flush()
+    return {"ok": True}
+
+
+@router.get("/training/export")
+async def training_export(request: Request):
+    """导出 JSONL:每行 {"messages":[...含 assistant 回复],"model":...},OpenAI 微调格式。"""
+    bad = _require(request)
+    if bad:
+        return bad
+    db = STORE.load()
+    lines = []
+    for e in list(db.get("training") or [])[::-1]:  # 时间正序导出
+        if not isinstance(e, dict):
+            continue
+        msgs = [m for m in (e.get("messages") or []) if isinstance(m, dict)]
+        msgs.append({"role": "assistant", "content": str(e.get("response") or "")})
+        lines.append(json.dumps({"messages": msgs, "model": e.get("model") or ""}, ensure_ascii=False))
+    return Response(
+        "\n".join(lines) + ("\n" if lines else ""),
+        media_type="application/jsonl; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=training.jsonl"},
+    )
 
 
 # ============================================================ 配置同步

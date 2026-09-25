@@ -871,6 +871,35 @@ def set_enabled(key_id: str, enabled: bool) -> bool:
     return found
 
 
+def unban(key_id: str) -> bool:
+    """解封:只清封禁/冷却/退避,不改 enabled(手动停用的账号保持停用)。
+
+    与 enable 的区别:enable 是「重新启用」(会改变停用状态),解封只针对
+    「被动封禁」—— 管理员定位坏账号时不想动主动停用的账号。
+    """
+    found = False
+
+    def _fn(db: dict):
+        nonlocal found
+        for k in db["keys"]:
+            if k["id"] == key_id:
+                found = True
+                k["banned_until"] = 0
+                k["ban_reason"] = ""
+                k["cooldown_until"] = 0
+                k["rl_streak"] = 0
+                k["hard_fail_count"] = 0
+                k["consecutive_failures"] = 0
+                # invalid_key 封禁会把 status 标成 invalid;解封即恢复(死 key 再失败会再次封禁)
+                if k.get("enabled") and k.get("status") == "invalid":
+                    k["status"] = "active"
+                k["updated_at"] = int(time.time())
+                break
+
+    STORE.update(_fn)
+    return found
+
+
 def delete_key(key_id: str) -> bool:
     found = False
 

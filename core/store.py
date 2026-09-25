@@ -68,6 +68,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "log_enabled": True,
     "log_max": 200,
     "session_log_max": 100,
+    "training_log_max": 500,
     "timezone": "Asia/Shanghai",
     "verify_tls": True,
     "admin_username": "admin",
@@ -203,6 +204,8 @@ class Store:
             cfg.pop(legacy, None)
         if not isinstance(db.get("logs"), list):
             db["logs"] = []
+        if not isinstance(db.get("training"), list):
+            db["training"] = []
         if not isinstance(db.get("keys"), list):
             db["keys"] = []
         if not isinstance(db.get("queue"), list):

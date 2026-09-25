@@ -495,6 +495,97 @@ async def log_session(
     await STORE.aupdate(_fn)
 
 
+# ============================================================ 训练资料收集
+
+
+def _train_messages(req: dict) -> list | None:
+    """从请求体提取 chat 格式消息(训练语料的输入侧);非对话类请求返回 None。"""
+    msgs = req.get("messages")
+    if not isinstance(msgs, list) or not msgs:
+        return None
+    out = []
+    for m in msgs:
+        if not isinstance(m, dict):
+            continue
+        role = str(m.get("role") or "user")
+        if role not in ("system", "user", "assistant", "tool"):
+            role = "user"
+        content = m.get("content")
+        if isinstance(content, list):
+            content = flatten_content(content)
+        out.append({"role": role, "content": str(content) if content is not None else ""})
+    return out or None
+
+
+def _train_sse_text(raw: bytes) -> tuple[str, str]:
+    """从缓存的 SSE 原文中提取 (content, reasoning_content) 全文。"""
+    content = []
+    reasoning = []
+    for line in raw.decode("utf-8", "replace").split("\n"):
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if not data or data == "[DONE]":
+            continue
+        try:
+            j = json.loads(data)
+        except Exception:
+            continue
+        if not isinstance(j, dict) or not isinstance(j.get("choices"), list):
+            continue
+        for ch in j["choices"]:
+            delta = ch.get("delta") if isinstance(ch, dict) else None
+            if not isinstance(delta, dict):
+                continue
+            c = delta.get("content")
+            if isinstance(c, str):
+                content.append(c)
+            r = delta.get("reasoning_content") or delta.get("reasoning")
+            if isinstance(r, str):
+                reasoning.append(r)
+    return "".join(content), "".join(reasoning)
+
+
+async def record_training(
+    cfg: dict, ep: str, model: str, messages: list | None, resp_text: str, reasoning: str = "", usage: dict | None = None
+) -> None:
+    """收集训练资料:成功的对话请求 → 完整「输入消息 + 助手回复」。
+
+    训练收集绝不能影响主请求路径 —— 全 try/except 包裹;
+    单条超过 512KB 的大上下文不适合做训练语料,直接跳过(防撑爆 db.json)。
+    """
+    try:
+        if messages is None or not resp_text:
+            return
+        max_n = max(0, _cfgint(cfg, "training_log_max", 500))
+        if max_n == 0:
+            return
+        entry = {
+            "t": int(time.time()),
+            "ep": ep[:8],
+            "model": model[:80],
+            "messages": messages,
+            "response": resp_text,
+            "reasoning": reasoning if reasoning else "",
+            "usage": {
+                "prompt_tokens": int((usage or {}).get("prompt_tokens") or 0),
+                "completion_tokens": int((usage or {}).get("completion_tokens") or 0),
+            },
+        }
+        if len(json.dumps(entry, ensure_ascii=False, default=str)) > 512 * 1024:
+            return
+
+        def _fn(db: dict):
+            tr = db.setdefault("training", [])
+            tr.insert(0, entry)
+            del tr[max_n:]
+
+        await STORE.aupdate(_fn)
+    except Exception:
+        pass
+
+
 async def _extract_conv_log(cfg: dict, model: str, email: str, req: dict, chat: dict, ip: str) -> None:
     """从 chat 响应中提取文本并记录会话。"""
     msg = (chat.get("choices") or [{}])[0].get("message") or {}
@@ -1026,14 +1117,20 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                     pass
                 try:
                     resp_msg = json.loads(out_body)
-                    resp_text = (resp_msg.get("choices") or [{}])[0].get("message", {}).get("content", "")
+                    _m = (resp_msg.get("choices") or [{}])[0].get("message", {}) or {}
+                    resp_text = _m.get("content") or ""
                     await log_session(
                         cfg, model, key["email"], req.get("messages", []), resp_text, rstatus, ip
                     )
+                    # 训练资料:完整「输入消息 + 助手回复」(含 reasoning,可筛)
+                    _rm = _m.get("reasoning_content") or _m.get("reasoning") or ""
+                    await record_training(
+                        cfg, ep_tag, model, _train_messages(req),
+                        resp_text if isinstance(resp_text, str) else flatten_content(resp_text),
+                        _rm if isinstance(_rm, str) else "", usage,
+                    )
                 except Exception:
                     pass
-                if stream:
-                    pass  # 流式已在上方 return
                 # 非流式一律声明 application/json：不能原样转发上游的 Content-Type,
                 # 否则上游给出异常头时严格客户端会按错的格式解析。
                 # CORS 头必须落在这里:浏览器直连的客户端读不到无 CORS 头的响应,
@@ -1192,6 +1289,14 @@ def _proxy_stream(
 
     async def gen() -> AsyncGenerator[bytes, None]:
         nonlocal up_bytes, buf, first_chunk_at
+        # 训练资料:透传同时累积输出原文(上限 1MB,防超大响应占内存),结束时提取全文
+        train = bytearray()
+
+        def _out(b: bytes) -> bytes:
+            if len(train) < 1048576:
+                train.extend(b)
+            return b
+
         # 复用外层已启动的读取任务（否则对同一 ait 二次迭代必然立刻结束）。
         # 注意用独立局部名：在嵌套函数里给 pump 赋值会把它变成局部变量，
         # 之后 `pump is None` 这个读取会抛 UnboundLocalError（响应头已发出 → 客户端只看到截断）。
@@ -1212,9 +1317,9 @@ def _proxy_stream(
                     cut = buf.rfind(b"\n")
                     if cut != -1:
                         out, buf = buf[: cut + 1], buf[cut + 1 :]
-                        yield model_re.sub(model_to, out)
+                        yield _out(model_re.sub(model_to, out))
                 else:
-                    yield first_chunk
+                    yield _out(first_chunk)
             if heartbeat:
                 yield _keepalive_frame(ep_tag, model, first=True)
             while True:
@@ -1250,7 +1355,7 @@ def _proxy_stream(
                 if not first_chunk_at:
                     first_chunk_at = time.time()
                 if not rewrite:
-                    yield item
+                    yield _out(item)
                     continue
                 buf += item
                 # 只改写完整行（model 字段不会跨行），避免匹配被分块截断
@@ -1258,7 +1363,7 @@ def _proxy_stream(
                 if cut == -1:
                     continue
                 out, buf = buf[: cut + 1], buf[cut + 1 :]
-                yield model_re.sub(model_to, out)
+                yield _out(model_re.sub(model_to, out))
             # 上游异常收尾：以下发 error 事件 + [DONE] 收口，让下游 SDK 识别到截断，
             # 而不是把半截内容当成完整回复（静默截断比显式报错危险得多）
             if truncated and not outcome:
@@ -1275,7 +1380,7 @@ def _proxy_stream(
             except Exception:
                 pass
             if rewrite and buf and not outcome:
-                yield model_re.sub(model_to, buf)
+                yield _out(model_re.sub(model_to, buf))
             ms = int((time.time() - t0) * 1000)
             ttfb = int((first_chunk_at - t0) * 1000) if first_chunk_at else ms
             usage = {
@@ -1310,6 +1415,15 @@ def _proxy_stream(
                 await r.aclose()  # stream=True 必须显式关闭，否则连接泄漏
             except Exception:
                 pass
+            # 训练资料:正常结束的流式对话全文(截断/断连的半截语料污染训练集,不要)
+            if not outcome and not truncated:
+                try:
+                    _content, _reasoning = _train_sse_text(bytes(train))
+                    await record_training(
+                        cfg_all(), ep_tag, model, _train_messages(json.loads(body)), _content, _reasoning, usage
+                    )
+                except Exception:
+                    pass
 
     # 流式固定声明 SSE：OpenAI 流式响应必须是 text/event-stream，
     # 上游偶尔用 application/json 声明 SSE 体，原样转发会让客户端按 JSON 解析而失败。
@@ -1749,8 +1863,6 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                             ip, attempt, t0, rstatus, ctype, protocol,
                             first_chunk=b"", heartbeat=True, ttfb_deadline=float(ttfb_to), pump=sp,
                         )
-                    except (httpx.HTTPError, OSError) as e:
-                        rerr = _conn_reason(e)
                     text = first_chunk.decode("utf-8", "replace")
                     is_sse_error = text.lstrip().startswith(("event: error", 'data: {"error"')) or (
                         '"error"' in text[:500]
@@ -1863,6 +1975,18 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                 chat["model"] = model
                 try:
                     await _extract_conv_log(cfg, model, key["email"], req, chat, ip)
+                except Exception:
+                    pass
+                # 训练资料:协议转换端点同样收集(消息为转换后的 chat 格式)
+                try:
+                    _m = (chat.get("choices") or [{}])[0].get("message", {}) or {}
+                    _txt = _m.get("content") or ""
+                    _rm = _m.get("reasoning_content") or _m.get("reasoning") or ""
+                    await record_training(
+                        cfg, ep, model, _train_messages(chat_req),
+                        _txt if isinstance(_txt, str) else flatten_content(_txt),
+                        _rm if isinstance(_rm, str) else "", usage,
+                    )
                 except Exception:
                     pass
                 if anthropic:
@@ -2286,6 +2410,18 @@ async def _stream_convert(
                 await r.aclose()  # stream=True 必须显式关闭
             except Exception:
                 pass
+            # 训练资料:转换流正常结束时,从状态机取全文记录(截断/断连不收)
+            if not outcome and not truncated:
+                try:
+                    _reason = getattr(conv, "think_acc", None)
+                    if _reason is None:
+                        _reason = getattr(conv, "rs_acc", "") or ""
+                    await record_training(
+                        cfg, ep, model, _train_messages(json.loads(raw)),
+                        getattr(conv, "text_acc", "") or "", _reason or "", usage,
+                    )
+                except Exception:
+                    pass
 
     return StreamingResponse(gen(), media_type="text/event-stream", headers=_cors())
 

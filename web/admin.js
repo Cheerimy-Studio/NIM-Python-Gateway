@@ -34,13 +34,13 @@ const BAN_NAMES = {
 };
 const keyState = k => {
   const now = Date.now() / 1000;
-  if (!k.enabled) return {t: '已停用', c: 'secondary'};
   if ((k.banned_until || 0) > now) {
     const left = Math.ceil(k.banned_until - now);
     const name = BAN_NAMES[k.ban_reason] || '封禁';
     const leftTxt = left >= 3600 ? Math.ceil(left / 3600) + 'h' : left >= 60 ? Math.ceil(left / 60) + 'm' : left + 's';
-    return {t: name + ' ' + leftTxt, c: k.ban_reason === 'invalid_key' || k.ban_reason === 'daily_cap' ? 'danger' : 'warning'};
+    return {t: name + ' ' + leftTxt, c: k.ban_reason === 'invalid_key' || k.ban_reason === 'daily_cap' ? 'danger' : 'warning', banned: true};
   }
+  if (!k.enabled) return {t: '已停用', c: 'secondary'};
   if (k.status === 'invalid') return {t: '密钥失效', c: 'danger'};
   return {t: '可用', c: 'success'};
 };
@@ -122,6 +122,7 @@ const LOADERS = {
   logs: () => loadLogs(),
   queue: () => loadQueue(),
   test: () => loadTestModels(),
+  training: () => loadTraining(),
   sessions: () => loadSessions(),
   settings: () => loadSettings(),
   docs: () => fillDocs(),
@@ -213,6 +214,9 @@ async function runBatch(op) {
       toast(`测试完成：${okN}/${Object.keys(r.results).length} 可用`);
     } else if (op === 'move') {
       toast(`已转移 ${r.moved} 个账号`);
+    } else if (op === 'unban') {
+      const okN = Object.values(r.results || {}).filter(Boolean).length;
+      toast(`已解封 ${okN} 个账号`);
     } else {
       toast('批量操作完成');
     }
@@ -229,6 +233,7 @@ function bindBatch() {
     updateBatchBar();
   };
   $('#batch-clear').onclick = () => { batchSel.clear(); loadKeys(); };
+  $('#batch-unban').onclick = () => runBatch('unban');
   $('#batch-enable').onclick = () => runBatch('enable');
   $('#batch-disable').onclick = () => runBatch('disable');
   $('#batch-test').onclick = () => runBatch('test');
@@ -317,6 +322,11 @@ async function loadKeys() {
       const b = el('button', 'btn btn-sm ' + cls, label);
       b.onclick = fn; grp.appendChild(b);
     };
+    if (st.banned) {
+      mk('解封', 'btn-outline-warning', guard(async () => {
+        await api('keys/op', {method: 'POST', json: {op: 'unban', id: k.id}}); loadKeys();
+      }));
+    }
     mk(k.enabled ? '停用' : '启用', 'btn-outline-' + (k.enabled ? 'secondary' : 'success'),
       guard(async () => { await api('keys/op', {method: 'POST', json: {op: k.enabled ? 'disable' : 'enable', id: k.id}}); loadKeys(); }));
     mk('测试', 'btn-outline-primary', guard(async () => {
@@ -905,8 +915,33 @@ function renderLogs() {
       // 错误
       el('td', 'small text-danger err-cell', err || '-'),
     );
+    tr.style.cursor = 'pointer';
+    tr.title = '点击查看完整信息';
+    tr.onclick = () => showLogDetail(r);
     tb.appendChild(tr);
   }
+}
+
+function showLogDetail(r) {
+  const [t, ep, model, key, st, ms, err, ip, att] = r;
+  const upModel = r[9] || '', isStream = !!r[10], ttfb = r[11] || 0, inTok = r[12] || 0, outTok = r[13] || 0;
+  const wrap = el('div', 'conv');
+  const addRow = (label, value, cls) => {
+    const row = el('div', 'cmsg');
+    row.append(el('span', 'crole r-system', label), el('div', 'ctext' + (cls ? ' ' + cls : ''), String(value)));
+    wrap.appendChild(row);
+  };
+  addRow('时间', fmtTime(t));
+  addRow('端点', (EP_NAMES[ep] || ep || '-') + (isStream ? '(流式)' : ''));
+  addRow('模型', (model || '-') + (upModel && upModel !== model ? ` ↳ ${upModel}` : ''));
+  addRow('账号', key || '-');
+  addRow('状态', statusText(st), st >= 400 || st === 0 ? 'text-danger' : 'text-success');
+  addRow('耗时', ms + 'ms' + (isStream && ttfb > 0 && ttfb < ms ? `(首字 ${ttfb}ms)` : ''));
+  addRow('重试', att || 1);
+  addRow('Token', inTok || outTok ? `${inTok}↑ ${outTok}↓` : '—');
+  addRow('来源', ip || '-');
+  if (err) addRow('错误', err, 'text-danger');
+  uiPanel('请求详情', wrap);
 }
 
 /* ================= 排队 ================= */
@@ -957,6 +992,7 @@ const SET_FIELDS = [
   ['set-user', 'admin_username'], ['set-mwl', 'model_whitelist'], ['set-mbl', 'model_blacklist'],
   ['set-pover', 'param_overrides'],
   ['set-smax', 'session_log_max'],
+  ['set-trmax', 'training_log_max'],
 ];
 
 async function loadSettings() {
@@ -1064,6 +1100,106 @@ msg = client.messages.create(
 print(msg.content[0].text)`;
 }
 
+
+/* ================= 宽弹窗（训练详情 / 请求详情） ================= */
+function uiPanel(title, contentEl) {
+  const mask = el('div', 'ui-mask');
+  const box = el('div', 'ui-dialog wide');
+  const head = el('div', 'ui-title-row');
+  head.append(el('div', 't', title));
+  const closeBtn = el('button', 'ui-close', '×');
+  head.appendChild(closeBtn);
+  const body = el('div', 'ui-body-flex');
+  body.appendChild(contentEl);
+  box.append(head, body);
+  mask.appendChild(box);
+  document.body.appendChild(mask);
+  const close = () => mask.remove();
+  closeBtn.onclick = close;
+  mask.onclick = e => { if (e.target === mask) close(); };
+  const onKey = e => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } };
+  document.addEventListener('keydown', onKey);
+}
+
+/* ================= 训练资料 ================= */
+const EP_SHOW = {chat: 'Chat', resp: 'Responses', msg: 'Messages', cmpl: 'Compl', emb: 'Embed', test: 'Test'};
+
+async function loadTraining() {
+  const d = await run(() => api('training?n=100'));
+  if (!d) return;
+  $('#training-meta').textContent = d.total ? `${d.total} 条 / 上限 ${d.max}` : '空';
+  const tb = $('#training-rows'); tb.innerHTML = '';
+  if (!d.rows.length) {
+    const tr = el('tr'); const td = el('td', 'text-muted text-center py-4', '—');
+    td.colSpan = 6; tr.appendChild(td); tb.appendChild(tr);
+    return;
+  }
+  for (const e of d.rows) {
+    const tr = el('tr');
+    const preview = String(e.response || '').replace(/\s+/g, ' ').slice(0, 90);
+    tr.append(
+      el('td', 'small text-muted', fmtTime(e.t)),
+      el('td', 'small', e.model || '-'),
+      (() => { const td = el('td'); td.appendChild(el('span', 'badge bg-secondary-subtle text-secondary', EP_SHOW[e.ep] || e.ep || '-')); return td; })(),
+      el('td', 'text-end small', String((e.messages || []).length)),
+      el('td', 'small text-truncate', preview || '—'),
+    );
+    const tdOp = el('td');
+    const view = el('button', 'btn btn-sm btn-outline-primary', '查看');
+    view.onclick = () => showTrainingDetail(e);
+    tdOp.appendChild(view);
+    tr.appendChild(tdOp);
+    tb.appendChild(tr);
+  }
+}
+
+function showTrainingDetail(e) {
+  const wrap = el('div', 'conv');
+  for (const m of (e.messages || [])) {
+    const row = el('div', 'cmsg');
+    row.append(
+      el('span', 'crole r-' + (m.role || 'user'), (m.role || 'user') === 'system' ? 'system' : (m.role || 'user')),
+      el('div', 'ctext', String(m.content || '')),
+    );
+    wrap.appendChild(row);
+  }
+  if (e.reasoning) {
+    const row = el('div', 'cmsg');
+    row.append(
+      el('span', 'crole r-assistant', '思考'),
+      el('div', 'ctext cthink', String(e.reasoning)),
+    );
+    wrap.appendChild(row);
+  }
+  const row = el('div', 'cmsg');
+  row.append(
+    el('span', 'crole r-assistant', 'assistant'),
+    el('div', 'ctext', String(e.response || '')),
+  );
+  wrap.appendChild(row);
+  const meta = el('div', 'cmeta');
+  meta.textContent = `${e.model || '-'} · ${e.usage ? (e.usage.prompt_tokens + '↑ ' + e.usage.completion_tokens + '↓ tk') : ''}`;
+  wrap.appendChild(meta);
+  uiPanel(`${fmtTime(e.t)} · 对话详情`, wrap);
+}
+$('#training-refresh').onclick = loadTraining;
+$('#training-clear').onclick = guard(async () => {
+  if (await uiConfirm('清空全部训练资料？', {danger: true, okText: '清空'})) {
+    await api('training/clear', {method: 'POST'}); loadTraining();
+  }
+});
+$('#training-export').onclick = async e => {
+  e.preventDefault();
+  const res = await fetch(B + 'api/training/export', {headers: {'X-CSRF': CSRF}});
+  if (!res.ok) { toast('导出失败', 'danger'); return; }
+  const blob = await res.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'training.jsonl';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast(`已导出 ${blob.size} 字节`);
+};
 
 /* ================= 会话日志 ================= */
 async function loadSessions() {
