@@ -63,6 +63,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "breaker_seconds": 60,
     "ttfb_timeout": 60,
     "sse_idle_timeout": 60,
+    "pool_max_connections": 400,
     # 其他
     "upstream_base": "https://integrate.api.nvidia.com/v1",
     "log_enabled": True,

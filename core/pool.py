@@ -46,6 +46,12 @@ def _cfgint(cfg: dict, name: str, default: int) -> int:
 def _classify(http_status: int, errno: int, error: str) -> str:
     """错误分级。新增 channel/model 级：这两类是上游/渠道问题，不惩罚账号。"""
     low = (error or "").lower()
+    # 连接池耗尽是网关全局容量问题,不是这个账号的错:
+    # 若按 timeout/conn 惩罚(冷却+连败),并发请求同时撞池会让整片账号
+    # 一起进冷却,把瞬时拥塞放大成号池雪崩。只重试、不惩罚。
+    # (必须放在 timeout 判断之前:PoolTimeout 字样含 "timeout")
+    if "pooltimeout" in low or "连接池耗尽" in low:
+        return "pool_exhausted"
     # 渠道级不可用：换钥/重试都注定失败，调用方应快速失败
     if (
         "no available channel" in low
@@ -641,8 +647,8 @@ def release(
                 else:
                     k["total_fail"] = k.get("total_fail", 0) + 1
                     cls = _classify(http_status, errno, error)
-                    if cls in ("req", "channel", "model"):
-                        # 请求类/渠道级/模型级错误：不是账号的问题，不惩罚账号
+                    if cls in ("req", "channel", "model", "pool_exhausted"):
+                        # 请求类/渠道级/模型级错误、连接池耗尽：不是账号的问题，不惩罚账号
                         k["consecutive_failures"] = 0
                     elif cls == "429":
                         k["consecutive_failures"] = 0

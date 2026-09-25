@@ -817,7 +817,16 @@ try:
     }
     got = {st: _pool._classify(st, 0, "") for st, _ in want}
     wrong = ["%s->%s(期望%s)" % (st, got[st], c) for st, c in want if got[st] != c]
-    add("错误分级契约", not wrong, "；".join(wrong) if wrong else "402/401/403/429/5xx/conn 归类正确")
+    # 连接池耗尽必须单列(全局容量问题,不惩罚账号),且不能被 "timeout" 字样误判
+    if _pool._classify(0, 0, "PoolTimeout: 连接池耗尽") != "pool_exhausted":
+        wrong.append("pooltimeout->%s(期望pool_exhausted)" % _pool._classify(0, 0, "PoolTimeout: 连接池耗尽"))
+    if _pool._classify(0, 0, "httpx.PoolTimeout occurred") != "pool_exhausted":
+        wrong.append("pooltimeout类名->%s(期望pool_exhausted)" % _pool._classify(0, 0, "httpx.PoolTimeout occurred"))
+    # 连接池配置可保存/读取
+    a.post("/api/settings", json={"config": {"pool_max_connections": 400}})
+    if int(a.get("/api/settings").json().get("pool_max_connections") or 0) != 400:
+        wrong.append("pool_max_connections 设置不生效")
+    add("错误分级契约", not wrong, "；".join(wrong) if wrong else "402/401/403/429/5xx/conn/pool_exhausted 归类正确")
 
     # 批量解封:401 触发硬封禁 → 批量 enable 解封 → 账号必须立即可调度
     a.post("/api/settings", json={"config": {"hard_fail_ban_seconds": 600, "hard_fail_disable_count": 99}})

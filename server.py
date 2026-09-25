@@ -110,14 +110,25 @@ _shared_http: httpx.AsyncClient | None = None
 
 
 def get_http(cfg: dict | None = None) -> httpx.AsyncClient:
-    """返回共享 AsyncClient；timeout/verify 由每次请求自行覆盖。"""
+    """返回共享 AsyncClient；timeout/verify 由每次请求自行覆盖。
+
+    连接池大小可配置(pool_max_connections,默认 400):长流式(推理模型单流可达
+    数分钟)+ 高并发下,100 连接会被长期占用,PoolTimeout 的本质是容量不足
+    而不是泄漏 —— 宁可排队等待(pool=15s)也不要快速失败。
+    配置在首个上游请求时读取,修改后需重启生效。
+    """
     global _shared_http
     if _shared_http is None:
-        verify = bool((cfg or STORE.load()["config"]).get("verify_tls", True))
+        c = cfg or STORE.load()["config"]
+        verify = bool(c.get("verify_tls", True))
+        try:
+            max_conn = max(50, int(c.get("pool_max_connections") or 400))
+        except (TypeError, ValueError):
+            max_conn = 400
         _shared_http = httpx.AsyncClient(
             verify=verify,
-            timeout=httpx.Timeout(connect=10, read=120, write=30, pool=10),
-            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+            timeout=httpx.Timeout(connect=10, read=120, write=30, pool=15),
+            limits=httpx.Limits(max_connections=max_conn, max_keepalive_connections=min(100, max_conn)),
         )
     return _shared_http
 
@@ -629,7 +640,7 @@ def _conn_reason(e: Exception) -> str:
     ):
         hint = "（DNS 解析失败：无法解析上游域名）"
     elif isinstance(e, httpx.PoolTimeout):
-        hint = "（连接池耗尽：上游连接未被释放，检查连接泄漏）"
+        hint = "（连接池满：并发超过 pool_max_connections 或存在连接泄漏；请求会自动重试）"
     elif any(k in low for k in ("ssl", "certificate", "tls", "handshake")):
         hint = "（TLS 握手失败：证书/时间/出网被拦）"
     elif isinstance(e, httpx.ConnectTimeout):
@@ -844,7 +855,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                 connect=upstreams.override_for(key, "connect_timeout", int(cfg.get("connect_timeout") or 10)),
                 read=upstreams.override_for(key, "request_timeout", int(cfg.get("request_timeout") or 300)),
                 write=30,
-                pool=10,
+                pool=15,
             )
             r: httpx.Response | None = None
             _hdr = {
@@ -1792,7 +1803,7 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                         key, "request_timeout", int(cfg.get("request_timeout") or 300)
                     ),
                     write=30,
-                    pool=10,
+                    pool=15,
                 )
                 client = get_http(cfg)
                 _hdr2 = {

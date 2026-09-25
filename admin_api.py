@@ -552,6 +552,7 @@ INT_SETTINGS = {
     "breaker_seconds",
     "ttfb_timeout",
     "sse_idle_timeout",
+    "pool_max_connections",
     "request_timeout",
     "connect_timeout",
     "log_max",

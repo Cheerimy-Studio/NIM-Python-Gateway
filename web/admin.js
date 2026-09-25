@@ -988,6 +988,7 @@ const SET_FIELDS = [
   ['set-cto', 'cool_timeout_seconds'], ['set-ccn', 'cool_conn_seconds'],
   ['set-bth', 'breaker_threshold'], ['set-bsec', 'breaker_seconds'],
   ['set-ttfb', 'ttfb_timeout'], ['set-sidle', 'sse_idle_timeout'],
+  ['set-poolconns', 'pool_max_connections'],
   ['set-logmax', 'log_max'], ['set-tz', 'timezone'],
   ['set-user', 'admin_username'], ['set-mwl', 'model_whitelist'], ['set-mbl', 'model_blacklist'],
   ['set-pover', 'param_overrides'],
