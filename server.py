@@ -780,6 +780,8 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                                 send_task.cancel()
                                 try:
                                     ms = int((time.time() - t0) * 1000)
+                                    # 置空 hold:return 会触发 finally 兜底,不置空会再释放一次
+                                    hold["key"] = None
                                     await pool.arelease(
                                         key["id"],
                                         True,
@@ -1995,10 +1997,38 @@ def _slow_convert_response(
         def _err_event(msg: str) -> bytes:
             if anthropic:
                 return _sse("error", {"type": "error", "error": {"type": "api_error", "message": msg}})
+            # Responses 的 response.failed 事件体是完整 Response 对象:
+            # OpenAI SDK 按严格 schema 校验,缺 output/usage 等必填字段会解析失败
             return _sse(
                 "response.failed",
-                {"response": {"id": rand_id("resp_"), "object": "response", "status": "failed",
-                              "error": {"code": "upstream_error", "message": msg}}},
+                {
+                    "response": {
+                        "id": rand_id("resp_"),
+                        "object": "response",
+                        "created_at": int(time.time()),
+                        "status": "failed",
+                        "error": {"code": "upstream_error", "message": msg},
+                        "incomplete_details": None,
+                        "model": model,
+                        "output": [],
+                        "parallel_tool_calls": True,
+                        "previous_response_id": None,
+                        "reasoning": {"effort": None, "summary": None},
+                        "temperature": None,
+                        "top_p": None,
+                        "max_output_tokens": None,
+                        "tools": [],
+                        "tool_choice": "auto",
+                        "usage": {
+                            "input_tokens": 0,
+                            "input_tokens_details": {"cached_tokens": 0},
+                            "output_tokens": 0,
+                            "output_tokens_details": {"reasoning_tokens": 0},
+                            "total_tokens": 0,
+                        },
+                        "metadata": {},
+                    }
+                },
             )
 
         try:

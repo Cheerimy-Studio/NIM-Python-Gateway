@@ -593,6 +593,18 @@ try:
             break
         time.sleep(1.0)
     add("断连后账号立即回收", freed, "断开后 %.1fs 内账号可复用" % (time.time() - t0))
+    # 断连释放必须恰好一次:等响应头期间断连的路径以前 release 后没置空 hold,
+    # finally 兜底会再释放一次 → 一条真 499 + 一条假 500「兜底释放」。
+    # 「账号可复用」测不出这个(提前释放也"可复用"),必须查日志。
+    time.sleep(2)  # 等日志落盘
+    _rows = a.get("/api/logs?n=50").json().get("rows") or []
+    _since = [x for x in _rows if isinstance(x, list) and len(x) > 6 and "客户端已断开" in str(x[6])]
+    _dup = [x for x in _since if "兜底释放" in str(x[6])]
+    add(
+        "断连释放恰好一次",
+        bool(_since) and not _dup,
+        "499 断连日志 %d 条,兜底释放 %d 条" % (len(_since), len(_dup)),
+    )
     # 恢复
     a.post("/api/settings", json={"config": {"acct_concurrency": 0}})
     for kid in ids[1:]:

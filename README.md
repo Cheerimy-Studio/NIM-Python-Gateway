@@ -204,8 +204,8 @@ location / {
 ```bash
 pip install -r requirements-dev.txt
 
-python tests/regression.py   # 19 项：调度、限速、重试、保活、并发
-python tests/compat.py       # 17 项：全部接口 + 协议结构兼容性
+python tests/regression.py   # 48 项：调度、限速、重试、保活、并发、断连、协议守护
+python tests/compat.py       # 19 项：全部接口 + 协议结构兼容性
 ```
 
 ---
