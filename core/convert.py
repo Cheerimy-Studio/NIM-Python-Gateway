@@ -86,14 +86,13 @@ def _content_with_images(blocks: Any) -> list | None:
     return parts
 
 
-def sanitize_tool_choice(body: dict) -> dict:
-    """清理「有 tool_choice 但没有 tools」的请求体。
+def sanitize_request(body: dict) -> dict:
+    """转发前清理会被严格上游拒绝的请求体(线上实测的拒绝场景都在这里兜底)。
 
-    严格校验的上游(FastAPI/vLLM 系)会直接拒绝:
-      "When using `tool_choice`, `tools` must be set."
-    两种来源:部分客户端无条件附带 tool_choice:"auto";Anthropic/Responses
-    转换器也可能从原请求带出 tool_choice 而 tools 为空。没有 tools 时
-    tool_choice 本身无意义,删掉即可恢复兼容。
+    - tool_choice 而无 tools:"When using `tool_choice`, `tools` must be set."
+      (部分客户端无条件附带 tool_choice:"auto";转换器也可能带出)
+    - max_tokens 系列非法值(<=0,如客户端按上下文窗口算出 -134237):
+      "max_tokens must be at least 1" —— 删除该参数交由上游默认值
     """
     if not isinstance(body, dict):
         return body
@@ -101,7 +100,19 @@ def sanitize_tool_choice(body: dict) -> dict:
         tools = body.get("tools")
         if not isinstance(tools, list) or not tools:
             body.pop("tool_choice", None)
+    for k in ("max_tokens", "max_completion_tokens"):
+        v = body.get(k)
+        if isinstance(v, bool):
+            body.pop(k, None)
+            continue
+        if isinstance(v, (int, float)) and v <= 0:
+            body.pop(k, None)
     return body
+
+
+# 兼容旧名
+def sanitize_tool_choice(body: dict) -> dict:
+    return sanitize_request(body)
 
 
 def map_usage(u: dict | None) -> dict:
@@ -182,10 +193,13 @@ def responses_to_chat(req: dict) -> dict:
     for k in ("temperature", "top_p", "stream", "parallel_tool_calls", "user", "seed"):
         if k in req:
             chat[k] = req[k]
-    if req.get("max_output_tokens") is not None:
-        chat["max_tokens"] = int(req["max_output_tokens"])
-    elif req.get("max_completion_tokens") is not None:
-        chat["max_tokens"] = int(req["max_completion_tokens"])
+    try:
+        if req.get("max_output_tokens") is not None and int(req["max_output_tokens"]) > 0:
+            chat["max_tokens"] = int(req["max_output_tokens"])
+        elif req.get("max_completion_tokens") is not None and int(req["max_completion_tokens"]) > 0:
+            chat["max_tokens"] = int(req["max_completion_tokens"])
+    except (TypeError, ValueError):
+        pass
     if isinstance(req.get("reasoning"), dict) and req["reasoning"].get("effort"):
         chat["reasoning_effort"] = req["reasoning"]["effort"]
 

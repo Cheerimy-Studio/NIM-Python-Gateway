@@ -942,8 +942,8 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
             req = upstreams.apply_param_overrides(key, model, req)
             # 客户端可能传字符串数字/布尔（如 "temperature":"0.95"），统一归一化为 JSON 原生类型
             convert.normalize_body_types(req)
-            # 带无意义 tool_choice(无 tools)会被严格上游拒绝,转发前清理
-            convert.sanitize_tool_choice(req)
+            # 清理会被严格上游拒绝的组合(tool_choice 无 tools、非法 max_tokens 等)
+            convert.sanitize_request(req)
             body = json.dumps(req, ensure_ascii=False, separators=(",", ":"))
             t0 = time.time()
             rerr = ""
@@ -1887,8 +1887,8 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
             chat_req = upstreams.apply_param_overrides(key, model, chat_req)
             # 客户端可能传字符串数字/布尔（如 "temperature":"0.95"），统一归一化为 JSON 原生类型
             convert.normalize_body_types(chat_req)
-            # 带无意义 tool_choice(无 tools)会被严格上游拒绝,转发前清理
-            convert.sanitize_tool_choice(chat_req)
+            # 清理会被严格上游拒绝的组合(tool_choice 无 tools、非法 max_tokens 等)
+            convert.sanitize_request(chat_req)
             raw = json.dumps(chat_req, ensure_ascii=False, separators=(",", ":"))
             t0 = time.time()
             rerr = ""

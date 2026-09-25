@@ -119,6 +119,7 @@ const LOADERS = {
   dash: () => loadOverview(),
   keys: () => loadKeys(),
   upstreams: () => loadUpstreams(),
+  tokens: () => loadTokens(),
   logs: () => loadLogs(),
   queue: () => loadQueue(),
   test: () => loadTestModels(),
@@ -830,6 +831,81 @@ function bindImport() {
   });
 }
 
+/* ================= 访问令牌 ================= */
+const tokReveal = new Set();
+
+async function loadTokens() {
+  const d = await run(() => api('tokens'));
+  if (!d) return;
+  const tb = $('#tok-rows'); tb.innerHTML = '';
+  if (!d.rows.length) {
+    const tr = el('tr'); const td = el('td', 'text-muted text-center py-4', '—');
+    td.colSpan = 3; tr.appendChild(td); tb.appendChild(tr);
+    return;
+  }
+  for (const t of d.rows) {
+    const tr = el('tr');
+    const tdT = el('td');
+    const code = el('code', 'key-mono');
+    code.textContent = tokReveal.has(t.t) ? t.t : t.t.slice(0, 11) + '…' + t.t.slice(-4);
+    code.style.cursor = 'pointer'; code.title = '显示/隐藏';
+    code.onclick = () => { tokReveal.has(t.t) ? tokReveal.delete(t.t) : tokReveal.add(t.t); loadTokens(); };
+    const copy = el('button', 'btn btn-sm btn-link py-0 ps-1', '复制');
+    copy.onclick = () => navigator.clipboard.writeText(t.t).then(() => toast('已复制'));
+    tdT.append(code, copy);
+    tr.appendChild(tdT);
+    const tdM = el('td');
+    const mWrap = el('div', 'small');
+    if (t.m && t.m.length) {
+      t.m.forEach((m, i) => {
+        if (i) mWrap.appendChild(document.createTextNode(', '));
+        mWrap.appendChild(el('span', 'badge bg-primary-subtle text-primary me-1', m));
+      });
+    } else {
+      mWrap.appendChild(el('span', 'text-muted', '全部模型'));
+    }
+    tdM.appendChild(mWrap);
+    tr.appendChild(tdM);
+    const tdOp = el('td', 'text-end');
+    const grp = el('div', 'btn-group btn-group-sm');
+    const mk = (label, cls, fn) => { const b = el('button', 'btn btn-sm ' + cls, label); b.onclick = fn; grp.appendChild(b); };
+    mk('编辑模型', 'btn-outline-primary', guard(async () => {
+      const val = await uiPrompt('设置该令牌可用的模型（逗号分隔，留空=全部）',
+        (t.m || []).join(', '), {title: '模型限制', placeholder: 'kimi-k3, glm-5.3'});
+      if (val === null) return;
+      await api('tokens/update', {method: 'POST', json: {t: t.t, m: val}});
+      toast('已更新'); loadTokens();
+    }));
+    mk('删除', 'btn-outline-danger', guard(async () => {
+      if (await uiConfirm(`删除该令牌？使用它的客户端将立即失效。`, {danger: true, okText: '删除'})) {
+        await api('tokens/delete', {method: 'POST', json: {t: t.t}});
+        loadTokens();
+      }
+    }));
+    tdOp.appendChild(grp);
+    tr.appendChild(tdOp);
+    tb.appendChild(tr);
+  }
+}
+
+function bindTokens() {
+  $('#tok-add').onclick = guard(async () => {
+    const wasCustom = !!$('#tok-name').value.trim();
+    const r = await api('tokens', {method: 'POST', json: {
+      t: $('#tok-name').value.trim(), m: $('#tok-models').value.trim(),
+    }});
+    $('#tok-name').value = ''; $('#tok-models').value = '';
+    if (wasCustom) {
+      toast('已添加');
+    } else {
+      navigator.clipboard.writeText(r.token).catch(() => {});
+      toast(`已生成并复制：${r.token.slice(0, 18)}…`);
+    }
+    loadTokens();
+  });
+}
+bindTokens();
+
 /* ================= 日志 ================= */
 const logsState = {filter: 'all', rows: []};
 const EP_NAMES = {chat: 'chat/completions', resp: 'responses', cmpl: 'completions', emb: 'embeddings', models: 'models', test: '测试'};
@@ -1009,10 +1085,6 @@ async function loadSettings() {
   $('#set-herr').checked = !!c.hide_upstream_errors;
   $('#set-mhide').checked = !!c.hide_mapped_names;
   $('#set-watchdog').checked = !!c.watchdog_enabled;
-  $('#set-tokens').value = (c.gateway_tokens || []).map(t => {
-    if (typeof t === 'string') return t;
-    return t.m && t.m.length ? `${t.t} | ${t.m.join(',')}` : t.t;
-  }).join('\n');
 }
 
 function bindSettings() {
@@ -1026,7 +1098,6 @@ function bindSettings() {
     config.hide_upstream_errors = $('#set-herr').checked;
     config.hide_mapped_names = $('#set-mhide').checked;
     config.watchdog_enabled = $('#set-watchdog').checked;
-    config.gateway_tokens = $('#set-tokens').value;
     await api('settings', {method: 'POST', json: {config}});
     toast('已保存'); loadSettings(); fillDocs();
   });

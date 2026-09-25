@@ -177,6 +177,7 @@ details.upgrp[open]{background:#fff}
     <a href="javascript:void(0)" data-pane="keys"><i class="bi bi-key"></i>账号池</a>
     <a href="javascript:void(0)" data-pane="upstreams"><i class="bi bi-hdd-network"></i>上游</a>
     <a href="javascript:void(0)" data-pane="import"><i class="bi bi-upload"></i>导入</a>
+    <a href="javascript:void(0)" data-pane="tokens"><i class="bi bi-shield-lock"></i>访问令牌</a>
     <a href="javascript:void(0)" data-pane="logs"><i class="bi bi-list-ul"></i>日志</a>
     <a href="javascript:void(0)" data-pane="queue"><i class="bi bi-hourglass-split"></i>排队</a>
     <a href="javascript:void(0)" data-pane="test"><i class="bi bi-chat-dots"></i>模型测试</a>
@@ -451,6 +452,31 @@ details.upgrp[open]{background:#fff}
   </div></div>
 </section>
 
+<!-- 访问令牌 -->
+<section class="pane" id="pane-tokens">
+  <h2 class="pane-title">访问令牌</h2>
+  <div class="card mb-3">
+    <div class="card-header">添加令牌</div>
+    <div class="card-body">
+      <div class="row g-2 align-items-end">
+        <div class="col-md-4"><label class="form-label" for="tok-name">令牌（留空自动生成）</label>
+          <input class="form-control form-control-sm font-monospace" id="tok-name" placeholder="sk-gw-…"></div>
+        <div class="col-md-5"><label class="form-label" for="tok-models">可用模型（逗号分隔，空=全部模型）</label>
+          <input class="form-control form-control-sm" id="tok-models" placeholder="kimi-k3, glm-5.3"></div>
+        <div class="col-md-3"><button id="tok-add" class="btn btn-sm btn-primary w-100">添加</button></div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="table-responsive">
+    <table class="table table-hover align-middle">
+      <thead><tr><th>令牌</th><th>可用模型</th><th class="text-end">操作</th></tr></thead>
+      <tbody id="tok-rows"></tbody>
+    </table>
+    </div>
+  </div>
+</section>
+
 <!-- 日志 -->
 <section class="pane" id="pane-logs">
   <h2 class="pane-title">日志</h2>
@@ -587,7 +613,7 @@ details.upgrp[open]{background:#fff}
   <div class="row g-3">
     <div class="col-lg-7">
       <div class="card mb-3">
-        <div class="card-header">调度与限额</div>
+        <div class="card-header"><i class="bi bi-sliders me-2 text-muted"></i>调度与限额</div>
         <div class="card-body">
           <div class="row g-3">
             <div class="col-md-3"><label class="form-label" for="set-rate">单账号 RPM</label>
@@ -616,7 +642,7 @@ details.upgrp[open]{background:#fff}
         </div>
       </div>
       <div class="card mb-3">
-        <div class="card-header">重试 / 退避 / 超时（全局默认）</div>
+        <div class="card-header"><i class="bi bi-arrow-repeat me-2 text-muted"></i>重试 / 退避 / 超时</div>
         <div class="card-body">
           <div class="row g-3">
             <div class="col-md-3"><label class="form-label" for="set-retries">失败换号重试次数</label>
@@ -641,7 +667,7 @@ details.upgrp[open]{background:#fff}
         </div>
       </div>
       <div class="card mb-3">
-        <div class="card-header">封禁与账号保护（全局默认）</div>
+        <div class="card-header"><i class="bi bi-shield-check me-2 text-muted"></i>封禁与账号保护</div>
         <div class="card-body">
           <div class="row g-3">
             <div class="col-md-3"><label class="form-label" for="set-ban-step">失败封禁阶梯步长（秒）</label>
@@ -656,20 +682,18 @@ details.upgrp[open]{background:#fff}
         </div>
       </div>
       <div class="card mb-3">
-        <div class="card-header">模型限制</div>
+        <div class="card-header"><i class="bi bi-list-check me-2 text-muted"></i>模型限制</div>
         <div class="card-body">
           <div class="row g-3">
             <div class="col-md-6"><label class="form-label" for="set-mwl">全局白名单（空=不限）</label>
               <textarea class="form-control form-control-sm font-monospace" id="set-mwl" rows="3" placeholder="deepseek-ai/deepseek-v4-flash-0731&#10;meta/llama-3.3-70b-instruct"></textarea></div>
             <div class="col-md-6"><label class="form-label" for="set-mbl">全局黑名单</label>
               <textarea class="form-control form-control-sm font-monospace" id="set-mbl" rows="3" placeholder="模型ID，逗号或换行分隔"></textarea></div>
-            <div class="col-12"><label class="form-label" for="set-tokens">API 访问令牌（每行一个；可附加 | 模型A,模型B 限定该令牌可用模型，| * 不限）</label>
-              <textarea class="form-control form-control-sm font-monospace" id="set-tokens" rows="3" placeholder="sk-gw-xxxx&#10;sk-gw-yyyy | deepseek-ai/deepseek-v4-flash-0731,meta/llama-3.3-70b-instruct"></textarea></div>
           </div>
         </div>
       </div>
       <div class="card mb-3">
-        <div class="card-header">隐私与渠道兼容</div>
+        <div class="card-header"><i class="bi bi-eye-slash me-2 text-muted"></i>隐私与渠道兼容</div>
         <div class="card-body">
           <div class="row g-3">
             <div class="col-md-6 d-flex align-items-end pb-1">
@@ -690,7 +714,7 @@ details.upgrp[open]{background:#fff}
         </div>
       </div>
       <div class="card mb-3">
-        <div class="card-header">防风控与熔断（全局默认）</div>
+        <div class="card-header"><i class="bi bi-activity me-2 text-muted"></i>防风控与熔断</div>
         <div class="card-body">
           <div class="row g-3">
             <div class="col-md-3"><label class="form-label" for="set-c429">429 限流冷却（秒）</label>
@@ -721,7 +745,7 @@ details.upgrp[open]{background:#fff}
         </div>
       </div>
       <div class="card mb-3">
-        <div class="card-header">配置同步</div>
+        <div class="card-header"><i class="bi bi-arrow-left-right me-2 text-muted"></i>配置同步</div>
         <div class="card-body">
           <div class="d-flex flex-wrap gap-2 align-items-center">
             <a id="cfg-export" class="btn btn-sm btn-outline-primary" href="#">导出配置（JSON）</a>
@@ -733,7 +757,7 @@ details.upgrp[open]{background:#fff}
         </div>
       </div>
       <div class="card">
-        <div class="card-header">排队与其他</div>
+        <div class="card-header"><i class="bi bi-hourglass-split me-2 text-muted"></i>排队与其他</div>
         <div class="card-body">
           <div class="row g-3">
             <div class="col-md-6 d-flex align-items-end pb-1">
@@ -780,7 +804,7 @@ details.upgrp[open]{background:#fff}
     </div>
     <div class="col-lg-5">
       <div class="card mb-3">
-        <div class="card-header">修改密码</div>
+        <div class="card-header"><i class="bi bi-person-lock me-2 text-muted"></i>修改密码</div>
         <div class="card-body">
           <div class="row g-2">
             <div class="col-12"><input type="password" class="form-control form-control-sm" id="pwd-old" placeholder="当前密码"></div>
@@ -790,7 +814,7 @@ details.upgrp[open]{background:#fff}
         </div>
       </div>
       <div class="card border-danger">
-        <div class="card-header text-danger">危险操作</div>
+        <div class="card-header text-danger"><i class="bi bi-exclamation-triangle me-2"></i>危险操作</div>
         <div class="card-body d-flex flex-wrap gap-2">
           <button id="btn-reset-stats" class="btn btn-sm btn-outline-secondary">重置全部统计</button>
           <button id="btn-clear-logs" class="btn btn-sm btn-outline-secondary">清空日志</button>

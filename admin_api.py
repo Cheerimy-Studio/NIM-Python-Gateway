@@ -686,6 +686,115 @@ async def stats_reset(request: Request):
     return {"ok": True}
 
 
+# ============================================================ 访问令牌
+
+
+def _tokens_rows(cfg: dict) -> list:
+    out = []
+    for t in cfg.get("gateway_tokens") or []:
+        if isinstance(t, str):
+            out.append({"t": t, "m": []})
+        elif isinstance(t, dict):
+            out.append({"t": str(t.get("t") or ""), "m": [str(x) for x in (t.get("m") or [])]})
+    return out
+
+
+@router.get("/tokens")
+async def tokens_list(request: Request):
+    bad = _require(request)
+    if bad:
+        return bad
+    return {"rows": _tokens_rows(STORE.load()["config"])}
+
+
+@router.post("/tokens")
+async def tokens_add(request: Request):
+    bad = _require(request)
+    if bad:
+        return bad
+    body = await request.json()
+    t = str(body.get("t") or "").strip()
+    m = body.get("m")
+    if not t:
+        import os
+
+        t = "sk-gw-" + os.urandom(16).hex()
+    if len(t) < 8 or len(t) > 200:
+        return JSONResponse({"error": {"message": "令牌长度需在 8-200 之间"}}, status_code=400)
+    if isinstance(m, str):
+        m = [x.strip() for x in m.replace("，", ",").split(",")]
+    mlist = list(dict.fromkeys(str(x).strip() for x in (m or []) if str(x).strip()))
+
+    state = {"dup": False}
+
+    def _fn(db: dict):
+        toks = db["config"].setdefault("gateway_tokens", [])
+        for x in toks:
+            xt = x.get("t") if isinstance(x, dict) else x
+            if xt == t:
+                state["dup"] = True
+                return
+        toks.append({"t": t, "m": mlist})
+
+    await STORE.aupdate(_fn)
+    STORE.flush()
+    if state["dup"]:
+        return JSONResponse({"error": {"message": "令牌已存在"}}, status_code=400)
+    return {"ok": True, "token": t, "m": mlist}
+
+
+@router.post("/tokens/update")
+async def tokens_update(request: Request):
+    bad = _require(request)
+    if bad:
+        return bad
+    body = await request.json()
+    t = str(body.get("t") or "")
+    m = body.get("m")
+    if isinstance(m, str):
+        m = [x.strip() for x in m.replace("，", ",").split(",")]
+    mlist = list(dict.fromkeys(str(x).strip() for x in (m or []) if str(x).strip()))
+    found = [False]
+
+    def _fn(db: dict):
+        toks = db["config"].get("gateway_tokens") or []
+        for i, x in enumerate(toks):
+            xt = x.get("t") if isinstance(x, dict) else x
+            if xt == t:
+                db["config"]["gateway_tokens"][i] = {"t": t, "m": mlist}
+                found[0] = True
+                return
+
+    await STORE.aupdate(_fn)
+    STORE.flush()
+    if not found[0]:
+        return JSONResponse({"error": {"message": "令牌不存在"}}, status_code=404)
+    return {"ok": True}
+
+
+@router.post("/tokens/delete")
+async def tokens_delete(request: Request):
+    bad = _require(request)
+    if bad:
+        return bad
+    body = await request.json()
+    t = str(body.get("t") or "")
+    removed = [False]
+
+    def _fn(db: dict):
+        toks = db["config"].get("gateway_tokens") or []
+        new = [x for x in toks if (x.get("t") if isinstance(x, dict) else x) != t]
+        if len(new) != len(toks):
+            removed[0] = True
+        db["config"]["gateway_tokens"] = new
+
+    await STORE.aupdate(_fn)
+    STORE.flush()
+    if not removed[0]:
+        return JSONResponse({"error": {"message": "令牌不存在"}}, status_code=404)
+    return {"ok": True}
+
+
 # ============================================================ 训练资料
 
 

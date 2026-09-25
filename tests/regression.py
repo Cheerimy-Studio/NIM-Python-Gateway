@@ -56,6 +56,13 @@ async def chat(request: Request):
                          "msg": "Value error, When using `tool_choice`, `tools` must be set."}]},
             status_code=400,
         )
+    _mt = b.get("max_tokens") or b.get("max_completion_tokens")
+    if isinstance(_mt, int) and _mt <= 0:
+        # 模拟严格上游:max_tokens 非法值(客户端按上下文窗口算出超大负数)直接拒绝
+        return JSONResponse(
+            {"error": {"message": "max_tokens must be at least 1, got %s. (parameter=max_tokens)" % _mt}},
+            status_code=400,
+        )
     if m == "chdown":
         return JSONResponse({"error":{"message":"No available channel"}}, status_code=500)
     if m == "nousage":
@@ -1018,6 +1025,71 @@ try:
         _keep.get("tool_choice") == "auto" and "tool_choice" not in _drop and "tool_choice" not in _drop2,
         "keep=%s drop=%s drop2=%s" % ("tool_choice" in _keep, "tool_choice" in _drop, "tool_choice" in _drop2),
     )
+
+    # 访问令牌管理(CRUD):从设置迁移出的独立板块
+    r_tok = a.post("/api/tokens", json={})
+    new_tok = r_tok.json().get("token") or ""
+    add("令牌:自动生成并添加", r_tok.status_code == 200 and new_tok.startswith("sk-gw-"), new_tok[:18])
+    r_dup = a.post("/api/tokens", json={"t": new_tok})
+    add("令牌:重复添加被拒", r_dup.status_code == 400, "st=%s" % r_dup.status_code)
+    r_lim_full = c.get("/v1/models").json()
+    full_ids = [x["id"] for x in r_lim_full.get("data") or []]
+    add("令牌:清单可读", bool(full_ids), "当前 %d 个模型" % len(full_ids))
+    target_model = full_ids[0] if full_ids else "mock-model"
+    r_lim = a.post("/api/tokens", json={"t": "sk-gw-testlimit01", "m": target_model})
+    with httpx.Client(base_url="http://127.0.0.1:18213", timeout=30,
+                      headers={"Authorization": "Bearer sk-gw-testlimit01"}) as c_lim:
+        r_models = c_lim.get("/v1/models").json()
+    add("令牌:模型限制生效",
+        r_lim.status_code == 200
+        and [x["id"] for x in r_models.get("data") or []] == [target_model],
+        "限制 %r 后可见=%s" % (target_model, [x["id"] for x in r_models.get("data") or []]))
+    r_upd = a.post("/api/tokens/update", json={"t": "sk-gw-testlimit01", "m": ""})
+    with httpx.Client(base_url="http://127.0.0.1:18213", timeout=30,
+                      headers={"Authorization": "Bearer sk-gw-testlimit01"}) as c_lim2:
+        r_models2 = c_lim2.get("/v1/models").json()
+    add("令牌:更新为全部模型",
+        r_upd.status_code == 200 and len(r_models2.get("data") or []) > 1,
+        "清空限制后可见 %d 个" % len(r_models2.get("data") or []))
+    a.post("/api/tokens/delete", json={"t": "sk-gw-testlimit01"})
+    a.post("/api/tokens/delete", json={"t": new_tok})
+    with httpx.Client(base_url="http://127.0.0.1:18213", timeout=30,
+                      headers={"Authorization": "Bearer sk-gw-testlimit01"}) as c_lim3:
+        r_gone = c_lim3.get("/v1/models")
+    rows_t2 = a.get("/api/tokens").json().get("rows") or []
+    add("令牌:删除后立即失效",
+        r_gone.status_code == 401
+        and all(x["t"] != new_tok for x in rows_t2)
+        and all(x["t"] != "sk-gw-testlimit01" for x in rows_t2),
+        "删除后请求 st=%s" % r_gone.status_code)
+
+    # 非法 max_tokens(客户端算出超大负数):网关转发前清理,不再被严格上游 400
+    r_neg = c.post(
+        "/v1/chat/completions",
+        json={"model": "mock-model", "max_tokens": -134237,
+              "messages": [{"role": "user", "content": "hi"}]},
+    )
+    add("非法 max_tokens 被清理", r_neg.status_code == 200, "st=%s" % r_neg.status_code)
+
+    # 安全守护:管理端点认证全覆盖(AST 静态检查,Python 3.8 兼容)
+    import ast as _ast
+
+    def _has_require(fn):
+        for stmt in fn.body[:3]:
+            for n in _ast.walk(stmt):
+                if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name) and n.func.id == "_require":
+                    return True
+        return False
+
+    _missing = []
+    _tree = _ast.parse(open(os.path.join(ROOT, "admin_api.py"), encoding="utf-8").read())
+    for _n in _tree.body:
+        if isinstance(_n, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and _n.name not in ("login", "logout"):
+            _decs = [d.func.attr for d in _n.decorator_list
+                     if isinstance(d, _ast.Call) and isinstance(d.func, _ast.Attribute)]
+            if any(x in ("get", "post") for x in _decs) and not _has_require(_n):
+                _missing.append(_n.name)
+    add("安全:管理端点认证全覆盖", not _missing, "缺失: %s" % (_missing or "无"))
 
     # 看门狗雪崩判定(纯函数直测)
     import server as _srv
