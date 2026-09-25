@@ -558,6 +558,8 @@ INT_SETTINGS = {
     "log_max",
     "session_log_max",
     "training_log_max",
+    "training_min_chars",
+    "watchdog_minutes",
     "acct_concurrency",
     "total_concurrency",
     "pool_rpm_cap",
@@ -578,6 +580,7 @@ BOOL_SETTINGS = {
     "hide_upstream_errors",
     "hide_mapped_names",
     "breaker_enabled",
+    "watchdog_enabled",
 }
 
 

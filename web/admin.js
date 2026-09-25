@@ -994,6 +994,8 @@ const SET_FIELDS = [
   ['set-pover', 'param_overrides'],
   ['set-smax', 'session_log_max'],
   ['set-trmax', 'training_log_max'],
+  ['set-trmin', 'training_min_chars'],
+  ['set-watchmin', 'watchdog_minutes'],
 ];
 
 async function loadSettings() {
@@ -1006,6 +1008,7 @@ async function loadSettings() {
   $('#set-breaker').checked = !!c.breaker_enabled;
   $('#set-herr').checked = !!c.hide_upstream_errors;
   $('#set-mhide').checked = !!c.hide_mapped_names;
+  $('#set-watchdog').checked = !!c.watchdog_enabled;
   $('#set-tokens').value = (c.gateway_tokens || []).map(t => {
     if (typeof t === 'string') return t;
     return t.m && t.m.length ? `${t.t} | ${t.m.join(',')}` : t.t;
@@ -1022,6 +1025,7 @@ function bindSettings() {
     config.breaker_enabled = $('#set-breaker').checked;
     config.hide_upstream_errors = $('#set-herr').checked;
     config.hide_mapped_names = $('#set-mhide').checked;
+    config.watchdog_enabled = $('#set-watchdog').checked;
     config.gateway_tokens = $('#set-tokens').value;
     await api('settings', {method: 'POST', json: {config}});
     toast('已保存'); loadSettings(); fillDocs();

@@ -750,6 +750,16 @@ details.upgrp[open]{background:#fff}
               <input type="number" min="0" class="form-control form-control-sm" id="set-smax" value="100"></div>
             <div class="col-md-6"><label class="form-label" for="set-trmax">训练资料保留条数（0 关闭）</label>
               <input type="number" min="0" class="form-control form-control-sm" id="set-trmax" value="500"></div>
+            <div class="col-md-6"><label class="form-label" for="set-trmin">训练资料最小响应长度（0 不过滤）</label>
+              <input type="number" min="0" class="form-control form-control-sm" id="set-trmin" value="20"></div>
+            <div class="col-md-6 d-flex align-items-end pb-1">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="set-watchdog">
+                <label class="form-check-label small" for="set-watchdog">雪崩自动重启（全池不可用时）</label>
+              </div>
+            </div>
+            <div class="col-md-6"><label class="form-label" for="set-watchmin">雪崩持续判定分钟数</label>
+              <input type="number" min="1" class="form-control form-control-sm" id="set-watchmin"></div>
             <div class="col-md-6"><label class="form-label" for="set-logmax">日志保留条数（0 关闭）</label>
               <input type="number" min="0" class="form-control form-control-sm" id="set-logmax"></div>
             <div class="col-md-6 d-flex align-items-end pb-1">

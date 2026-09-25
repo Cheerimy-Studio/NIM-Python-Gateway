@@ -348,7 +348,6 @@ def _acquire_fn(db: dict, out: dict, est_tokens: int, model: str) -> None:
         "model_hidden": 0,
         "acct_conc": 0,
         "chan_conc": 0,
-        "hourly": 0,
     }
     # 渠道在途总量（进程内计数，release 时递减）
     chan_inflight: dict[str, int] = {}
@@ -475,16 +474,17 @@ def _acquire_fn(db: dict, out: dict, est_tokens: int, model: str) -> None:
             _replace_key(db, k)
             reason["daily"] += 1
             continue
-        # 日 token 限额是独立闸门：不能挂在小时请求限额上，
-        # 否则 hourly=-1(不限)时日 token 限额会静默失效
-        if daily_tok > 0 and d.get("tokens", 0) >= daily_tok:
-            _apply_ban(k, int(_tomorrow(now)), "daily_token_cap")
-            _replace_key(db, k)
+        # 日 token 上限的处置是「限速」而非「禁用」:超过后限流到每小时 N 个请求
+        # (设置项就叫「触发日 token 上限后每小时请求上限」)。这四个条件是一个整体:
+        # 拆开就会退化成「独立的小时请求硬限」,健康账号也会被拦 —— 线上出现过
+        # 「小时限 137 / 共 201」的大面积误伤,就是这个条件被拆开的后果。
+        if (
+            daily_tok > 0
+            and d.get("tokens", 0) >= daily_tok
+            and hourly > 0
+            and (k.get("hour_requests") or {}).get(hour, 0) >= hourly
+        ):
             reason["daily"] += 1
-            continue
-        # 小时请求限额：独立判断（此前被绑在日 token 条件里，从未单独生效）
-        if hourly > 0 and (k.get("hour_requests") or {}).get(hour, 0) >= hourly:
-            reason["hourly"] += 1
             continue
 
         weight = 10
@@ -581,7 +581,6 @@ def _reason_text(r: dict, total: int) -> str:
         ("RPM", "rpm"),
         ("TPM", "tpm"),
         ("日限", "daily"),
-        ("小时限", "hourly"),
         ("上游停用", "pool"),
         ("上游RPM", "pool_rpm"),
         ("上游日限", "pool_daily"),

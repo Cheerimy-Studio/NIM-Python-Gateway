@@ -853,8 +853,8 @@ try:
             "batch=%s 仍封禁=%s status异常=%s 解封后请求=%s" % (rb.status_code, still, st_bad, r_ok.status_code))
 
     # ---- 训练资料收集 ----
-    # 非流式 chat:成功请求必须收集「完整消息 + 回复」
-    a.post("/api/settings", json={"config": {"training_log_max": 500}})
+    # 非流式 chat:成功请求必须收集「完整消息 + 回复」(测试先关质量过滤)
+    a.post("/api/settings", json={"config": {"training_log_max": 500, "training_min_chars": 0}})
     a.post("/api/training/clear", json={})
     c.post(
         "/v1/chat/completions",
@@ -924,6 +924,79 @@ try:
     a.post("/api/training/clear", json={})
     tr5 = a.get("/api/training?n=10").json()
     add("训练资料:清空", (tr5.get("rows") or []) == [] and tr5.get("total") == 0, "total=%s" % tr5.get("total"))
+
+    # 质量过滤:短回复/超短输入的垃圾语料(冒烟测试、模型测试页)不收
+    a.post("/api/settings", json={"config": {"training_min_chars": 20}})
+    c.post(
+        "/v1/chat/completions",
+        json={"model": "mock-model", "messages": [{"role": "user", "content": "hi"}]},
+    )  # 回复 "ok"(2 字符) → 不收
+    c.post(
+        "/v1/chat/completions",
+        json={"model": "nousage", "messages": [{"role": "user", "content": "???"}]},
+    )  # 回复 "ok",用户输入 3 字符 → 不收
+    time.sleep(0.5)
+    trq = a.get("/api/training?n=20").json()
+    junk = [e for e in (trq.get("rows") or []) if len(str(e.get("response") or "").strip()) < 20]
+    add("训练资料:短/垃圾语料被过滤", (trq.get("total") or 0) == 0 and not junk, "total=%s 垃圾=%d" % (trq.get("total"), len(junk)))
+    a.post("/api/settings", json={"config": {"training_min_chars": 0}})
+
+    # 小时限语义:hourly 是「日 token 超标后的限速阀」,不是独立小时硬限 ——
+    # 健康账号本小时请求数超 hourly 也必须可调度(被拆成独立闸门时,
+    # 线上出现「小时限 137/共 201」大面积误伤)。用独立账号精确验证。
+    kids_all = [k["id"] for k in a.get("/api/keys").json()["rows"]]
+    a.post("/api/keys/import", json={
+        "text": "fresh@t.com,p,nvapi-fresh12345678", "upstream_id": uid,
+    })
+    kids_fresh = [k["id"] for k in a.get("/api/keys").json()["rows"] if k["email"] == "fresh@t.com"]
+    a.post("/api/keys/batch", json={"op": "disable", "ids": kids_all})
+    a.post("/api/settings", json={"config": {
+        "hourly_request_limit": 5, "daily_token_limit": 0, "daily_request_cap": 0,
+        "rate_limit_per_minute": 100000, "acct_concurrency": 0, "warmup_seconds": 0,
+    }})
+    h_codes = []
+    for _i in range(7):  # 7 次 > hourly=5,日 token 未超 → 必须全部放行
+        h_codes.append(c.post(
+            "/v1/chat/completions",
+            json={"model": "mock-model", "messages": [{"role": "user", "content": "hi"}]},
+        ).status_code)
+    add("小时限不独立拦截健康账号", h_codes == [200] * 7,
+        "7 连发=%s(hourly=5 且已超,仍全部放行)" % (sorted(set(h_codes)),))
+    # 日 token 超标 + 小时达限 → 才触发限速(daily_token_limit=1 使账号立即超标)
+    a.post("/api/settings", json={"config": {"daily_token_limit": 1}})
+    r_th = c.post(
+        "/v1/chat/completions",
+        json={"model": "mock-model", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    add("日token超标后按小时限速", r_th.status_code == 429, "st=%s(应为限速 429)" % r_th.status_code)
+    # 恢复环境:删除 fresh 账号 + 启用全部 + 清累计统计(后续测试回到干净基线)
+    a.post("/api/settings", json={"config": {
+        "daily_token_limit": 0, "daily_request_cap": 100, "hourly_request_limit": 5,
+    }})
+    for kid in kids_fresh:
+        a.post("/api/keys/op", json={"op": "delete", "id": kid})
+    a.post("/api/keys/batch", json={"op": "enable", "ids": kids_all})
+    a.post("/api/keys/batch", json={"op": "unban", "ids": kids_all})
+    a.post("/api/keys/batch", json={"op": "reset", "ids": kids_all})
+
+    # 看门狗雪崩判定(纯函数直测)
+    import server as _srv
+    _db = {"keys": [
+        {"id": "k1", "enabled": True, "banned_until": now_i + 600},
+        {"id": "k2", "enabled": True, "cooldown_until": now_i + 600},
+        {"id": "k3", "enabled": True},
+    ], "queue": [{"id": "q", "t": time.time(), "ip": "-", "ep": "chat", "model": "m"}]}
+    d1, i1 = _srv.watchdog_dead(_db, {}, now_i, {"acct_concurrency": 2})
+    d2, _ = _srv.watchdog_dead(_db, {"k3": 2}, now_i, {"acct_concurrency": 2})  # k3 并发满 → 全灭
+    _db["queue"] = []
+    d3, _ = _srv.watchdog_dead(_db, {"k3": 2}, now_i, {"acct_concurrency": 2})  # 无等待者
+    _db["queue"] = [{"id": "q", "t": time.time(), "ip": "-", "ep": "chat", "model": "m"}]
+    d4, _ = _srv.watchdog_dead(_db, {"k3": 1}, now_i, {"acct_concurrency": 2})  # k3 仍可用
+    add("看门狗雪崩判定", (not d1) and d2 and (not d3) and (not d4),
+        "部分可用=%s 全灭=%s 无等待=%s 有可用=%s" % (d1, d2, d3, d4))
+    _cfgw = a.get("/api/settings").json()
+    add("看门狗配置项在位", bool(_cfgw.get("watchdog_enabled")) and int(_cfgw.get("watchdog_minutes") or 0) >= 1,
+        "enabled=%s minutes=%s" % (_cfgw.get("watchdog_enabled"), _cfgw.get("watchdog_minutes")))
 
     import asyncio
 

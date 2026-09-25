@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import os
 import random
 import re
 import sys
@@ -60,6 +61,88 @@ async def _shutdown_http():
 _flush_task: asyncio.Task | None = None
 
 
+# ============================================================ 看门狗(雪崩自愈)
+
+
+def watchdog_dead(db: dict, inflight: dict, now: int, cfg: dict) -> tuple[bool, dict]:
+    """雪崩判定:所有启用账号都被「封禁/冷却/并发占满」挡住,且队列里还有等待者。
+
+    纯函数(不碰 STORE),便于回归测试直接验证。队列非空是必要条件:
+    空闲网关全账号不可用不算雪崩(没有受害请求)。
+    """
+    enabled = [k for k in (db.get("keys") or []) if isinstance(k, dict) and k.get("enabled")]
+    if not enabled:
+        return False, {}
+    conc = int(cfg.get("acct_concurrency") or 0)
+    bad = 0
+    for k in enabled:
+        if (k.get("banned_until") or 0) > now or (k.get("cooldown_until") or 0) > now:
+            bad += 1
+        elif conc > 0 and inflight.get(str(k.get("id") or ""), 0) >= conc:
+            bad += 1
+    qn = len([e for e in (db.get("queue") or []) if isinstance(e, dict) and now - e.get("t", 0) < 900])
+    info = {"bad": bad, "total": len(enabled), "queue": qn}
+    return bad >= len(enabled) and qn > 0, info
+
+
+def _self_restart(reason: str) -> None:
+    """以同 PID 自我重启(execv 替换进程镜像):
+
+    - `python -m uvicorn server:app ...` 下 sys.argv[0] 是 uvicorn 的 __main__.py,
+      原样拼接即可复启;argv[0] 不可执行(进程管理器拉起等场景)则不重启防误杀
+    - Python socket 默认不可继承,execv 后旧监听端口随之释放,无端口冲突
+    """
+    STORE.flush()
+    argv0 = sys.argv[0] if sys.argv and sys.argv[0] else ""
+    if not (argv0 and os.path.exists(argv0)):
+        print("[watchdog] 无法自助重启:argv[0] 不可执行 %r" % argv0, file=sys.stderr)
+        return
+    try:
+
+        def _fn(db: dict):
+            if db.get("config", {}).get("log_enabled", True):
+                logs = db.setdefault("logs", [])
+                logs.insert(
+                    0,
+                    [int(time.time()), "watch", "watchdog", "-", 0, 0,
+                     ("看门狗:%s;已自动重启网关(并发泄漏/雪崩自愈)" % reason)[:140], "-", 1, "", 0, 0, 0, 0],
+                )
+                del logs[max(0, int(db["config"].get("log_max") or 200)) :]
+
+        STORE.update(_fn)
+        STORE.flush()
+    except Exception:
+        pass
+    print("[watchdog] %s → execv 重启" % reason, file=sys.stderr)
+    sys.stderr.flush()
+    os.execv(sys.executable, [sys.executable] + list(sys.argv))
+
+
+async def _watchdog_loop() -> None:
+    streak = 0
+    while True:
+        await asyncio.sleep(30)
+        try:
+            cfg = cfg_all()
+            if not cfg.get("watchdog_enabled", True):
+                streak = 0
+                continue
+            dead, info = watchdog_dead(STORE.load(), pool._inflight, int(time.time()), cfg)
+            if dead:
+                streak += 30
+                limit = max(1, _cfgint(cfg, "watchdog_minutes", 3)) * 60
+                if streak >= limit:
+                    _self_restart(
+                        "全池不可用(封禁/冷却/并发满 %s/%s)且队列 %s 个等待,持续 %d 秒"
+                        % (info.get("bad"), info.get("total"), info.get("queue"), streak)
+                    )
+                    return  # execv 失败(不可重启)时退出任务,避免死循环刷日志
+            else:
+                streak = 0
+        except Exception:
+            pass
+
+
 @app.on_event("startup")
 async def _start_flush():
     global _flush_task
@@ -73,6 +156,8 @@ async def _start_flush():
                 pass
 
     _flush_task = asyncio.create_task(_loop())
+    # 雪崩看门狗:全池不可用且队列有等待者持续 N 分钟 → 自动重启(并发泄漏自愈)
+    asyncio.create_task(_watchdog_loop())
     # 启动时确保存在可用渠道：无渠道、或账号绑定了不存在的渠道时自动建默认 NVIDIA 渠道，
     # 否则导入的账号会因没有归属渠道而永远无法被调度
     try:
@@ -565,6 +650,10 @@ async def record_training(
 
     训练收集绝不能影响主请求路径 —— 全 try/except 包裹;
     单条超过 512KB 的大上下文不适合做训练语料,直接跳过(防撑爆 db.json)。
+    质量过滤(training_min_chars,默认 20,0=不过滤):
+    - 回复过短(< 阈值)的(如连通性测试 "ok")不收
+    - 用户输入全部为超短内容(<4 字符,如 "hi"/"测试")的不收 —— 那是冒烟
+      与后台模型测试页产生的垃圾语料,进训练集只会污染
     """
     try:
         if messages is None or not resp_text:
@@ -572,6 +661,15 @@ async def record_training(
         max_n = max(0, _cfgint(cfg, "training_log_max", 500))
         if max_n == 0:
             return
+        min_chars = _cfgint(cfg, "training_min_chars", 20)
+        if min_chars > 0:
+            if len(resp_text.strip()) < min_chars:
+                return
+            if not any(
+                m.get("role") == "user" and len(str(m.get("content") or "").strip()) >= 4
+                for m in messages
+            ):
+                return
         entry = {
             "t": int(time.time()),
             "ep": ep[:8],
