@@ -137,7 +137,7 @@ _page_cache: dict[str, str] = {}
 _NOCACHE = {"Cache-Control": "no-cache, must-revalidate"}
 
 
-def _page(name: str, csrf: str = "", version: str = "1.6.0") -> str:
+def _page(name: str, csrf: str = "", version: str = "1.7.0") -> str:
     html = _page_cache.get(name)
     if html is None:
         html = (WEB_DIR / name).read_text(encoding="utf-8")
