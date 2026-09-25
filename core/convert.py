@@ -86,6 +86,24 @@ def _content_with_images(blocks: Any) -> list | None:
     return parts
 
 
+def sanitize_tool_choice(body: dict) -> dict:
+    """清理「有 tool_choice 但没有 tools」的请求体。
+
+    严格校验的上游(FastAPI/vLLM 系)会直接拒绝:
+      "When using `tool_choice`, `tools` must be set."
+    两种来源:部分客户端无条件附带 tool_choice:"auto";Anthropic/Responses
+    转换器也可能从原请求带出 tool_choice 而 tools 为空。没有 tools 时
+    tool_choice 本身无意义,删掉即可恢复兼容。
+    """
+    if not isinstance(body, dict):
+        return body
+    if body.get("tool_choice") is not None:
+        tools = body.get("tools")
+        if not isinstance(tools, list) or not tools:
+            body.pop("tool_choice", None)
+    return body
+
+
 def map_usage(u: dict | None) -> dict:
     u = u or {}
     # 强制 int:None 会挂 OpenAI SDK 的 pydantic 校验(input_tokens: int)
@@ -190,10 +208,12 @@ def responses_to_chat(req: dict) -> dict:
     if tools:
         chat["tools"] = tools
     tc = req.get("tool_choice")
-    if isinstance(tc, dict) and tc.get("type") == "function" and "name" in tc and "function" not in tc:
-        chat["tool_choice"] = {"type": "function", "function": {"name": tc["name"]}}
-    elif tc is not None:
-        chat["tool_choice"] = tc
+    # tools 为空时丢弃 tool_choice(严格上游拒绝该组合,且无 tools 时它无意义)
+    if tools and tc is not None:
+        if isinstance(tc, dict) and tc.get("type") == "function" and "name" in tc and "function" not in tc:
+            chat["tool_choice"] = {"type": "function", "function": {"name": tc["name"]}}
+        else:
+            chat["tool_choice"] = tc
     return chat
 
 
@@ -371,7 +391,8 @@ def anthropic_to_chat(req: dict) -> dict:
     if tools:
         chat["tools"] = tools
     tc = req.get("tool_choice")
-    if isinstance(tc, dict):
+    # 只有 tools 非空时 tool_choice 才有意义(严格上游会拒绝 tools 空时的 tool_choice)
+    if tools and isinstance(tc, dict):
         ttype = str(tc.get("type") or "auto")
         if ttype == "any":
             chat["tool_choice"] = "required"

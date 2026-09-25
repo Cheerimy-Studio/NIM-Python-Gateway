@@ -48,6 +48,14 @@ async def chat(request: Request):
     if m == "authfail":
         # 401:网关按鉴权失败硬封禁该账号(hard_fail_ban_seconds)
         return JSONResponse({"error":{"message":"invalid api key"}}, status_code=401)
+    if b.get("tool_choice") is not None and not b.get("tools"):
+        # 模拟严格校验的上游(FastAPI/vLLM 系):tool_choice 无 tools 直接拒绝 ——
+        # 网关必须在转发前清理这种无意义组合
+        return JSONResponse(
+            {"detail": [{"type": "value_error", "loc": ["body"],
+                         "msg": "Value error, When using `tool_choice`, `tools` must be set."}]},
+            status_code=400,
+        )
     if m == "chdown":
         return JSONResponse({"error":{"message":"No available channel"}}, status_code=500)
     if m == "nousage":
@@ -978,6 +986,38 @@ try:
     a.post("/api/keys/batch", json={"op": "enable", "ids": kids_all})
     a.post("/api/keys/batch", json={"op": "unban", "ids": kids_all})
     a.post("/api/keys/batch", json={"op": "reset", "ids": kids_all})
+
+    # tool_choice 兼容:客户端/转换器带 tool_choice 而 tools 为空时,严格上游会 400
+    # (线上实测:"When using `tool_choice`, `tools` must be set.")。网关须转发前清理。
+    r_tc = c.post(
+        "/v1/chat/completions",
+        json={"model": "mock-model", "tool_choice": "auto",
+              "messages": [{"role": "user", "content": "hi"}]},
+    )
+    add("tool_choice 无 tools 时被清理(chat)", r_tc.status_code == 200, "st=%s" % r_tc.status_code)
+    r_tc2 = c.post(
+        "/v1/messages",
+        json={"model": "mock-model", "max_tokens": 32, "tool_choice": {"type": "auto"},
+              "messages": [{"role": "user", "content": "hi"}]},
+    )
+    add("tool_choice 无 tools 时被清理(Anthropic)", r_tc2.status_code == 200, "st=%s" % r_tc2.status_code)
+    r_tc3 = c.post(
+        "/v1/responses",
+        json={"model": "mock-model", "tool_choice": "auto", "input": "hi"},
+    )
+    add("tool_choice 无 tools 时被清理(Responses)", r_tc3.status_code == 200, "st=%s" % r_tc3.status_code)
+    # 有 tools 时 tool_choice 必须保留(不能误删)
+    from core import convert as _cv
+    _keep = _cv.sanitize_tool_choice(
+        {"tool_choice": "auto", "tools": [{"type": "function", "function": {"name": "f", "parameters": {}}}]}
+    )
+    _drop = _cv.sanitize_tool_choice({"tool_choice": "auto"})
+    _drop2 = _cv.sanitize_tool_choice({"tool_choice": {"type": "function", "function": {"name": "x"}}, "tools": []})
+    add(
+        "tool_choice 清理不误伤",
+        _keep.get("tool_choice") == "auto" and "tool_choice" not in _drop and "tool_choice" not in _drop2,
+        "keep=%s drop=%s drop2=%s" % ("tool_choice" in _keep, "tool_choice" in _drop, "tool_choice" in _drop2),
+    )
 
     # 看门狗雪崩判定(纯函数直测)
     import server as _srv
