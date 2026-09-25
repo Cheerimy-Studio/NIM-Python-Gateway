@@ -927,27 +927,41 @@ try:
     md = (ev_types.get("message_delta") or [{}])[0]
     ms = (ev_types.get("message_stop") or [{}])[0]
     has_types = "type" in md and "type" in ms
+    # 全量校验:每个 Anthropic 事件 data 的 type 必须与事件名一致(SDK 按 data.type 分发)
+    ant_bad = [ev for ev, lst in ev_types.items() for j in lst if not isinstance(j, dict) or j.get("type") != ev]
     add("Anthropic 流事件带 type 且无 [DONE] 也能收尾",
-        ok_st and has_types and ev_types.get("content_block_delta"),
-        "st=%s message_delta.type=%s message_stop.type=%s 事件=%s"
-        % (rm.status_code, md.get("type"), ms.get("type"), sorted(ev_types)))
+        ok_st and has_types and ev_types.get("content_block_delta") and not ant_bad,
+        "st=%s message_delta.type=%s message_stop.type=%s 事件=%s type不符=%s"
+        % (rm.status_code, md.get("type"), ms.get("type"), sorted(ev_types), ant_bad[:3]))
 
-    # 7) Responses 流无 [DONE] 也必须有 response.completed 终端事件
+    # 7) Responses 流无 [DONE] 也必须有 response.completed 终端事件;
+    #    且每个事件的 data 必须带 "type" 判别字段(OpenAI SDK 按 type 构造事件,
+    #    只发 SSE event 行不够 —— 曾经全部事件都缺 type,SDK 直接构造失败)
     ev2 = []
+    type_bad = []
     with c.stream("POST", "/v1/responses",
                   json={"model": "nodone", "stream": True,
                         "input": "hi"}) as rr2:
         ok_st2 = rr2.status_code == 200
         raw2 = rr2.read().decode("utf-8", "replace")
-    cur_ev = ""
+    cur_ev, cur_data = "", ""
     for line in raw2.split("\n"):
         if line.startswith("event: "):
             cur_ev = line[7:].strip()
         elif line.startswith("data: ") and cur_ev:
+            cur_data = line[6:].strip()
             ev2.append(cur_ev)
+            try:
+                j = json.loads(cur_data)
+            except Exception:
+                j = None
+            if not isinstance(j, dict) or j.get("type") != cur_ev:
+                type_bad.append("%s->%r" % (cur_ev, j if isinstance(j, dict) else j))
             cur_ev = ""
     add("Responses 流无 [DONE] 也收尾", ok_st2 and "response.completed" in ev2,
         "st=%s 事件=%s" % (rr2.status_code, sorted(set(ev2))[:6]))
+    add("Responses 事件 data 带 type 判别字段", ok_st2 and not type_bad,
+        "缺失/不符 %d 条%s" % (len(type_bad), (" 如 " + ";".join(type_bad[:3])) if type_bad else ""))
 
     # 8) 概览 RPM 统计不为 0(buckets 是时间戳列表,以前按 dict+小时键统计恒为 0)
     ov = a.get("/api/overview").json()

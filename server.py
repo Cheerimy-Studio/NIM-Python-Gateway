@@ -240,6 +240,11 @@ class ModelPolicy:
 
 
 def _sse(event: str, data: Any) -> str:
+    # OpenAI Responses SDK 用 data 里的 "type" 字段做判别(discriminator="type"),
+    # 只发 SSE event 行不夠 —— 官方 API 每个事件体都带 type,缺了 SDK 直接构造失败。
+    # 中心注入:所有经此发出的协议事件 data 缺 type 时补上(Anthropic 事件本就带)。
+    if isinstance(data, dict) and "type" not in data:
+        data = {"type": event, **data}
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
