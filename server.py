@@ -594,6 +594,11 @@ async def log_session(
 # ============================================================ 训练资料收集
 
 
+def _no_training(request: Request | None) -> bool:
+    """后台「模型测试」页的请求带跳过标记:内部测试对话不该进训练集。"""
+    return request is not None and bool(request.headers.get("x-ngw-skip-training"))
+
+
 def _train_messages(req: dict) -> list | None:
     """从请求体提取 chat 格式消息(训练语料的输入侧);非对话类请求返回 None。"""
     msgs = req.get("messages")
@@ -1234,12 +1239,13 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                         cfg, model, key["email"], req.get("messages", []), resp_text, rstatus, ip
                     )
                     # 训练资料:完整「输入消息 + 助手回复」(含 reasoning,可筛)
-                    _rm = _m.get("reasoning_content") or _m.get("reasoning") or ""
-                    await record_training(
-                        cfg, ep_tag, model, _train_messages(req),
-                        resp_text if isinstance(resp_text, str) else flatten_content(resp_text),
-                        _rm if isinstance(_rm, str) else "", usage,
-                    )
+                    if not _no_training(request) and _cfgint(cfg, "training_log_max", 500) > 0:
+                        _rm = _m.get("reasoning_content") or _m.get("reasoning") or ""
+                        await record_training(
+                            cfg, ep_tag, model, _train_messages(req),
+                            resp_text if isinstance(resp_text, str) else flatten_content(resp_text),
+                            _rm if isinstance(_rm, str) else "", usage,
+                        )
                 except Exception:
                     pass
                 # 非流式一律声明 application/json：不能原样转发上游的 Content-Type,
@@ -1400,11 +1406,17 @@ def _proxy_stream(
 
     async def gen() -> AsyncGenerator[bytes, None]:
         nonlocal up_bytes, buf, first_chunk_at
-        # 训练资料:透传同时累积输出原文(上限 1MB,防超大响应占内存),结束时提取全文
+        # 训练资料:透传同时累积输出原文(上限 1MB,防超大响应占内存),结束时提取全文。
+        # 功能关闭(training_log_max=0)或请求自带跳过标记(后台「模型测试」页)
+        # 时完全不累积 —— 白吃内存与解析 CPU,测试对话也不该进训练集。
+        train_on = (
+            _cfgint(STORE.load()["config"], "training_log_max", 500) > 0
+            and not (request is not None and request.headers.get("x-ngw-skip-training"))
+        )
         train = bytearray()
 
         def _out(b: bytes) -> bytes:
-            if len(train) < 1048576:
+            if train_on and len(train) < 1048576:
                 train.extend(b)
             return b
 
@@ -1527,7 +1539,7 @@ def _proxy_stream(
             except Exception:
                 pass
             # 训练资料:正常结束的流式对话全文(截断/断连的半截语料污染训练集,不要)
-            if not outcome and not truncated:
+            if not outcome and not truncated and train_on and len(train):
                 try:
                     _content, _reasoning = _train_sse_text(bytes(train))
                     await record_training(
@@ -2091,17 +2103,18 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                 except Exception:
                     pass
                 # 训练资料:协议转换端点同样收集(消息为转换后的 chat 格式)
-                try:
-                    _m = (chat.get("choices") or [{}])[0].get("message", {}) or {}
-                    _txt = _m.get("content") or ""
-                    _rm = _m.get("reasoning_content") or _m.get("reasoning") or ""
-                    await record_training(
-                        cfg, ep, model, _train_messages(chat_req),
-                        _txt if isinstance(_txt, str) else flatten_content(_txt),
-                        _rm if isinstance(_rm, str) else "", usage,
-                    )
-                except Exception:
-                    pass
+                if not _no_training(request) and _cfgint(cfg, "training_log_max", 500) > 0:
+                    try:
+                        _m = (chat.get("choices") or [{}])[0].get("message", {}) or {}
+                        _txt = _m.get("content") or ""
+                        _rm = _m.get("reasoning_content") or _m.get("reasoning") or ""
+                        await record_training(
+                            cfg, ep, model, _train_messages(chat_req),
+                            _txt if isinstance(_txt, str) else flatten_content(_txt),
+                            _rm if isinstance(_rm, str) else "", usage,
+                        )
+                    except Exception:
+                        pass
                 if anthropic:
                     return Response(
                         content=json.dumps(
@@ -2524,7 +2537,7 @@ async def _stream_convert(
             except Exception:
                 pass
             # 训练资料:转换流正常结束时,从状态机取全文记录(截断/断连不收)
-            if not outcome and not truncated:
+            if not outcome and not truncated and not _no_training(request) and _cfgint(cfg, "training_log_max", 500) > 0:
                 try:
                     _reason = getattr(conv, "think_acc", None)
                     if _reason is None:

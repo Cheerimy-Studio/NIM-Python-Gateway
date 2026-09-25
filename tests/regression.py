@@ -1091,6 +1091,28 @@ try:
                 _missing.append(_n.name)
     add("安全:管理端点认证全覆盖", not _missing, "缺失: %s" % (_missing or "无"))
 
+    # 测试页跳过标记:带 X-NGW-Skip-Training 的请求(后台模型测试页)不进训练集
+    a.post("/api/settings", json={"config": {"training_min_chars": 0}})
+    a.post("/api/training/clear", json={})
+    c.headers["X-NGW-Skip-Training"] = "1"
+    c.post(
+        "/v1/chat/completions",
+        json={"model": "mock-model", "messages": [{"role": "user", "content": "这是模型测试页的对话不应收集"}]},
+    )
+    del c.headers["X-NGW-Skip-Training"]
+    time.sleep(0.5)
+    tr_skip = a.get("/api/training?n=20").json()
+    add("训练资料:测试页标记跳过收集", (tr_skip.get("total") or 0) == 0, "total=%s" % tr_skip.get("total"))
+    a.post("/api/settings", json={"config": {"training_min_chars": 20}})
+
+    # 管理端点健壮性:非 dict JSON body 必须 400 而非 500
+    r_bad1 = a.post("/api/tokens", content=b"[1,2]", headers={"content-type": "application/json", "x-csrf": a.headers["X-CSRF"]})
+    r_bad2 = a.post("/api/keys/op", content=b'"str"', headers={"content-type": "application/json", "x-csrf": a.headers["X-CSRF"]})
+    r_bad3 = a.post("/api/keys/batch", content=b"notjson", headers={"content-type": "application/json", "x-csrf": a.headers["X-CSRF"]})
+    add("管理端点:非法请求体返回 400",
+        r_bad1.status_code == 400 and r_bad2.status_code == 400 and r_bad3.status_code == 400,
+        "tokens=%s keysop=%s batch=%s" % (r_bad1.status_code, r_bad2.status_code, r_bad3.status_code))
+
     # 看门狗雪崩判定(纯函数直测)
     import server as _srv
     _db = {"keys": [

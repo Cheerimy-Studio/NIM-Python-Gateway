@@ -63,6 +63,15 @@ def _require(request: Request) -> JSONResponse | None:
     return None
 
 
+async def _json_dict(request: Request) -> dict | None:
+    """读 JSON body;非 dict(数组/字符串/解析失败)返回 None,调用方回 400。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return None
+    return body if isinstance(body, dict) else None
+
+
 @router.post("/login")
 async def login(request: Request):
     ip = request.client.host if request.client else "-"
@@ -318,7 +327,9 @@ async def keys_op(request: Request):
     bad = _require(request)
     if bad:
         return bad
-    body = await request.json()
+    body = await _json_dict(request)
+    if body is None:
+        return JSONResponse({"error": {"message": "请求体格式错误"}}, status_code=400)
     op = str(body.get("op") or "")
     kid = str(body.get("id") or "")
     try:
@@ -348,7 +359,9 @@ async def keys_batch(request: Request):
     bad = _require(request)
     if bad:
         return bad
-    body = await request.json()
+    body = await _json_dict(request)
+    if body is None:
+        return JSONResponse({"error": {"message": "请求体格式错误"}}, status_code=400)
     op = str(body.get("op") or "")
     ids = [str(i) for i in (body.get("ids") or []) if str(i)]
     if not ids:
@@ -405,7 +418,9 @@ async def keys_clear_all(request: Request):
     bad = _require(request)
     if bad:
         return bad
-    body = await request.json()
+    body = await _json_dict(request)
+    if body is None:
+        return JSONResponse({"error": {"message": "请求体格式错误"}}, status_code=400)
     if body.get("confirm") != "yes":
         return JSONResponse({"error": {"message": "缺少确认参数"}}, status_code=400)
     return {"ok": True, "removed": pool.clear_all()}
@@ -478,7 +493,9 @@ async def upstreams_save(request: Request):
     bad = _require(request)
     if bad:
         return bad
-    body = await request.json()
+    body = await _json_dict(request)
+    if body is None:
+        return JSONResponse({"error": {"message": "请求体格式错误"}}, status_code=400)
     row, err = upstreams.save(body)
     if row is None:
         return JSONResponse({"error": {"message": err}}, status_code=400)
@@ -491,7 +508,9 @@ async def upstreams_delete(request: Request):
     bad = _require(request)
     if bad:
         return bad
-    body = await request.json()
+    body = await _json_dict(request)
+    if body is None:
+        return JSONResponse({"error": {"message": "请求体格式错误"}}, status_code=400)
     ok, err = upstreams.delete(str(body.get("id") or ""))
     if not ok:
         return JSONResponse({"error": {"message": err}}, status_code=400)
@@ -600,7 +619,9 @@ async def settings_save(request: Request):
     bad = _require(request)
     if bad:
         return bad
-    body = await request.json()
+    body = await _json_dict(request)
+    if body is None:
+        return JSONResponse({"error": {"message": "请求体格式错误"}}, status_code=400)
     incoming = body.get("config") or {}
 
     def _fn(db: dict):
@@ -654,7 +675,9 @@ async def password_change(request: Request):
     bad = _require(request)
     if bad:
         return bad
-    body = await request.json()
+    body = await _json_dict(request)
+    if body is None:
+        return JSONResponse({"error": {"message": "请求体格式错误"}}, status_code=400)
     cfg = STORE.load()["config"]
     if not verify_password(str(body.get("old") or ""), str(cfg.get("admin_password_hash") or "")):
         return JSONResponse({"error": {"message": "当前密码错误"}}, status_code=400)
@@ -712,7 +735,9 @@ async def tokens_add(request: Request):
     bad = _require(request)
     if bad:
         return bad
-    body = await request.json()
+    body = await _json_dict(request)
+    if body is None:
+        return JSONResponse({"error": {"message": "请求体格式错误"}}, status_code=400)
     t = str(body.get("t") or "").strip()
     m = body.get("m")
     if not t:
@@ -723,6 +748,8 @@ async def tokens_add(request: Request):
         return JSONResponse({"error": {"message": "令牌长度需在 8-200 之间"}}, status_code=400)
     if isinstance(m, str):
         m = [x.strip() for x in m.replace("，", ",").split(",")]
+    elif not isinstance(m, (list, tuple)):
+        m = [m] if m else []
     mlist = list(dict.fromkeys(str(x).strip() for x in (m or []) if str(x).strip()))
 
     state = {"dup": False}
@@ -748,7 +775,9 @@ async def tokens_update(request: Request):
     bad = _require(request)
     if bad:
         return bad
-    body = await request.json()
+    body = await _json_dict(request)
+    if body is None:
+        return JSONResponse({"error": {"message": "请求体格式错误"}}, status_code=400)
     t = str(body.get("t") or "")
     m = body.get("m")
     if isinstance(m, str):
@@ -777,7 +806,9 @@ async def tokens_delete(request: Request):
     bad = _require(request)
     if bad:
         return bad
-    body = await request.json()
+    body = await _json_dict(request)
+    if body is None:
+        return JSONResponse({"error": {"message": "请求体格式错误"}}, status_code=400)
     t = str(body.get("t") or "")
     removed = [False]
 

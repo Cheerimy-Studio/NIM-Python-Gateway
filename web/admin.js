@@ -1433,7 +1433,7 @@ async function testSend() {
   const sys = ($('#test-system') && $('#test-system').value.trim()) || '';
   const messages = sys ? [{role: 'system', content: sys}, ...testMsgs.filter(m => !m.pending)] : testMsgs.filter(m => !m.pending);
   const tok = await testEnsureToken();
-  const headers = {'Content-Type': 'application/json'};
+  const headers = {'Content-Type': 'application/json', 'X-NGW-Skip-Training': '1'};
   if (tok) headers.Authorization = 'Bearer ' + tok;
 
   const t0 = performance.now();
