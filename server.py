@@ -90,13 +90,14 @@ def _self_restart(reason: str) -> None:
     """以同 PID 自我重启(execv 替换进程镜像):
 
     - `python -m uvicorn server:app ...` 下 sys.argv[0] 是 uvicorn 的 __main__.py,
-      原样拼接即可复启;argv[0] 不可执行(进程管理器拉起等场景)则不重启防误杀
+      原样拼接即可复启;要求 argv[0] 是 .py 文件 —— 控制台脚本(uvicorn.exe)或
+      进程管理器拉起时 execv 会「杀而不启」,宁可放弃重启也不能让网关死掉
     - Python socket 默认不可继承,execv 后旧监听端口随之释放,无端口冲突
     """
     STORE.flush()
     argv0 = sys.argv[0] if sys.argv and sys.argv[0] else ""
-    if not (argv0 and os.path.exists(argv0)):
-        print("[watchdog] 无法自助重启:argv[0] 不可执行 %r" % argv0, file=sys.stderr)
+    if not (argv0 and argv0.endswith(".py") and os.path.exists(argv0)):
+        print("[watchdog] 无法自助重启:argv[0] 不可复启 %r" % argv0, file=sys.stderr)
         return
     try:
 
@@ -105,7 +106,7 @@ def _self_restart(reason: str) -> None:
                 logs = db.setdefault("logs", [])
                 logs.insert(
                     0,
-                    [int(time.time()), "watch", "watchdog", "-", 0, 0,
+                    [int(time.time()), "watch", "watchdog", "-", 200, 0,
                      ("看门狗:%s;已自动重启网关(并发泄漏/雪崩自愈)" % reason)[:140], "-", 1, "", 0, 0, 0, 0],
                 )
                 del logs[max(0, int(db["config"].get("log_max") or 200)) :]

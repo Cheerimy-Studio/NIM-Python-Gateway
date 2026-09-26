@@ -527,7 +527,8 @@ async def logs(request: Request):
     if bad:
         return bad
     db = STORE.load()
-    return {"rows": db.get("logs", []), "enabled": bool(db["config"].get("log_enabled", True))}
+    # 快照:与其它端点一致 —— 活引用列表在序列化期间可能被 executor 线程并发插入
+    return {"rows": list(db.get("logs") or []), "enabled": bool(db["config"].get("log_enabled", True))}
 
 
 @router.post("/logs/clear")
