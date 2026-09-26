@@ -28,6 +28,9 @@ a{text-decoration:none}
 .sidebar nav a:hover{color:#e3eaf5;background:rgba(255,255,255,.05)}
 .sidebar nav a.active{color:#fff;background:linear-gradient(90deg,rgba(47,111,237,.3),rgba(47,111,237,.05))}
 .sidebar nav a.active::before{content:"";position:absolute;left:-10px;top:8px;bottom:8px;width:3px;border-radius:3px;background:var(--acc)}
+.sidebar .nav-label{font-size:10px;font-weight:600;letter-spacing:1.4px;text-transform:uppercase;
+  color:#57657d;padding:13px 12px 5px}
+.sidebar nav .nav-label:first-child{padding-top:6px}
 .sidebar .foot{padding:8px 10px;border-top:1px solid rgba(255,255,255,.06)}
 .sidebar .foot a{color:#8d9bb2;font-size:13px;border-radius:7px;padding:7px 11px;display:inline-flex;align-items:center;gap:6px;transition:all .13s ease}
 .sidebar .foot a:hover{color:#f87171;background:rgba(248,113,113,.09)}
@@ -47,6 +50,8 @@ a{text-decoration:none}
 .table-hover tbody tr:hover{background:#f7f9fc}
 .table tbody tr{transition:background .12s ease}
 .stat{padding:.95rem 1.05rem}
+.stat .stat-lbl .bi{font-size:14px;color:#98a3b8;flex-shrink:0}
+.stat .stat-lbl{margin-bottom:2px}
 .stat .lbl{font-size:12px;color:var(--mut);letter-spacing:.3px}
 .stat .num{font-size:1.45rem;font-weight:700;line-height:1.3;font-variant-numeric:tabular-nums;letter-spacing:-.2px}
 .stat .sub{font-size:11.5px;color:#98a3b8}
@@ -160,6 +165,7 @@ details.upgrp[open]{background:#fff}
   .layout{flex-direction:column}
   .sidebar{width:100%;height:auto;position:static;flex-direction:column}
   .brand{justify-content:center}
+  .sidebar .nav-label{display:none}
   .sidebar nav{display:flex;flex-wrap:wrap;padding:6px}
   .sidebar nav a{margin-bottom:0}
   .sidebar nav a.active{border-left:0}
@@ -173,16 +179,20 @@ details.upgrp[open]{background:#fff}
 <aside class="sidebar">
   <div class="brand"><span class="mark">N</span><span class="bt">NVIDIA Gateway<small>Console</small></span></div>
   <nav>
+    <div class="nav-label">监控</div>
     <a href="javascript:void(0)" data-pane="dash" class="active"><i class="bi bi-speedometer2"></i>仪表盘</a>
+    <a href="javascript:void(0)" data-pane="logs"><i class="bi bi-list-ul"></i>日志</a>
+    <a href="javascript:void(0)" data-pane="queue"><i class="bi bi-hourglass-split"></i>排队</a>
+    <div class="nav-label">资源</div>
     <a href="javascript:void(0)" data-pane="keys"><i class="bi bi-key"></i>账号池</a>
     <a href="javascript:void(0)" data-pane="upstreams"><i class="bi bi-hdd-network"></i>上游</a>
     <a href="javascript:void(0)" data-pane="import"><i class="bi bi-upload"></i>导入</a>
     <a href="javascript:void(0)" data-pane="tokens"><i class="bi bi-shield-lock"></i>访问令牌</a>
-    <a href="javascript:void(0)" data-pane="logs"><i class="bi bi-list-ul"></i>日志</a>
-    <a href="javascript:void(0)" data-pane="queue"><i class="bi bi-hourglass-split"></i>排队</a>
+    <div class="nav-label">数据</div>
     <a href="javascript:void(0)" data-pane="test"><i class="bi bi-chat-dots"></i>模型测试</a>
     <a href="javascript:void(0)" data-pane="training"><i class="bi bi-collection"></i>训练资料</a>
     <a href="javascript:void(0)" data-pane="sessions"><i class="bi bi-journal-text"></i>会话日志</a>
+    <div class="nav-label">系统</div>
     <a href="javascript:void(0)" data-pane="settings"><i class="bi bi-gear"></i>设置</a>
     <a href="javascript:void(0)" data-pane="docs"><i class="bi bi-book"></i>接入</a>
   </nav>

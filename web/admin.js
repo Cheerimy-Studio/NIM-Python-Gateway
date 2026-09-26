@@ -128,9 +128,12 @@ const LOADERS = {
   settings: () => loadSettings(),
   docs: () => fillDocs(),
 };
+let dashTimer = null;
 function activate(name) {
   $$('.sidebar nav a').forEach(a => a.classList.toggle('active', a.dataset.pane === name));
   $$('.pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + name));
+  if (dashTimer) { clearInterval(dashTimer); dashTimer = null; }
+  if (name === 'dash') dashTimer = setInterval(() => { if (document.visibilityState !== 'hidden') loadOverview(); }, 15000);
   if (LOADERS[name]) LOADERS[name]();
 }
 
@@ -139,17 +142,19 @@ async function loadOverview() {
   const o = await run(() => api('overview'));
   if (!o) return;
   const cards = [
-    ['账号', o.keys.enabled + ' / ' + o.keys.total, o.keys.banned ? '封禁 ' + o.keys.banned : '全部可用', 'accent'],
-    ['今日请求', o.today.total, '成功 ' + o.today.success + ' / 失败 ' + o.today.fail, 'green'],
-    ['今日成功率', o.today.rate == null ? '—' : o.today.rate + '%', '账号计 ' + o.daily.requests + ' 次', 'accent'],
-    ['当前 RPM', o.rpm + ' / ' + (o.rpm_limit_total === -1 ? '不限' : o.rpm_limit_total), '今日 tokens ' + o.daily.tokens, 'amber'],
-    ['排队中', o.queue, o.queue ? '等待可用账号' : '无等待', o.queue ? 'red' : 'accent'],
+    ['账号', o.keys.enabled + ' / ' + o.keys.total, o.keys.banned ? '封禁 ' + o.keys.banned : '全部可用', 'accent', 'bi-key'],
+    ['今日请求', o.today.total, '成功 ' + o.today.success + ' / 失败 ' + o.today.fail, 'green', 'bi-activity'],
+    ['今日成功率', o.today.rate == null ? '—' : o.today.rate + '%', '账号计 ' + o.daily.requests + ' 次', 'accent', 'bi-graph-up'],
+    ['当前 RPM', o.rpm + ' / ' + (o.rpm_limit_total === -1 ? '不限' : o.rpm_limit_total), '今日 tokens ' + o.daily.tokens, 'amber', 'bi-speedometer'],
+    ['排队中', o.queue, o.queue ? '等待可用账号' : '无等待', o.queue ? 'red' : 'accent', 'bi-hourglass-split'],
   ];
   const box = $('#dash-cards'); box.innerHTML = '';
-  for (const [label, val, sub, tone] of cards) {
+  for (const [label, val, sub, tone, icon] of cards) {
     const col = el('div', 'col-6 col-md-4 col-xl');
     const stat = el('div', 'card stat h-100 ' + tone);
-    stat.append(el('div', 'lbl', label), el('div', 'num', String(val)), el('div', 'sub', sub || ' '));
+    const lblRow = el('div', 'd-flex align-items-center gap-2 stat-lbl');
+    lblRow.append(el('i', 'bi ' + icon), el('span', 'lbl', label));
+    stat.append(lblRow, el('div', 'num', String(val)), el('div', 'sub', sub || ' '));
     col.appendChild(stat); box.appendChild(col);
   }
 
@@ -210,6 +215,7 @@ async function runBatch(op) {
     const payload = {op, ids};
     if (op === 'move') payload.upstream_id = $('#batch-up').value;
     const r = await api('keys/batch', {method: 'POST', json: payload});
+    if (op === 'delete' || op === 'move') batchSel.clear();  // 已删/已转移的 id 不该留在选中集
     if (op === 'test') {
       const okN = Object.values(r.results).filter(t => t && t.ok).length;
       toast(`测试完成：${okN}/${Object.keys(r.results).length} 可用`);
