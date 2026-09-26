@@ -726,9 +726,14 @@ def _tokens_rows(cfg: dict) -> list:
     out = []
     for t in cfg.get("gateway_tokens") or []:
         if isinstance(t, str):
-            out.append({"t": t, "m": []})
+            out.append({"t": t, "m": [], "last_ip": "", "last_at": 0})
         elif isinstance(t, dict):
-            out.append({"t": str(t.get("t") or ""), "m": [str(x) for x in (t.get("m") or [])]})
+            out.append({
+                "t": str(t.get("t") or ""),
+                "m": [str(x) for x in (t.get("m") or [])],
+                "last_ip": str(t.get("last_ip") or ""),
+                "last_at": int(t.get("last_at") or 0),
+            })
     return out
 
 

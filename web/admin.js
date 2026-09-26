@@ -843,7 +843,7 @@ async function loadTokens() {
   const tb = $('#tok-rows'); tb.innerHTML = '';
   if (!d.rows.length) {
     const tr = el('tr'); const td = el('td', 'text-muted text-center py-4', '—');
-    td.colSpan = 3; tr.appendChild(td); tb.appendChild(tr);
+    td.colSpan = 5; tr.appendChild(td); tb.appendChild(tr);
     return;
   }
   for (const t of d.rows) {
@@ -869,6 +869,8 @@ async function loadTokens() {
     }
     tdM.appendChild(mWrap);
     tr.appendChild(tdM);
+    tr.appendChild(el('td', 'small text-muted', t.last_at ? fmtAgo(t.last_at) : '从未'));
+    tr.appendChild(el('td', 'small key-mono', t.last_ip || '-'));
     const tdOp = el('td', 'text-end');
     const grp = el('div', 'btn-group btn-group-sm');
     const mk = (label, cls, fn) => { const b = el('button', 'btn btn-sm ' + cls, label); b.onclick = fn; grp.appendChild(b); };
@@ -933,19 +935,17 @@ function renderLogs() {
   });
   if (!rows.length) {
     const tr = el('tr'); const td = el('td', 'text-muted text-center py-4', '—');
-    td.colSpan = 8; tr.appendChild(td); tb.appendChild(tr);
+    td.colSpan = 9; tr.appendChild(td); tb.appendChild(tr);
     return;
   }
   for (const r of rows) {
     
     const t = r[0], ep = r[1], model = r[2], key = r[3], st = r[4], ms = r[5], err = r[6], ip = r[7], att = r[8];
-    const upModel = r[9] || '', isStream = !!r[10], ttfb = r[11] || 0, inTok = r[12] || 0, outTok = r[13] || 0;
+    const upModel = r[9] || '', isStream = !!r[10], ttfb = r[11] || 0, inTok = r[12] || 0, outTok = r[13] || 0, tok = r[14] || '';
     const stCls = st >= 400 || st === 0 ? 'bg-danger-subtle text-danger' : 'bg-success-subtle text-success';
     const tr = el('tr');
     tr.append(
-      
       el('td', 'small text-muted', fmtTime(t)),
-      
       (() => {
         const td = el('td');
         const div = el('div', 'fw-medium', model || '-');
@@ -955,7 +955,6 @@ function renderLogs() {
         }
         return td;
       })(),
-      
       (() => {
         const td = el('td');
         const badge = el('span', 'badge ' + (EP_BADGE[ep] || 'bg-secondary-subtle text-secondary'), EP_NAMES[ep] || ep);
@@ -963,9 +962,8 @@ function renderLogs() {
         if (isStream) td.appendChild(el('span', 'badge bg-purple-subtle text-purple ms-1', 'SSE'));
         return td;
       })(),
-      
       el('td', 'small', key || '-'),
-      
+      el('td', 'small key-mono', tok || '-'),
       (() => {
         const td = el('td');
         td.appendChild(el('span', 'badge ' + stCls, statusText(st)));
@@ -1003,7 +1001,7 @@ function renderLogs() {
 
 function showLogDetail(r) {
   const [t, ep, model, key, st, ms, err, ip, att] = r;
-  const upModel = r[9] || '', isStream = !!r[10], ttfb = r[11] || 0, inTok = r[12] || 0, outTok = r[13] || 0;
+  const upModel = r[9] || '', isStream = !!r[10], ttfb = r[11] || 0, inTok = r[12] || 0, outTok = r[13] || 0, tok = r[14] || '';
   const wrap = el('div', 'conv');
   const addRow = (label, value, cls) => {
     const row = el('div', 'cmsg');
@@ -1014,6 +1012,7 @@ function showLogDetail(r) {
   addRow('端点', (EP_NAMES[ep] || ep || '-') + (isStream ? '(流式)' : ''));
   addRow('模型', (model || '-') + (upModel && upModel !== model ? ` ↳ ${upModel}` : ''));
   addRow('账号', key || '-');
+  addRow('令牌', tok || '-');
   addRow('状态', statusText(st), st >= 400 || st === 0 ? 'text-danger' : 'text-success');
   addRow('耗时', ms + 'ms' + (isStream && ttfb > 0 && ttfb < ms ? `(首字 ${ttfb}ms)` : ''));
   addRow('重试', att || 1);
@@ -1031,7 +1030,7 @@ async function loadQueue() {
   const tb = $('#queue-rows'); tb.innerHTML = '';
   if (!d.rows.length) {
     const tr = el('tr'); const td = el('td', 'text-muted text-center py-4', '—');
-    td.colSpan = 6; tr.appendChild(td); tb.appendChild(tr);
+    td.colSpan = 7; tr.appendChild(td); tb.appendChild(tr);
     return;
   }
   d.rows.forEach((q, i) => {
@@ -1041,6 +1040,7 @@ async function loadQueue() {
       el('td', 'small', fmtTime(q.t)),
       el('td', 'text-end small' + (q.wait > d.max_wait / 2 ? ' text-warning fw-bold' : ''), q.wait + 's'),
       el('td', 'small', q.ip),
+      el('td', 'small key-mono', q.tok || '-'),
       el('td', 'small', EP_NAMES[q.ep] || q.ep),
       el('td', 'small text-truncate', q.model || '-'),
     );

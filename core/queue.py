@@ -21,7 +21,7 @@ def _cfg_max_wait() -> int:
     return 0 if v == 0 else max(5, v)
 
 
-def add(ep: str, model: str, ip: str) -> str:
+def add(ep: str, model: str, ip: str, tok: str = "") -> str:
     """入队（FIFO）。
 
     每次入队都全表过滤一遍是没必要的开销（而且是在存储锁里做）：过期条目
@@ -34,7 +34,7 @@ def add(ep: str, model: str, ip: str) -> str:
         if not isinstance(q, list):
             q = []
             db["queue"] = q
-        q.append({"id": qid, "t": time.time(), "ip": ip, "ep": ep[:8], "model": model[:60]})
+        q.append({"id": qid, "t": time.time(), "ip": ip, "ep": ep[:8], "model": model[:60], "tok": tok[:20]})
         if len(q) > QUEUE_MAX_ENTRIES:
             del q[:-QUEUE_MAX_ENTRIES]  # 只保留最新，防无限增长
 
@@ -73,6 +73,7 @@ def stats(public: bool = False) -> dict:
         }
         if not public:
             row["ip"] = e.get("ip", "-")  # IP 只给后台，公开页不需要、也不该泄漏
+            row["tok"] = e.get("tok", "")  # 令牌遮罩同样仅后台
         rows.append(row)
     return {
         "length": len(rows),

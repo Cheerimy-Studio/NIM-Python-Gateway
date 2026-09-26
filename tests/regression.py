@@ -1164,6 +1164,59 @@ try:
         st_ms == 200 and "!!!!!!!!" not in raw_ms and "让我思考一下" in raw_ms,
         "思考退化已清=%s 合法思考保留=%s" % ("!!!!!!!!" not in raw_ms, "让我思考一下" in raw_ms))
 
+    # 令牌追踪:日志记录调用令牌(遮罩)、令牌页显示最后调用 IP/时间、公开队列不泄漏
+    r_trk = c.post(
+        "/v1/chat/completions",
+        json={"model": "mock-model", "messages": [{"role": "user", "content": "追踪我"}]},
+    )
+    time.sleep(0.8)  # 等异步 release 落库
+    trk_rows = a.get("/api/logs?n=10").json().get("rows") or []
+    trk_row = next((x for x in trk_rows if x[2] == "mock-model"), None)
+    _tok = toks[0]["t"]
+    _tok_mask = _tok[:10] + "…" + _tok[-4:] if len(_tok) > 14 else _tok
+    add("令牌:日志记录调用令牌",
+        trk_row is not None and len(trk_row) > 14 and trk_row[14] == _tok_mask,
+        "row[14]=%r 期望=%r" % ((trk_row or [None] * 15)[14], _tok_mask))
+    tok_rows = a.get("/api/tokens").json().get("rows") or []
+    tok_ent = next((x for x in tok_rows if x["t"] == _tok), None)
+    add("令牌:最后调用 IP/时间被追踪",
+        tok_ent is not None and tok_ent.get("last_at", 0) > 0 and tok_ent.get("last_ip"),
+        "last_at=%s last_ip=%r" % ((tok_ent or {}).get("last_at"), (tok_ent or {}).get("last_ip")))
+    pub = httpx.get("http://127.0.0.1:18213/api/queue/public", timeout=10).json()
+    add("令牌:公开队列不泄漏",
+        all("tok" not in row for row in (pub.get("rows") or [])),
+        "public rows=%d,含 tok 字段的=%d" % (len(pub.get("rows") or []), sum(1 for x in pub.get("rows") or [] if "tok" in x)))
+
+    # 排队条目携带令牌:hold4 占住并发,第二个请求在排队等待期间管理端可见其令牌
+    a.post("/api/settings", json={"config": {"acct_concurrency": 1}})
+    ids4 = [k["id"] for k in a.get("/api/keys").json()["rows"]]
+    a.post("/api/keys/batch", json={"op": "disable", "ids": ids4[1:]})
+    th = threading.Thread(target=lambda: c.post(
+        "/v1/chat/completions", json={"model": "hold4", "messages": [{"role": "user", "content": "h"}]}
+    ), daemon=True)
+    th.start()
+    time.sleep(0.8)  # 第一个请求已持号(hold4 占 4s)
+    q_status = {}
+
+    def _q_req():
+        try:
+            q_status["code"] = c.post(
+                "/v1/chat/completions", json={"model": "mock-model", "messages": [{"role": "user", "content": "q"}]}
+            ).status_code
+        except Exception:
+            q_status["code"] = 0
+
+    th2 = threading.Thread(target=_q_req, daemon=True)
+    th2.start()
+    time.sleep(1.2)  # 第二个请求此刻应在队列中
+    q_rows = a.get("/api/queue").json().get("rows") or []
+    q_tok_ok = any((x.get("tok") or "") == _tok_mask for x in q_rows)
+    th2.join(20)
+    add("令牌:排队条目携带令牌", q_tok_ok,
+        "排队可见令牌=%s(排队中 %d 条)" % (q_tok_ok, len(q_rows)))
+    a.post("/api/settings", json={"config": {"acct_concurrency": 0}})
+    a.post("/api/keys/batch", json={"op": "enable", "ids": ids4[1:]})
+
     # 僵尸队列条目清理:进程重启时死掉的等待请求无人出队,条目永久留在 db,
     # 仪表盘虚报「排队中 N」而队列面板为空(线上实测 36 条僵尸)
     import server as _srv

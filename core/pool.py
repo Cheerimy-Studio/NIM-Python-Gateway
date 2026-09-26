@@ -791,7 +791,7 @@ def release(
         # 请求日志
         if log and cfg.get("log_enabled", True):
             logs = db.setdefault("logs", [])
-            # 扩展字段（新格式）：up_model / stream / ttfb / in_tok / out_tok
+            # 扩展字段（新格式）：up_model / stream / ttfb / in_tok / out_tok / tok
             logs.insert(
                 0,
                 [
@@ -809,10 +809,20 @@ def release(
                     int(log.get("ttfb") or 0),
                     int(log.get("in_tok") or 0),
                     int(log.get("out_tok") or 0),
+                    str_cut(str(log.get("tok") or ""), 20),
                 ],
             )
             max_logs = max(0, _cfgint(cfg, "log_max", 200))
             del logs[max_logs:]
+
+        # 访问令牌使用追踪:最后一次调用 IP / 时间(与日志同一把锁内更新,零额外开销)
+        tok_full = str((log or {}).get("tok_full") or "")
+        if tok_full:
+            for x in cfg.get("gateway_tokens") or []:
+                if isinstance(x, dict) and x.get("t") == tok_full:
+                    x["last_ip"] = str_cut(str((log or {}).get("ip") or ""), 45)
+                    x["last_at"] = now
+                    break
 
     STORE.update(_fn)
 

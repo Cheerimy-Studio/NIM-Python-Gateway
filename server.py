@@ -316,6 +316,14 @@ def _cors() -> dict:
     }
 
 
+def _tok_mask(t: str) -> str:
+    """令牌遮罩:日志/排队里展示用(可辨识但不泄露完整令牌)。"""
+    t = str(t or "")
+    if len(t) <= 14:
+        return t
+    return t[:10] + "…" + t[-4:]
+
+
 def _client_ip(request: Request) -> str:
     for k in ("cf-connecting-ip", "x-real-ip", "x-forwarded-for"):
         v = request.headers.get(k)
@@ -424,7 +432,7 @@ def _check_model(model: str, entry: dict | None, cfg: dict, anthropic: bool = Fa
 # ============================================================ 排队与取号
 
 
-async def take_account(request: Request, ep: str, model: str, est_tokens: int, cfg: dict) -> dict:
+async def take_account(request: Request, ep: str, model: str, est_tokens: int, cfg: dict, tok: str = "") -> dict:
     max_wait = _cfgint(cfg, "queue_max_wait", 30)
     # 队列等待必须覆盖 429 冷却，否则账号还没到解禁时间队列就先放弃了，
     # 请求会以「暂无可用账号」凭空失败（虽然再等几秒本来就能成功）。
@@ -485,7 +493,7 @@ async def take_account(request: Request, ep: str, model: str, est_tokens: int, c
             "status": 503,
             "message": f"排队已满（{_waiting.get(model, 0)} 个请求在等账号），请稍后重试",
         }
-    qid = queue.add(ep, model, _client_ip(request))
+    qid = queue.add(ep, model, _client_ip(request), _tok_mask(tok))
     deadline = time.time() + max_wait
     poll = max(0.05, _cfgint(cfg, "queue_poll_ms", 400) / 1000)
     # 熔断打开时先不取号，排队等恢复；非熔断则正常取号+排队
@@ -878,6 +886,7 @@ def _release_log(
     ttfb_ms: int = 0,
     in_tok: int = 0,
     out_tok: int = 0,
+    tok: str = "",
 ) -> dict:
     return {
         "t": int(time.time()),
@@ -894,6 +903,8 @@ def _release_log(
         "ttfb": ttfb_ms,
         "in_tok": in_tok,
         "out_tok": out_tok,
+        "tok": _tok_mask(tok),
+        "tok_full": tok,
     }
 
 
@@ -935,6 +946,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
     t0 = time.time()
     same_key_tried: set = set()  # 已做过同号重试的账号 id
     rl_left = max(1, _cfgint(cfg, "max_retries", 2))  # 429 额外重试预算
+    tok = str((entry or {}).get("t") or "")  # 本次请求使用的访问令牌(日志/排队展示)
 
     try:
         while attempt < max_attempts:
@@ -943,7 +955,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                 taken = {"ok": True, "key": reuse_key, "status": 0, "message": ""}
                 reuse_key = None
             else:
-                taken = await take_account(request, ep_tag, model, est, cfg)
+                taken = await take_account(request, ep_tag, model, est, cfg, tok)
             if not taken["ok"]:
                 await pool.arelease(
                     "",
@@ -962,6 +974,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                         ip,
                         up_model=model,
                         stream=stream,
+                        tok=tok,
                     ),
                 )
                 return _error(taken["status"], taken["message"])
@@ -1042,6 +1055,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                                             up_model=up_model,
                                             stream=True,
                                             ttfb_ms=ms,
+                                            tok=tok,
                                         ),
                                     )
                                 except Exception:
@@ -1071,6 +1085,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                             t0,
                             request,
                             _ttfb_cfg,
+                            tok,
                         )
                 else:
                     r = await client.post(_url, content=body.encode(), headers=_hdr, timeout=timeout)
@@ -1120,6 +1135,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                             heartbeat=True,
                             ttfb_deadline=float(ttfb_to),
                             pump=sp,
+                            tok=tok,
                         )
                     except (httpx.HTTPError, OSError) as e:
                         rerr = _conn_reason(e)
@@ -1168,6 +1184,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                             ait=ait,
                             request=request,
                             pump=sp,
+                            tok=tok,
                         )
             if r is not None:
                 if stream:
@@ -1243,6 +1260,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                     ttfb_ms=ms,
                     in_tok=int(usage.get("prompt_tokens") or 0),
                     out_tok=int(usage.get("completion_tokens") or 0),
+                    tok=tok,
                 ),
             )
             if success:
@@ -1365,6 +1383,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                         ip,
                         up_model=up_model,
                         stream=stream,
+                        tok=tok,
                     ),
                 )
             except Exception:
@@ -1428,6 +1447,7 @@ def _proxy_stream(
     heartbeat: bool = False,
     ttfb_deadline: float = 0.0,
     pump: "_StreamPump | None" = None,
+    tok: str = "",
 ) -> StreamingResponse:
     """SSE 透传：模型改名回写 + 心跳保活 + 断连检测 + 流结束后统计释放。
 
@@ -1610,6 +1630,7 @@ def _proxy_stream(
                     ttfb_ms=ttfb,
                     in_tok=int(usage["prompt_tokens"]),
                     out_tok=int(usage["completion_tokens"]),
+                    tok=tok,
                 ),
             )
             try:
@@ -1683,6 +1704,7 @@ def _slow_stream_response(
     t0: float,
     request: Request | None,
     ttfb_deadline: float,
+    tok: str = "",
 ) -> StreamingResponse:
     """上游响应头迟迟不返回时的兜底流：先提交 200 并持续发心跳占住连接，拿到响应头后顺势透传。
 
@@ -1729,6 +1751,7 @@ def _slow_stream_response(
                     up_model=up_model,
                     stream=True,
                     ttfb_ms=ms,
+                    tok=tok,
                 ),
             )
 
@@ -1800,6 +1823,7 @@ def _slow_stream_response(
                 request=request,
                 heartbeat=False,
                 ttfb_deadline=deadline,
+                tok=tok,
             )
             inner_it = inner.body_iterator
             handed = True  # 账号释放移交给 _proxy_stream
@@ -1841,6 +1865,7 @@ def _slow_stream_response(
                         up_model=up_model,
                         stream=True,
                         ttfb_ms=ms,
+                        tok=tok,
                     ),
                 )
             if r is not None:
@@ -1936,6 +1961,7 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
     t0 = time.time()
     same_key_tried: set = set()
     rl_left = max(1, _cfgint(cfg, "max_retries", 2))  # 429 额外重试预算
+    tok = str((entry or {}).get("t") or "")  # 本次请求使用的访问令牌(日志/排队展示)
 
     try:
         while attempt < max_attempts:
@@ -1944,7 +1970,7 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                 taken = {"ok": True, "key": reuse_key, "status": 0, "message": ""}
                 reuse_key = None
             else:
-                taken = await take_account(request, ep, model, est, cfg)
+                taken = await take_account(request, ep, model, est, cfg, tok)
             if not taken["ok"]:
                 await pool.arelease(
                     "",
@@ -1963,6 +1989,7 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                         ip,
                         up_model=model,
                         stream=stream,
+                        tok=tok,
                     ),
                 )
                 return _error(taken["status"], taken["message"], anthropic=anthropic)
@@ -2024,7 +2051,7 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                                     key["id"], True, 499, "客户端已断开",
                                     {"prompt_tokens": -(-len(raw) // 3), "completion_tokens": 0},
                                     _release_log(ep, model, 499, ms, "客户端已断开", attempt,
-                                                 key, ip, up_model=up_model, stream=True, ttfb_ms=ms),
+                                                 key, ip, up_model=up_model, stream=True, ttfb_ms=ms, tok=tok),
                                 )
                                 return _error(499, "客户端已断开", anthropic=anthropic)
                         except Exception:
@@ -2038,7 +2065,7 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                         hold["key"] = None  # 释放责任移交兜底流
                         return _slow_convert_response(
                             send_task, client, key, ep, model, cfg, up_model, raw,
-                            ip, attempt, t0, request, _ttfb_cfg2, protocol, anthropic,
+                            ip, attempt, t0, request, _ttfb_cfg2, protocol, anthropic, tok,
                         )
                 else:
                     r = await client.post(_url2, content=raw.encode(), headers=_hdr2, timeout=timeout)
@@ -2065,6 +2092,7 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                             request, client, r, key, ep, model, cfg, up_model, raw,
                             ip, attempt, t0, rstatus, ctype, protocol,
                             first_chunk=b"", heartbeat=True, ttfb_deadline=float(ttfb_to), pump=sp,
+                            tok=tok,
                         )
                     text = first_chunk.decode("utf-8", "replace")
                     is_sse_error = text.lstrip().startswith(("event: error", 'data: {"error"')) or (
@@ -2094,6 +2122,7 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                             request, client, r, key, ep, model, cfg, up_model, raw,
                             ip, attempt, t0, rstatus, ctype, protocol,
                             first_chunk=first_chunk, ait=ait, pump=sp,
+                            tok=tok,
                         )
                 if stream:
                     # 流式响应没能交接给转换透传（空流 / SSE 错误且降级失败等）必须显式关闭，
@@ -2166,6 +2195,7 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                     ttfb_ms=ms,
                     in_tok=int(usage.get("prompt_tokens") or 0),
                     out_tok=int(usage.get("completion_tokens") or 0),
+                    tok=tok,
                 ),
             )
             if success:
@@ -2274,6 +2304,7 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                         ip,
                         up_model=up_model,
                         stream=stream,
+                        tok=tok,
                     ),
                 )
             except Exception:
@@ -2297,6 +2328,7 @@ def _slow_convert_response(
     ttfb_deadline: float,
     protocol: str,
     anthropic: bool,
+    tok: str = "",
 ) -> StreamingResponse:
     """/v1/responses、/v1/messages 的响应头兜底流:先提交 200 并持续发协议保活,
     拿到响应头后交给 _stream_convert 正常转换透传。
@@ -2324,7 +2356,7 @@ def _slow_convert_response(
             await pool.arelease(
                 key["id"], False, status, err, _est(),
                 _release_log(ep, model, status, ms, err, attempt, key, ip,
-                             up_model=up_model, stream=True, ttfb_ms=ms),
+                             up_model=up_model, stream=True, ttfb_ms=ms, tok=tok),
             )
 
         def _err_event(msg: str) -> bytes:
@@ -2415,6 +2447,7 @@ def _slow_convert_response(
                 request, client, r, key, ep, model, cfg, up_model, raw,
                 ip, attempt, t0, status, ctype, protocol,
                 first_chunk=b"", ait=None, heartbeat=False, ttfb_deadline=deadline,
+                tok=tok,
             )
             inner_it = inner.body_iterator
             handed = True
@@ -2437,7 +2470,7 @@ def _slow_convert_response(
                 await pool.arelease(
                     key["id"], False, st, outcome, _est(),
                     _release_log(ep, model, st, ms, outcome, attempt, key, ip,
-                                 up_model=up_model, stream=True, ttfb_ms=ms),
+                                 up_model=up_model, stream=True, ttfb_ms=ms, tok=tok),
                 )
             if r is not None:
                 try:
@@ -2481,6 +2514,7 @@ async def _stream_convert(
     heartbeat: bool = False,
     ttfb_deadline: float = 0.0,
     pump: "_StreamPump | None" = None,
+    tok: str = "",
 ):
     """SSE 转换：上游 chunk 流 → Responses / Anthropic 事件流。
 
@@ -2608,6 +2642,7 @@ async def _stream_convert(
                     ttfb_ms=ttfb,
                     in_tok=int(usage["prompt_tokens"]),
                     out_tok=int(usage["completion_tokens"]),
+                    tok=tok,
                 ),
             )
             try:
