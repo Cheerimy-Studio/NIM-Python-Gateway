@@ -1350,6 +1350,9 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
 QUEUE_POLL_MAX = 3.0
 QUEUE_MAX_WAITING = 200
 _waiting: dict[str, int] = {}
+# 退化思考的清理正则(半角/全角感叹号 16+ 连发),供流式透传字节级清理使用
+_BANG_RUN = re.compile(rb"!{16,}")
+_BANG_RUN_FW = re.compile(rb"(?:\xef\xbc\x81){16,}")
 
 
 class _StreamPump:
@@ -1428,20 +1431,42 @@ def _proxy_stream(
         train = bytearray()
         # 退化思考清理:推理栈故障时思考会退化成成片 '!'(线上实测)。
         # 字节级清除 16+ 连续感叹号(半/全角)—— chat 直通流不做逐块 JSON 解析,
-        # 用子串快速预检,无 "!!!!" 的块零开销。
-        _BANG = re.compile(rb"!{16,}")
-        _BANG_FW = re.compile(rb"(?:\xef\xbc\x81){16,}")
+        # 用子串快速预检,无 "!!!!" 的块零开销。跨块 run:上一块尾部的连续 '!'
+        # 记入 tail,与下一块的前导 run 合并判断,防止被网络块边界切开漏网。
         scrubbed = {"v": False}
+        bang_tail = {"n": 0}
+
+        def _lead_bangs(b: bytes) -> int:
+            i = 0
+            while i < len(b) and b[i] == 0x21:
+                i += 1
+            return i
+
+        def _tail_bangs(b: bytes) -> int:
+            i = len(b)
+            while i > 0 and b[i - 1] == 0x21:
+                i -= 1
+            return len(b) - i
 
         def _out(b: bytes) -> bytes:
             if train_on and len(train) < 1048576:
                 train.extend(b)
-            if b"!!!!" in b:
-                nb = _BANG.sub(b"", b)
-                nb = _BANG_FW.sub(b"", nb)
+            if b"!!!!" in b or (bang_tail["n"] >= 4 and b[:1] == b"!"):
+                # 先处理与上一块拼接的边界 run
+                if bang_tail["n"]:
+                    lead = _lead_bangs(b)
+                    if lead and bang_tail["n"] + lead >= 16:
+                        b = b[lead:]
+                        scrubbed["v"] = True
+                        bang_tail["n"] = _tail_bangs(b)
+                        return b
+                    bang_tail["n"] = 0  # 前导不足且非纯感叹号,重置
+                nb = _BANG_RUN.sub(b"", b)
+                nb = _BANG_RUN_FW.sub(b"", nb)
                 if nb != b:
                     scrubbed["v"] = True
                     b = nb
+            bang_tail["n"] = _tail_bangs(b) if b.endswith(b"!") else 0
             return b
 
         # 复用外层已启动的读取任务（否则对同一 ait 二次迭代必然立刻结束）。

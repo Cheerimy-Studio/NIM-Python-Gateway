@@ -15,10 +15,6 @@ from .util import degenerate_reasoning as _degen_rs
 from .util import rand_id
 
 
-def _j(data: Any) -> str:
-    return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-
-
 def flatten_content(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -109,11 +105,6 @@ def sanitize_request(body: dict) -> dict:
         if isinstance(v, (int, float)) and v <= 0:
             body.pop(k, None)
     return body
-
-
-# 兼容旧名
-def sanitize_tool_choice(body: dict) -> dict:
-    return sanitize_request(body)
 
 
 def map_usage(u: dict | None) -> dict:

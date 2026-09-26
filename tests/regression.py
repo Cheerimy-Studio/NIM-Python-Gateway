@@ -1029,11 +1029,11 @@ try:
     add("tool_choice 无 tools 时被清理(Responses)", r_tc3.status_code == 200, "st=%s" % r_tc3.status_code)
     # 有 tools 时 tool_choice 必须保留(不能误删)
     from core import convert as _cv
-    _keep = _cv.sanitize_tool_choice(
+    _keep = _cv.sanitize_request(
         {"tool_choice": "auto", "tools": [{"type": "function", "function": {"name": "f", "parameters": {}}}]}
     )
-    _drop = _cv.sanitize_tool_choice({"tool_choice": "auto"})
-    _drop2 = _cv.sanitize_tool_choice({"tool_choice": {"type": "function", "function": {"name": "x"}}, "tools": []})
+    _drop = _cv.sanitize_request({"tool_choice": "auto"})
+    _drop2 = _cv.sanitize_request({"tool_choice": {"type": "function", "function": {"name": "x"}}, "tools": []})
     add(
         "tool_choice 清理不误伤",
         _keep.get("tool_choice") == "auto" and "tool_choice" not in _drop and "tool_choice" not in _drop2,

@@ -1288,7 +1288,6 @@ async function loadSessions() {
   for (const s of d.rows) {
     const card = document.createElement('div');
     card.className = 'card mb-2';
-    const st_cls = s.status >= 200 && s.status < 400 ? 'text-success' : 'text-danger';
     const reqPreview = s.req ? s.req.substring(0, 200) : '';
     const respPreview = s.resp ? s.resp.substring(0, 200) : '';
     card.innerHTML = `
