@@ -86,6 +86,23 @@ def watchdog_dead(db: dict, inflight: dict, now: int, cfg: dict) -> tuple[bool, 
     return bad >= len(enabled) and qn > 0, info
 
 
+def _prune_queue(db: dict, now: float) -> None:
+    """清掉过期队列条目:等待中的请求最多等 queue_max_wait,超过 2 倍窗口的
+    条目必然是进程重启(看门狗 execv)留下的僵尸 —— 排队请求已死,无人 remove,
+    永远留在 db 里虚报「排队中」。"""
+    cfg = db.get("config") or {}
+    try:
+        mw = int(cfg.get("queue_max_wait"))
+    except (TypeError, ValueError):
+        mw = 15
+    mw = 0 if mw == 0 else max(5, mw)
+    cutoff = now - mw * 2
+    db["queue"] = [
+        e for e in (db.get("queue") or [])
+        if isinstance(e, dict) and e.get("t", 0) >= cutoff
+    ]
+
+
 def _self_restart(reason: str) -> None:
     """以同 PID 自我重启(execv 替换进程镜像):
 
@@ -102,6 +119,8 @@ def _self_restart(reason: str) -> None:
     try:
 
         def _fn(db: dict):
+            # 队列里的等待者随本进程一起消亡,条目必成僵尸 —— 清空
+            db["queue"] = []
             if db.get("config", {}).get("log_enabled", True):
                 logs = db.setdefault("logs", [])
                 logs.insert(
@@ -165,6 +184,15 @@ async def _start_flush():
     try:
         upstreams.ensure_default()
         STORE.flush()
+    except Exception:
+        pass
+    # 清理僵尸队列条目:看门狗重启等场景下,排队请求已死、条目无人出队
+    try:
+
+        def _prune(db: dict):
+            _prune_queue(db, time.time())
+
+        STORE.update(_prune)
     except Exception:
         pass
 

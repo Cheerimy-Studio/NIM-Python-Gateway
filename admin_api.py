@@ -163,6 +163,15 @@ async def overview(request: Request):
     today = db["stats"].get(day) or {"total": 0, "success": 0, "fail": 0, "models": {}}
     models = sorted(today["models"].items(), key=lambda x: -x[1])[:10]
     recent_errors = [r for r in db.get("logs", []) if (r[4] if len(r) > 4 else 0) >= 400][:8]
+    # 与队列面板同口径:过滤过期条目 —— 历史僵尸(进程重启时死掉的等待请求)
+    # 不过滤的话,仪表盘会虚报「排队中 N」而队列面板实际为空
+    try:
+        _mw = int(db["config"].get("queue_max_wait"))
+    except (TypeError, ValueError):
+        _mw = 15
+    _mw = 0 if _mw == 0 else max(5, _mw)
+    _qcut = now - _mw * 2
+    queue_now = len([e for e in (db.get("queue") or []) if isinstance(e, dict) and e.get("t", 0) >= _qcut])
     return {
         "keys": counts,
         "rpm": rpm,
@@ -172,7 +181,7 @@ async def overview(request: Request):
             else counts["enabled"] * max(1, int(cfg.get("rate_limit_per_minute") or 20))
         ),
         "daily": {"requests": daily_req, "tokens": daily_tok},
-        "queue": len(db.get("queue", [])),
+        "queue": queue_now,
         "today": {
             "total": today["total"],
             "success": today["success"],

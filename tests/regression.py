@@ -1164,8 +1164,22 @@ try:
         st_ms == 200 and "!!!!!!!!" not in raw_ms and "让我思考一下" in raw_ms,
         "思考退化已清=%s 合法思考保留=%s" % ("!!!!!!!!" not in raw_ms, "让我思考一下" in raw_ms))
 
-    # 看门狗雪崩判定(纯函数直测)
+    # 僵尸队列条目清理:进程重启时死掉的等待请求无人出队,条目永久留在 db,
+    # 仪表盘虚报「排队中 N」而队列面板为空(线上实测 36 条僵尸)
     import server as _srv
+    _qdb = {
+        "config": {"queue_max_wait": 300},
+        "queue": [
+            {"id": "q1", "t": time.time() - 10, "ip": "-", "ep": "chat", "model": "m"},     # 新鲜
+            {"id": "q2", "t": time.time() - 30, "ip": "-", "ep": "chat", "model": "m"},     # 新鲜
+            {"id": "q3", "t": time.time() - 3000, "ip": "-", "ep": "chat", "model": "m"},   # 僵尸(>600s)
+            {"id": "q4", "t": time.time() - 9000, "ip": "-", "ep": "chat", "model": "m"},   # 僵尸
+        ],
+    }
+    _srv._prune_queue(_qdb, time.time())
+    add("僵尸队列条目被清理", len(_qdb["queue"]) == 2, "剩余 %d 条(应为 2)" % len(_qdb["queue"]))
+
+    # 看门狗雪崩判定(纯函数直测)
     _db = {"keys": [
         {"id": "k1", "enabled": True, "banned_until": now_i + 600},
         {"id": "k2", "enabled": True, "cooldown_until": now_i + 600},
