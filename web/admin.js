@@ -128,12 +128,9 @@ const LOADERS = {
   settings: () => loadSettings(),
   docs: () => fillDocs(),
 };
-let dashTimer = null;
 function activate(name) {
   $$('.sidebar nav a').forEach(a => a.classList.toggle('active', a.dataset.pane === name));
   $$('.pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + name));
-  if (dashTimer) { clearInterval(dashTimer); dashTimer = null; }
-  if (name === 'dash') dashTimer = setInterval(() => { if (document.visibilityState !== 'hidden') loadOverview(); }, 15000);
   if (LOADERS[name]) LOADERS[name]();
 }
 
@@ -1365,6 +1362,16 @@ async function loadTestModels() {
   sel.value = keep && uniq.includes(keep) ? keep : uniq[0];
 }
 
+/* 模型输出 Markdown 渲染:marked 生成 → DOMPurify 消毒(模型输出可能含
+   注入的原始 HTML,绝不能直接 innerHTML);CDN 不可用时回退纯文本 */
+const mdRender = (text, node) => {
+  if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+    node.innerHTML = DOMPurify.sanitize(marked.parse(text, {breaks: true, gfm: true}));
+  } else {
+    node.textContent = text;
+  }
+};
+
 function testRender() {
   const box = $('#test-chat');
   if (!box) return;
@@ -1377,10 +1384,25 @@ function testRender() {
     const mine = m.role === 'user';
     const row = el('div', 'mb-2 d-flex ' + (mine ? 'justify-content-end' : 'justify-content-start'));
     const b = el('div', 'tmsg ' + (mine ? 'me' : 'ai'));
-    let text = m.content || '';
-    if (m.reasoning) text = '［思考］' + m.reasoning + (text ? '\n' : '') + text;
-    if (!text) text = m.pending ? '…' : '（内容为空）';
-    b.textContent = text;      // 关键：一律 textContent，绝不 innerHTML
+    if (mine) {
+      b.textContent = m.content || '';   // 用户输入一律纯文本
+    } else {
+      if (m.reasoning) {
+        const th = el('div', 'think');
+        th.appendChild(el('div', 'think-hd', '思考'));
+        const tb = el('div', 'think-body');
+        mdRender(m.reasoning, tb);
+        th.appendChild(tb);
+        b.appendChild(th);
+      }
+      const body = el('div', 'md');
+      if (m.content) {
+        mdRender(m.content, body);
+      } else {
+        body.textContent = m.pending ? '…' : '（内容为空）';
+      }
+      b.appendChild(body);
+    }
     if (m.pending) b.classList.add('pending');
     row.appendChild(b);
     box.appendChild(row);
