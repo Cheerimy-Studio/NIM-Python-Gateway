@@ -12,6 +12,21 @@ def rand_id(prefix: str = "") -> str:
     return prefix + os.urandom(6).hex()
 
 
+def degenerate_reasoning(text: Any) -> bool:
+    """判断思考内容是否退化:推理栈故障(投机解码出错等)时,模型的思考会
+    退化成成片的重复感叹号(实测「思考返回为:!!!!!!!!!!」)。只认感叹号族
+    (半角 ! / 全角 ！)占 90% 以上 —— 模型思考里常见的分隔线(------)、
+    省略号等合法重复标点不误伤。
+    """
+    if not isinstance(text, str):
+        return False
+    s = text.strip()
+    if len(s) < 16:
+        return False
+    ex = s.count("!") + s.count("！")
+    return ex >= len(s) * 0.9
+
+
 def str_cut(s: str, n: int) -> str:
     s = s or ""
     return s if len(s) <= n else s[:n]

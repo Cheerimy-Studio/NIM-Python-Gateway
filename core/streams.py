@@ -10,7 +10,7 @@ import json
 import time
 from typing import Callable
 
-from .util import rand_id, sub_dict
+from .util import degenerate_reasoning, rand_id, sub_dict
 
 
 class _Base:
@@ -32,6 +32,9 @@ class _Base:
         data = ""
         for line in raw.split("\n"):
             if line.startswith("data:"):
+                # SSE 规范:多行 data 按 \n 连接(此前直接拼接,会破坏跨行 JSON)
+                if data:
+                    data += "\n"
                 data += line[5:].lstrip()
         if not data:
             return
@@ -183,6 +186,9 @@ class ResponsesStream(_Base):
     def _reasoning(self, delta: dict) -> None:
         rs = delta.get("reasoning_content") or delta.get("reasoning")
         if not isinstance(rs, str) or not rs:
+            return
+        # 退化思考(成片重复感叹号)整段丢弃,不向下游转发
+        if degenerate_reasoning(rs):
             return
         if not self.rs_open:
             self.rs_open = True
@@ -463,6 +469,9 @@ class AnthropicStream(_Base):
     def _reasoning(self, delta: dict) -> None:
         rs = delta.get("reasoning_content") or delta.get("reasoning")
         if not isinstance(rs, str) or not rs:
+            return
+        # 退化思考(成片重复感叹号)整段丢弃,不向下游转发
+        if degenerate_reasoning(rs):
             return
         if self.text_idx is not None:
             self.emit("content_block_stop", {"type": "content_block_stop", "index": self.text_idx})

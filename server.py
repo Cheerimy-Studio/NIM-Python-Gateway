@@ -28,6 +28,7 @@ from core.streams import AnthropicStream, ResponsesStream
 from core.store import STORE, csrf_token as _csrf_token, session_cookie as _session_cookie
 from core.util import (
     sub_dict,
+    degenerate_reasoning,
     estimate_output_tokens,
     estimate_request_tokens,
     mask_email,
@@ -1224,6 +1225,17 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                     if isinstance(j, dict):
                         if up_model != model:
                             j["model"] = model
+                        # 退化思考清理:成片重复感叹号(推理栈故障)不透传给下游
+                        try:
+                            _ch = (j.get("choices") or [{}])[0]
+                            if isinstance(_ch, dict):
+                                _msg0 = _ch.get("message") or {}
+                                if isinstance(_msg0, dict):
+                                    for _rk in ("reasoning_content", "reasoning"):
+                                        if degenerate_reasoning(_msg0.get(_rk)):
+                                            _msg0[_rk] = ""
+                        except Exception:
+                            pass
                         if not isinstance(j.get("usage"), dict):
                             j["usage"] = _full_usage(usage)
                         else:
@@ -1414,10 +1426,22 @@ def _proxy_stream(
             and not (request is not None and request.headers.get("x-ngw-skip-training"))
         )
         train = bytearray()
+        # 退化思考清理:推理栈故障时思考会退化成成片 '!'(线上实测)。
+        # 字节级清除 16+ 连续感叹号(半/全角)—— chat 直通流不做逐块 JSON 解析,
+        # 用子串快速预检,无 "!!!!" 的块零开销。
+        _BANG = re.compile(rb"!{16,}")
+        _BANG_FW = re.compile(rb"(?:\xef\xbc\x81){16,}")
+        scrubbed = {"v": False}
 
         def _out(b: bytes) -> bytes:
             if train_on and len(train) < 1048576:
                 train.extend(b)
+            if b"!!!!" in b:
+                nb = _BANG.sub(b"", b)
+                nb = _BANG_FW.sub(b"", nb)
+                if nb != b:
+                    scrubbed["v"] = True
+                    b = nb
             return b
 
         # 复用外层已启动的读取任务（否则对同一 ait 二次迭代必然立刻结束）。
@@ -1511,7 +1535,7 @@ def _proxy_stream(
                 "completion_tokens": estimate_output_tokens(up_bytes),
             }
             st = 499 if outcome == "客户端已断开" else status
-            note = outcome or truncated  # 截断原因同样要落进日志，便于排查上游可用性
+            note = outcome or truncated or ("思考退化已清理" if scrubbed["v"] else "")
             await pool.arelease(
                 key["id"],
                 True,

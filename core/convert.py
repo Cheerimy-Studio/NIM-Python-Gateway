@@ -11,6 +11,7 @@ import re
 import time
 from typing import Any
 
+from .util import degenerate_reasoning as _degen_rs
 from .util import rand_id
 
 
@@ -239,7 +240,7 @@ def chat_to_responses(chat: dict, meta: dict | None = None) -> dict:
 
     output: list[dict] = []
     reasoning = msg.get("reasoning_content") or msg.get("reasoning")
-    if isinstance(reasoning, str) and reasoning:
+    if isinstance(reasoning, str) and reasoning and not _degen_rs(reasoning):
         output.append(
             {
                 "id": rand_id("rs_"),
@@ -426,7 +427,7 @@ def chat_to_anthropic(chat: dict) -> dict:
     finish = str(choice.get("finish_reason") or "stop")
     content: list[dict] = []
     reasoning = msg.get("reasoning_content") or msg.get("reasoning")
-    if isinstance(reasoning, str) and reasoning:
+    if isinstance(reasoning, str) and reasoning and not _degen_rs(reasoning):
         content.append({"type": "thinking", "thinking": reasoning})
     text = msg.get("content") if isinstance(msg.get("content"), str) else flatten_content(msg.get("content"))
     if text or not msg.get("tool_calls"):

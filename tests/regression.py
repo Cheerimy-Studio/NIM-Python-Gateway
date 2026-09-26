@@ -113,6 +113,20 @@ async def chat(request: Request):
             yield "data: " + json.dumps({"model":m,"choices":[{"delta":{"content":"nodone"}}]}) + "\\n\\n"
             await asyncio.sleep(0.1)
         return StreamingResponse(g8(), media_type="text/event-stream")
+    if m == "thinkjunk":
+        # 思考退化场景:先输出合法思考,再退化成成片感叹号,另有分隔线(不该被误伤)
+        if st:
+            async def g10():
+                yield "data: " + json.dumps({"model": m, "choices": [{"delta": {"reasoning_content": "让我思考一下。"}}]}, ensure_ascii=False) + "\\n\\n"
+                yield "data: " + json.dumps({"model": m, "choices": [{"delta": {"reasoning_content": "----------\\n"}}]}, ensure_ascii=False) + "\\n\\n"
+                yield "data: " + json.dumps({"model": m, "choices": [{"delta": {"reasoning_content": "!!!!!!!!!!!!!!!!!!!!!!!!"}}]}, ensure_ascii=False) + "\\n\\n"
+                yield "data: " + json.dumps({"model": m, "choices": [{"delta": {"content": "答案"}}]}, ensure_ascii=False) + "\\n\\n"
+                yield "data: [DONE]\\n\\n"
+            return StreamingResponse(g10(), media_type="text/event-stream")
+        return {"id": "c1", "object": "chat.completion", "model": m,
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "答案",
+                             "reasoning_content": "!!!!!!!!!!!!!!!!!!!!!!!!!!"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}}
     if st:
         async def g():
             for t in ["Hello"," world"]:
@@ -1112,6 +1126,43 @@ try:
     add("管理端点:非法请求体返回 400",
         r_bad1.status_code == 400 and r_bad2.status_code == 400 and r_bad3.status_code == 400,
         "tokens=%s keysop=%s batch=%s" % (r_bad1.status_code, r_bad2.status_code, r_bad3.status_code))
+
+    # 退化思考清理:推理栈故障时思考退化成成片 '!'(线上实测)。
+    # 三条路径都必须清理;合法分隔线(----------)不能被误伤。
+    r_ns = c.post(
+        "/v1/chat/completions",
+        json={"model": "thinkjunk", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    j_ns = r_ns.json()
+    _rs_ns = ((j_ns.get("choices") or [{}])[0].get("message") or {}).get("reasoning_content")
+    add("退化思考:非流式清理", r_ns.status_code == 200 and _rs_ns == "" and
+        ((j_ns.get("choices") or [{}])[0].get("message") or {}).get("content") == "答案",
+        "reasoning=%r content=%r" % (_rs_ns, ((j_ns.get("choices") or [{}])[0].get("message") or {}).get("content")))
+
+    raw_st = []
+    with c.stream(
+        "POST", "/v1/chat/completions",
+        json={"model": "thinkjunk", "stream": True, "messages": [{"role": "user", "content": "hi"}]},
+    ) as r_st:
+        st_st = r_st.status_code
+        raw_st = r_st.read().decode("utf-8", "replace")
+    add("退化思考:流式清理",
+        st_st == 200 and "!!!!!!!!!!!!!!!!" not in raw_st and "让我思考一下" in raw_st
+        and "----------" in raw_st and "答案" in raw_st,
+        "16连感叹号已清=%s 合法思考保留=%s 分隔线保留=%s" % (
+            "!!!!!!!!!!!!!!!!" not in raw_st, "让我思考一下" in raw_st, "----------" in raw_st))
+
+    raw_ms = []
+    with c.stream(
+        "POST", "/v1/messages",
+        json={"model": "thinkjunk", "max_tokens": 64, "stream": True,
+              "messages": [{"role": "user", "content": "hi"}]},
+    ) as r_ms:
+        st_ms = r_ms.status_code
+        raw_ms = r_ms.read().decode("utf-8", "replace")
+    add("退化思考:Messages 流式清理",
+        st_ms == 200 and "!!!!!!!!" not in raw_ms and "让我思考一下" in raw_ms,
+        "思考退化已清=%s 合法思考保留=%s" % ("!!!!!!!!" not in raw_ms, "让我思考一下" in raw_ms))
 
     # 看门狗雪崩判定(纯函数直测)
     import server as _srv
