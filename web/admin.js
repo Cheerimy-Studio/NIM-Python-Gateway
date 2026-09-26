@@ -1,4 +1,4 @@
-/* NVIDIA Gateway 控制台脚本 */
+
 (() => {
 'use strict';
 
@@ -6,8 +6,8 @@ const B = window.NGW.base, CSRF = window.NGW.csrf;
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
-// 渲染「客户端可控」内容（请求/响应原文、模型名等）时必须先转义，否则一段带
-// <script> 的会话文本会在管理员浏览器里执行（存储型 XSS → 偷走会话/CSRF 令牌）。
+
+
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
   ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 
@@ -65,17 +65,17 @@ async function api(path, opts = {}) {
   if (opts.form) init.body = opts.form;
   const res = await fetch(B + 'api/' + path, init);
   let data = null;
-  try { data = await res.json(); } catch (e) { /* empty */ }
+  try { data = await res.json(); } catch (e) {  }
   if (!res.ok) throw new Error((data && data.error && data.error.message) || ('HTTP ' + res.status));
   return data;
 }
 
-/* run: 立即执行并捕获错误（数据加载用） */
+
 const run = async fn => { try { return await fn(); } catch (e) { toast(e.message, 'danger'); } };
-/* guard: 包装为事件处理器（切勿直接当函数调用） */
+
 const guard = fn => async (...args) => { try { return await fn(...args); } catch (e) { toast(e.message, 'danger'); } };
 
-/* ================= 自定义弹窗（替代 confirm/prompt） ================= */
+
 function uiDialog({ title = '确认', body = '', input = null, danger = false, okText = '确定' }) {
   return new Promise(resolve => {
     const mask = el('div', 'ui-mask');
@@ -114,7 +114,7 @@ function uiDialog({ title = '确认', body = '', input = null, danger = false, o
 const uiConfirm = (msg, opts = {}) => uiDialog({ title: opts.title || '确认操作', body: msg, danger: !!opts.danger, okText: opts.okText || '确定' });
 const uiPrompt = (msg, val = '', opts = {}) => uiDialog({ title: opts.title || '输入', body: msg, input: { value: val, placeholder: opts.placeholder || '' }, okText: opts.okText || '确定' });
 
-/* ================= 导航 ================= */
+
 const LOADERS = {
   dash: () => loadOverview(),
   keys: () => loadKeys(),
@@ -134,7 +134,7 @@ function activate(name) {
   if (LOADERS[name]) LOADERS[name]();
 }
 
-/* ================= 仪表盘 ================= */
+
 async function loadOverview() {
   const o = await run(() => api('overview'));
   if (!o) return;
@@ -183,7 +183,7 @@ async function loadOverview() {
   }
 }
 
-/* ================= 账号池 ================= */
+
 const keysState = {page: 1};
 let revealSet = new Set();
 const batchSel = new Set();
@@ -212,7 +212,7 @@ async function runBatch(op) {
     const payload = {op, ids};
     if (op === 'move') payload.upstream_id = $('#batch-up').value;
     const r = await api('keys/batch', {method: 'POST', json: payload});
-    if (op === 'delete' || op === 'move') batchSel.clear();  // 已删/已转移的 id 不该留在选中集
+    if (op === 'delete' || op === 'move') batchSel.clear();  
     if (op === 'test') {
       const okN = Object.values(r.results).filter(t => t && t.ok).length;
       toast(`测试完成：${okN}/${Object.keys(r.results).length} 可用`);
@@ -256,7 +256,7 @@ async function loadKeys() {
     const tr = el('tr'); const td = el('td', 'text-muted text-center py-4', '—');
     td.colSpan = 15; tr.appendChild(td); tb.appendChild(tr);
   }
-  // 按渠道分组渲染
+  
   const groups = new Map();
   for (const k of d.rows) {
     const g = k.upstream_name || '-';
@@ -346,7 +346,7 @@ async function loadKeys() {
     tdOp.appendChild(grp);
     tr.appendChild(tdOp);
     tb.appendChild(tr);
-    // 行点击展开/收起详情看板（复选框与按钮区域除外）
+    
     tr.addEventListener('click', e => {
       if (e.target.closest('button') || e.target.closest('a') || e.target.closest('code') || e.target.closest('input')) return;
       toggleKeyDetail(k.id, tr);
@@ -373,7 +373,7 @@ async function loadKeys() {
   addPage('»', Math.min(d.pages, keysState.page + 1), false, keysState.page >= d.pages);
 }
 
-/* ================= 账号行内看板 ================= */
+
 const keysState2 = {openId: null};
 
 function toggleKeyDetail(id, tr, force) {
@@ -386,7 +386,7 @@ function toggleKeyDetail(id, tr, force) {
     if (keysState2.openId === id) keysState2.openId = null;
     return;
   }
-  // 收起其它已展开的行
+  
   $$('#keys-rows tr.detail-row').forEach(r => r.remove());
   $$('#keys-rows tr.krow.open').forEach(r => r.classList.remove('open'));
   keysState2.openId = id;
@@ -469,7 +469,7 @@ async function refreshKeyPanel(id, panel) {
   panel.appendChild(tbl);
 }
 
-/* ================= 上游 ================= */
+
 async function loadUpstreams() {
   const d = await run(() => api('upstreams'));
   if (!d) return;
@@ -534,9 +534,9 @@ async function loadUpstreams() {
       $('#up-form-title').scrollIntoView({block: 'center'});
     });
     mk(u.enabled ? '停用' : '启用', 'btn-outline-secondary', guard(async () => {
-      // 只回传必要字段。整行回传（{...u}）会把 models（数组）与 model_map（字典）
-      // 原样送回去，一旦后端按文本解析就会把它们改写坏 —— 曾经就是这样把渠道白名单
-      // 写成了 ["['deepseek-v4-flash']"]，那条渠道从此对任何请求都判「模型不匹配」。
+      
+      
+      
       await api('upstreams', {
         method: 'POST',
         json: {id: u.id, name: u.name, base: u.base, enabled: !u.enabled},
@@ -552,7 +552,7 @@ async function loadUpstreams() {
     tr.appendChild(tdOp);
     tb.appendChild(tr);
   }
-  // 导入页下拉同步
+  
   const sel = $('#import-up');
   const cur = sel.value;
   sel.innerHTML = '';
@@ -564,7 +564,7 @@ async function loadUpstreams() {
   if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
 }
 
-/* 渠道覆盖字段（0=继承全局） */
+
 const UP_FIELDS = [
   ['up-rpm-key', 'rpm'], ['up-tpm-key', 'tpm'],
   ['up-coolcd', 'account_cooldown_ms'], ['up-hrl', 'hourly_request_limit'],
@@ -580,9 +580,9 @@ const UP_FIELDS = [
   ['up-bthk', 'breaker_threshold'], ['up-bseck', 'breaker_seconds'],
 ];
 
-/* ================= 参数覆写可视化编辑器 ================= */
-let poverData = {};  // {scope: {param: value}}
-let tdefData = {};   // {model: effort}
+
+let poverData = {};  
+let tdefData = {};   
 
 function poverLoad(obj) {
   poverData = {};
@@ -698,15 +698,15 @@ async function fillModelSelects() {
   const sel2 = $('#tdef-model');
   if (!sel1 && !sel2) return;
   const models = new Set();
-  // 从后台拉取所有渠道的可用模型 + 映射源名
+  
   try {
     const d = await api('upstreams');
     for (const u of (d.rows || [])) {
       for (const m of (u.models || [])) models.add(m);
       for (const src of Object.keys(u.model_map || {})) models.add(src);
     }
-  } catch (e) { /* 静默 */ }
-  // 补充当前表单里的模型/映射
+  } catch (e) {  }
+  
   const upModels = $('#up-models');
   if (upModels && upModels.value.trim()) {
     upModels.value.split(/[\n,]/).forEach(m => { m = m.trim(); if (m) models.add(m); });
@@ -774,12 +774,12 @@ function bindUpstreams() {
     $('#up-form-title').textContent = '添加上游';
     $('#up-cancel').classList.add('d-none');
   };
-  // 参数覆写 & 思考强度可视化编辑
+  
   const poverBtn = $('#pover-add');
   if (poverBtn) poverBtn.onclick = () => { poverAdd(); };
   const tdefBtn = $('#tdef-add');
   if (tdefBtn) tdefBtn.onclick = () => { tdefAdd(); };
-  // 渠道模型/映射变化时刷新模型选择器
+  
   const upModels = $('#up-models');
   if (upModels) upModels.addEventListener('input', fillModelSelects);
   const upMap = $('#up-map');
@@ -815,7 +815,7 @@ async function refreshBatchUps() {
   }
 }
 
-/* ================= 导入 ================= */
+
 function bindImport() {
   $('#import-btn').onclick = guard(async () => {
     const text = $('#import-text').value;
@@ -834,7 +834,7 @@ function bindImport() {
   });
 }
 
-/* ================= 访问令牌 ================= */
+
 const tokReveal = new Set();
 
 async function loadTokens() {
@@ -909,7 +909,7 @@ function bindTokens() {
 }
 bindTokens();
 
-/* ================= 日志 ================= */
+
 const logsState = {filter: 'all', rows: []};
 const EP_NAMES = {chat: 'chat/completions', resp: 'responses', cmpl: 'completions', emb: 'embeddings', models: 'models', test: '测试'};
 const EP_BADGE = {chat: 'bg-primary-subtle text-primary', resp: 'bg-info-subtle text-info', cmpl: 'bg-primary-subtle text-primary',
@@ -937,15 +937,15 @@ function renderLogs() {
     return;
   }
   for (const r of rows) {
-    // 新格式: [t, ep, model, key, st, ms, err, ip, att, up_model, stream, ttfb, in_tok, out_tok]
+    
     const t = r[0], ep = r[1], model = r[2], key = r[3], st = r[4], ms = r[5], err = r[6], ip = r[7], att = r[8];
     const upModel = r[9] || '', isStream = !!r[10], ttfb = r[11] || 0, inTok = r[12] || 0, outTok = r[13] || 0;
     const stCls = st >= 400 || st === 0 ? 'bg-danger-subtle text-danger' : 'bg-success-subtle text-success';
     const tr = el('tr');
     tr.append(
-      // 时间 + IP
+      
       el('td', 'small text-muted', fmtTime(t)),
-      // 模型 + 映射（两行）
+      
       (() => {
         const td = el('td');
         const div = el('div', 'fw-medium', model || '-');
@@ -955,7 +955,7 @@ function renderLogs() {
         }
         return td;
       })(),
-      // 端点 + 流式标识
+      
       (() => {
         const td = el('td');
         const badge = el('span', 'badge ' + (EP_BADGE[ep] || 'bg-secondary-subtle text-secondary'), EP_NAMES[ep] || ep);
@@ -963,15 +963,15 @@ function renderLogs() {
         if (isStream) td.appendChild(el('span', 'badge bg-purple-subtle text-purple ms-1', 'SSE'));
         return td;
       })(),
-      // 账号
+      
       el('td', 'small', key || '-'),
-      // 状态
+      
       (() => {
         const td = el('td');
         td.appendChild(el('span', 'badge ' + stCls, statusText(st)));
         return td;
       })(),
-      // Token
+      
       (() => {
         const td = el('td', 'text-end small text-muted');
         if (inTok || outTok) {
@@ -981,7 +981,7 @@ function renderLogs() {
         }
         return td;
       })(),
-      // 延迟 + 耗时
+      
       (() => {
         const td = el('td', 'text-end small');
         if (isStream && ttfb > 0 && ttfb < ms) {
@@ -991,7 +991,7 @@ function renderLogs() {
         }
         return td;
       })(),
-      // 错误
+      
       el('td', 'small text-danger err-cell', err || '-'),
     );
     tr.style.cursor = 'pointer';
@@ -1023,7 +1023,7 @@ function showLogDetail(r) {
   uiPanel('请求详情', wrap);
 }
 
-/* ================= 排队 ================= */
+
 async function loadQueue() {
   const d = await run(() => api('queue'));
   if (!d) return;
@@ -1048,7 +1048,7 @@ async function loadQueue() {
   });
 }
 
-/* ================= 设置 ================= */
+
 const SET_FIELDS = [
   ['set-rate', 'rate_limit_per_minute'], ['set-tpm', 'tpm_limit'],
   ['set-coolcd', 'account_cooldown_ms'], ['set-hrl', 'hourly_request_limit'],
@@ -1142,7 +1142,7 @@ function bindSettings() {
   });
 }
 
-/* ================= 接入 ================= */
+
 function fillDocs() {
   const base = location.origin + (B === '/' ? '' : B.replace(/\/$/, ''));
   $('#doc-base').textContent = base + '/v1';
@@ -1180,7 +1180,7 @@ print(msg.content[0].text)`;
 }
 
 
-/* ================= 宽弹窗（训练详情 / 请求详情） ================= */
+
 function uiPanel(title, contentEl) {
   const mask = el('div', 'ui-mask');
   const box = el('div', 'ui-dialog wide');
@@ -1200,7 +1200,7 @@ function uiPanel(title, contentEl) {
   document.addEventListener('keydown', onKey);
 }
 
-/* ================= 训练资料 ================= */
+
 const EP_SHOW = {chat: 'Chat', resp: 'Responses', msg: 'Messages', cmpl: 'Compl', emb: 'Embed', test: 'Test'};
 
 async function loadTraining() {
@@ -1267,20 +1267,8 @@ $('#training-clear').onclick = guard(async () => {
     await api('training/clear', {method: 'POST'}); loadTraining();
   }
 });
-$('#training-export').onclick = async e => {
-  e.preventDefault();
-  const res = await fetch(B + 'api/training/export', {headers: {'X-CSRF': CSRF}});
-  if (!res.ok) { toast('导出失败', 'danger'); return; }
-  const blob = await res.blob();
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'training.jsonl';
-  a.click();
-  URL.revokeObjectURL(a.href);
-  toast(`已导出 ${blob.size} 字节`);
-};
 
-/* ================= 会话日志 ================= */
+
 async function loadSessions() {
   const d = await run(() => api('sessions'));
   if (!d) return;
@@ -1313,9 +1301,9 @@ $('#sessions-clear').onclick = guard(async () => {
   if (await uiConfirm('清空全部会话日志？')) { await api('sessions/clear', {method: 'POST'}); loadSessions(); }
 });
 
-/* ================= 模型测试（后台内部测试：走网关完整链路） ================= */
-let testToken = null;   // 网关访问令牌
-let testMsgs = [];      // 对话历史
+
+let testToken = null;   
+let testMsgs = [];      
 let testBusy = false;
 
 async function testEnsureToken() {
@@ -1345,7 +1333,7 @@ async function loadTestModels() {
     const r = await fetch(B + 'v1/models', { headers: tok ? { Authorization: 'Bearer ' + tok } : {} });
     const d = await r.json();
     for (const m of (d.data || [])) if (m && m.id) models.push(m.id);
-  } catch (e) { /* 回落到渠道配置 */ }
+  } catch (e) {  }
   if (!models.length) {
     try {
       const d = await api('upstreams');
@@ -1353,20 +1341,20 @@ async function loadTestModels() {
         for (const m of (u.models || [])) models.push(m);
         for (const k of Object.keys(u.model_map || {})) models.push(k);
       }
-    } catch (e) { /* 静默 */ }
+    } catch (e) {  }
   }
   const uniq = [...new Set(models)];
   sel.innerHTML = '';
   if (!uniq.length) { sel.appendChild(el('option', '', '（无可用模型，请先配置渠道）')); return; }
-  for (const m of uniq) sel.appendChild(el('option', '', m));   // el() 走 textContent，安全
+  for (const m of uniq) sel.appendChild(el('option', '', m));   
   sel.value = keep && uniq.includes(keep) ? keep : uniq[0];
 }
 
-/* 模型输出 Markdown 渲染:marked 生成 → DOMPurify 消毒(模型输出可能含
-   注入的原始 HTML,绝不能直接 innerHTML);CDN 不可用时回退纯文本 */
+
 const mdRender = (text, node) => {
   if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-    node.innerHTML = DOMPurify.sanitize(marked.parse(text, {breaks: true, gfm: true}));
+    node.innerHTML = DOMPurify.sanitize(marked.parse(text, {breaks: true, gfm: true}), {ADD_ATTR: ['target']});
+    node.querySelectorAll('a').forEach(a => { a.target = '_blank'; a.rel = 'noopener noreferrer'; });
   } else {
     node.textContent = text;
   }
@@ -1385,7 +1373,7 @@ function testRender() {
     const row = el('div', 'mb-2 d-flex ' + (mine ? 'justify-content-end' : 'justify-content-start'));
     const b = el('div', 'tmsg ' + (mine ? 'me' : 'ai'));
     if (mine) {
-      b.textContent = m.content || '';   // 用户输入一律纯文本
+      b.textContent = m.content || '';   
     } else {
       if (m.reasoning) {
         const th = el('div', 'think');
@@ -1476,7 +1464,7 @@ async function testSend() {
       const txt = await r.text();
       raw.push(txt);
       let j = null;
-      try { j = JSON.parse(txt); } catch (e) { /* 非 JSON */ }
+      try { j = JSON.parse(txt); } catch (e) {  }
       ttfb = performance.now() - t0;
       if (j) {
         if (j.error) err = (j.error.message || JSON.stringify(j.error)).slice(0, 300);
@@ -1546,13 +1534,13 @@ $('#test-input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); testSend(); }
 });
 
-/* ================= 初始化 ================= */
+
 document.addEventListener('DOMContentLoaded', () => {
   $$('.sidebar nav a').forEach(a => a.addEventListener('click', e => { e.preventDefault(); activate(a.dataset.pane); }));
   $('#btn-logout').onclick = guard(async () => { await api('logout', {method: 'POST'}); location.href = B + 'admin'; });
   bindImport(); bindSettings(); bindUpstreams(); bindBatch();
   refreshBatchUps();
-  fillModelSelects();  // 初始化模型选择器（从后台拉取所有渠道模型）
+  fillModelSelects();  
 
   let qTimer = null;
   $('#keys-q').addEventListener('input', () => {

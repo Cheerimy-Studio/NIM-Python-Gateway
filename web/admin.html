@@ -6,8 +6,8 @@
 <title>NVIDIA Gateway</title>
 <link href="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap-icons/1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
-<script src="https://cdn.bootcdn.net/ajax/libs/marked/4.3.0/marked.min.js"></script>
-<script src="https://cdn.bootcdn.net/ajax/libs/dompurify/3.0.9/purify.min.js"></script>
+<script defer src="https://cdn.bootcdn.net/ajax/libs/marked/4.3.0/marked.min.js"></script>
+<script defer src="https://cdn.bootcdn.net/ajax/libs/dompurify/3.0.9/purify.min.js"></script>
 <style>
 :root{--acc:#2f6fed;--bg:#f3f5f9;--line:#e7ecf3;--txt:#1c2536;--mut:#68758a;--r:12px}
 *{scrollbar-width:thin}
@@ -75,7 +75,7 @@ pre{background:#0d1526;color:#dbe5f5;padding:1rem 1.1rem;border-radius:10px;font
 .ui-title-row .t{font-weight:700;font-size:14px}
 .ui-close{border:0;background:transparent;color:#98a3b8;font-size:18px;line-height:1;padding:2px 6px;border-radius:6px;cursor:pointer}
 .ui-close:hover{background:#f1f5f9;color:#334155}
-/* 训练资料:对话详情 */
+
 .conv{display:flex;flex-direction:column;gap:9px;padding:2px 1px}
 .conv .cmsg{display:flex;gap:9px;align-items:flex-start;font-size:13px}
 .conv .crole{flex-shrink:0;min-width:56px;text-align:center;font-size:11px;font-weight:600;
@@ -101,7 +101,7 @@ tr.krow.open>td{border-bottom:0}
 .detail-row>td{background:#fafbfd;padding:0!important;border-top:0}
 .kpanel{padding:13px 16px;border-top:1px dashed var(--line);background:#fafbfd}
 
-/* ---------- 控件体系 ---------- */
+
 .btn{border-radius:9px;font-size:13px;transition:all .15s ease;--bs-btn-font-size:13px}
 .btn-sm{border-radius:8px;padding:.3rem .68rem;--bs-btn-padding-y:.3rem}
 .btn-primary{background:linear-gradient(135deg,#3576f0,#2a5ce0);border-color:transparent;box-shadow:0 1px 3px rgba(37,99,235,.28)}
@@ -128,14 +128,14 @@ summary{user-select:none}
 ::-webkit-scrollbar-thumb:hover{background:#9fadc2}
 .toast{border-radius:10px;box-shadow:0 8px 28px rgba(16,24,40,.18)}
 
-/* 模型测试：对话气泡与诊断 */
+
 .tchat{min-height:240px;max-height:46vh;overflow:auto;padding:14px 16px}
 .tmsg{max-width:82%;white-space:pre-wrap;word-break:break-word;padding:.52rem .8rem;
   border-radius:13px;font-size:13px;line-height:1.55;box-shadow:0 1px 2px rgba(15,23,42,.06)}
 .tmsg.me{background:linear-gradient(135deg,#3576f0,#2a5ce0);color:#fff;border-bottom-right-radius:4px}
 .tmsg.ai{background:#f4f7fb;color:var(--txt);border:1px solid #e8eef7;border-bottom-left-radius:4px}
 .tmsg.pending{opacity:.6}
-/* 气泡内 Markdown 渲染:压缩排版适配对话场景 */
+
 .tmsg .md>:first-child{margin-top:0}
 .tmsg .md>:last-child{margin-bottom:0}
 .tmsg .md p{margin:.35em 0}
@@ -152,7 +152,7 @@ summary{user-select:none}
 .tmsg .md th{background:rgba(47,111,237,.07)}
 .tmsg .md a{color:#2f5bc7;text-decoration:underline}
 .tmsg .md hr{border:0;border-top:1px solid #dde5f0;margin:.6em 0}
-/* 思考块 */
+
 .tmsg .think{border:1px dashed #ccd8e8;border-radius:9px;margin-bottom:.55em;
   padding:8px 11px;background:rgba(47,111,237,.045)}
 .tmsg .think-hd{font-size:11px;font-weight:600;color:#98a3b8;letter-spacing:.6px;margin-bottom:4px}
@@ -226,12 +226,12 @@ details.upgrp[open]{background:#fff}
     <a href="javascript:void(0)" data-pane="settings"><i class="bi bi-gear"></i>设置</a>
     <a href="javascript:void(0)" data-pane="docs"><i class="bi bi-book"></i>接入</a>
   </nav>
-  <div class="foot"><a href="#" id="btn-logout"><i class="bi bi-box-arrow-left me-1"></i>退出登录</a></div>
+  <div class="foot"><a href="javascript:void(0)" id="btn-logout"><i class="bi bi-box-arrow-left me-1"></i>退出登录</a></div>
 </aside>
 
 <main class="content">
 
-<!-- 仪表盘 -->
+
 <section class="pane active" id="pane-dash">
   <h2 class="pane-title">仪表盘</h2>
   <div class="row g-3" id="dash-cards"></div>
@@ -266,7 +266,7 @@ details.upgrp[open]{background:#fff}
   </div>
 </section>
 
-<!-- 账号池 -->
+
 <section class="pane" id="pane-keys">
   <h2 class="pane-title">账号池</h2>
   <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
@@ -278,7 +278,7 @@ details.upgrp[open]{background:#fff}
       <option value="disabled">不可用</option>
     </select>
     <button id="keys-refresh" class="btn btn-sm btn-outline-secondary">刷新</button>
-    <a id="keys-export" class="btn btn-sm btn-outline-secondary" href="#">导出 CSV</a>
+    <a id="keys-export" class="btn btn-sm btn-outline-secondary" href="/api/keys/export">导出 CSV</a>
   </div>
   <div id="batch-bar" class="d-none d-flex flex-wrap gap-2 align-items-center mb-2 p-2 rounded" style="background:#eef3fa;border:1px solid var(--line)">
     <span class="small fw-semibold">已选 <span id="batch-count">0</span> 个</span>
@@ -309,7 +309,7 @@ details.upgrp[open]{background:#fff}
   <nav class="mt-2"><ul class="pagination pagination-sm mb-0" id="keys-pages"></ul></nav>
 </section>
 
-<!-- 上游 -->
+
 <section class="pane" id="pane-upstreams">
   <h2 class="pane-title">上游</h2>
   <div class="card mb-3">
@@ -469,7 +469,7 @@ details.upgrp[open]{background:#fff}
   </div>
 </section>
 
-<!-- 导入 -->
+
 <section class="pane" id="pane-import">
   <h2 class="pane-title">导入</h2>
   <div class="card"><div class="card-body">
@@ -492,7 +492,7 @@ details.upgrp[open]{background:#fff}
   </div></div>
 </section>
 
-<!-- 访问令牌 -->
+
 <section class="pane" id="pane-tokens">
   <h2 class="pane-title">访问令牌</h2>
   <div class="card mb-3">
@@ -517,7 +517,7 @@ details.upgrp[open]{background:#fff}
   </div>
 </section>
 
-<!-- 日志 -->
+
 <section class="pane" id="pane-logs">
   <h2 class="pane-title">日志</h2>
   <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
@@ -549,7 +549,7 @@ details.upgrp[open]{background:#fff}
   </div>
 </section>
 
-<!-- 排队 -->
+
 <section class="pane" id="pane-queue">
   <h2 class="pane-title">排队</h2>
   <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
@@ -573,7 +573,7 @@ details.upgrp[open]{background:#fff}
   </div>
 </section>
 
-<!-- 模型测试（后台内部测试：走网关完整链路，用于排查） -->
+
 <section class="pane" id="pane-test">
   <h2 class="pane-title">模型测试</h2>
   <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
@@ -613,12 +613,12 @@ details.upgrp[open]{background:#fff}
 </section>
 
 
-<!-- 训练资料 -->
+
 <section class="pane" id="pane-training">
   <h2 class="pane-title">训练资料</h2>
   <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
     <button id="training-refresh" class="btn btn-sm btn-outline-secondary">刷新</button>
-    <a id="training-export" class="btn btn-sm btn-outline-primary" href="#">导出 JSONL</a>
+    <a id="training-export" class="btn btn-sm btn-outline-primary" href="/api/training/export">导出 JSONL</a>
     <button id="training-clear" class="btn btn-sm btn-outline-danger">清空</button>
     <div class="ms-auto small text-muted" id="training-meta"></div>
   </div>
@@ -635,7 +635,7 @@ details.upgrp[open]{background:#fff}
   </div>
 </section>
 
-<!-- 会话日志 -->
+
 <section class="pane" id="pane-sessions">
   <h2 class="pane-title">会话日志</h2>
   <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
@@ -647,7 +647,7 @@ details.upgrp[open]{background:#fff}
 </section>
 
 
-<!-- 设置 -->
+
 <section class="pane" id="pane-settings">
   <h2 class="pane-title">设置</h2>
   <div class="row g-3">
@@ -788,7 +788,7 @@ details.upgrp[open]{background:#fff}
         <div class="card-header"><i class="bi bi-arrow-left-right me-2 text-muted"></i>配置同步</div>
         <div class="card-body">
           <div class="d-flex flex-wrap gap-2 align-items-center">
-            <a id="cfg-export" class="btn btn-sm btn-outline-primary" href="#">导出配置（JSON）</a>
+            <a id="cfg-export" class="btn btn-sm btn-outline-primary" href="/api/config/export">导出配置（JSON）</a>
             <input type="file" id="cfg-import-file" class="form-control form-control-sm" style="max-width:260px" accept=".json">
             <button id="cfg-import" class="btn btn-sm btn-outline-primary">导入配置</button>
             <span class="small text-muted" id="cfg-result"></span>
@@ -865,7 +865,7 @@ details.upgrp[open]{background:#fff}
   </div>
 </section>
 
-<!-- 接入 -->
+
 <section class="pane" id="pane-docs">
   <h2 class="pane-title">接入</h2>
   <div class="card"><div class="card-body">
