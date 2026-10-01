@@ -1105,6 +1105,7 @@ const SET_FIELDS = [
   ['set-trmax', 'training_log_max'],
   ['set-trmin', 'training_min_chars'],
   ['set-watchmin', 'watchdog_minutes'],
+  ['set-updtok', 'update_token'],
 ];
 
 async function loadSettings() {
@@ -1562,6 +1563,14 @@ async function testSend() {
 $('#test-reload').onclick = () => { testToken = null; loadTestModels(); };
 $('#test-clear').onclick = () => { testMsgs = []; testRender(); };
 $('#test-send').onclick = testSend;
+$('#gen-updtok').onclick = () => {
+  const arr = new Uint8Array(24);
+  crypto.getRandomValues(arr);
+  const tok = 'upd-' + Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+  $('#set-updtok').value = tok;
+  navigator.clipboard.writeText(tok).catch(() => {});
+  toast('已生成并复制更新令牌(记得保存设置)');
+};
 $('#test-input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); testSend(); }
 });

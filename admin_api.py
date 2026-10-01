@@ -601,6 +601,7 @@ STR_SETTINGS = {
     "model_whitelist",
     "model_blacklist",
     "param_overrides",
+    "update_token",
 }
 BOOL_SETTINGS = {
     "log_enabled",
@@ -891,12 +892,27 @@ async def tokens_delete(request: Request):
 
 @router.post("/update")
 async def remote_update(request: Request):
-    bad = _require(request)
-    if bad:
-        return bad
-    db = STORE.load()
-    if not db["config"].get("update_enabled"):
-        return JSONResponse({"error": {"message": "远程更新未开启(后台「设置 → 排队与其他」打开开关)"}}, status_code=400)
+    """远程更新:支持两种鉴权路径。
+
+    路径A(管理令牌):Authorization: Bearer <update_token> —— 无需 admin
+    会话/CSRF,供自动化发布流程使用(最小权限:只暴露更新能力)。
+    路径B(管理会话):admin 登录 + CSRF(后台手动触发)。
+    两条路径都要求 update_enabled 开关打开。
+    """
+    cfg = STORE.load()["config"]
+    token = str(cfg.get("update_token") or "")
+    auth = request.headers.get("authorization") or ""
+    bearer = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    token_ok = bool(token and bearer and hmac.compare_digest(token, bearer))
+    if not token_ok:
+        bad = _require(request)
+        if bad:
+            return bad
+    if not cfg.get("update_enabled"):
+        return JSONResponse(
+            {"error": {"message": "远程更新未开启(后台「设置 → 排队与其他」打开开关)"}},
+            status_code=400,
+        )
     import asyncio
     import server as _srv
 

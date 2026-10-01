@@ -859,6 +859,12 @@ details.upgrp[open]{background:#fff}
                 <label class="form-check-label small" for="set-update">远程更新（从 GitHub main 拉取并自重启）</label>
               </div>
             </div>
+            <div class="col-md-6"><label class="form-label" for="set-updtok">更新令牌（Bearer 鉴权，留空仅限后台会话触发）</label>
+              <div class="d-flex gap-2">
+                <input class="form-control form-control-sm font-monospace" id="set-updtok" placeholder="upd-…">
+                <button type="button" id="gen-updtok" class="btn btn-sm btn-outline-secondary text-nowrap">生成</button>
+              </div>
+            </div>
             <div class="col-md-6"><label class="form-label" for="set-qwait">排队最长等待（秒）</label>
               <input type="number" min="0" class="form-control form-control-sm" id="set-qwait"></div>
             <div class="col-md-6"><label class="form-label" for="set-qpoll">排队轮询间隔（毫秒）</label>

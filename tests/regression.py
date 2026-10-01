@@ -1118,12 +1118,21 @@ try:
     _missing = []
     _tree = _ast.parse(open(os.path.join(ROOT, "admin_api.py"), encoding="utf-8").read())
     for _n in _tree.body:
-        if isinstance(_n, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and _n.name not in ("login", "logout"):
+        if isinstance(_n, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and _n.name not in ("login", "logout", "remote_update"):
             _decs = [d.func.attr for d in _n.decorator_list
                      if isinstance(d, _ast.Call) and isinstance(d.func, _ast.Attribute)]
             if any(x in ("get", "post") for x in _decs) and not _has_require(_n):
                 _missing.append(_n.name)
     add("安全:管理端点认证全覆盖", not _missing, "缺失: %s" % (_missing or "无"))
+    # remote_update 单独验证:必须含 Bearer token 鉴权或 _require 双路径
+    _rtree = _ast.parse(open(os.path.join(ROOT, "admin_api.py"), encoding="utf-8").read())
+    _rt_ok = False
+    for _n in _rtree.body:
+        if isinstance(_n, _ast.AsyncFunctionDef) and _n.name == "remote_update":
+            _src = _ast.unparse(_n)
+            _rt_ok = "compare_digest" in _src and "_require" in _src
+    add("安全:remote_update 双路径鉴权", _rt_ok,
+        "Bearer compare_digest + _require 都在=%s" % _rt_ok)
 
     # 测试页跳过标记:带 X-NGW-Skip-Training 的请求(后台模型测试页)不进训练集
     a.post("/api/settings", json={"config": {"training_min_chars": 0}})
@@ -1396,15 +1405,21 @@ try:
     # 僵尸队列条目清理:进程重启时死掉的等待请求无人出队,条目永久留在 db,
     # 仪表盘虚报「排队中 N」而队列面板为空(线上实测 36 条僵尸)
     import server as _srv
-    # 远程更新端点:开关关闭时拒绝(安全);打开后端点可达(不实际重启)
-    r_up1 = a.post("/api/update", json={})
+    # 远程更新端点:开关关闭时拒绝;Bearer 令牌鉴权路径验证
+    a.post("/api/settings", json={"config": {"update_enabled": False, "update_token": "upd-test1234567890abcdef"}})
+    r_up0 = a.post("/api/update", json={})  # admin 会话 + 开关关 → 400
     a.post("/api/settings", json={"config": {"update_enabled": True}})
-    r_up2 = a.post("/api/update", json={})
-    a.post("/api/settings", json={"config": {"update_enabled": False}})
-    add("远程更新:开关控制访问",
-        r_up1.status_code == 400 and r_up2.status_code in (200, 500),
-        "关=%s 开=%s(开状态下可能因无法连 GitHub 报 500,属预期)" % (
-            r_up1.status_code, r_up2.status_code))
+    # Bearer 令牌路径(无需 admin cookie)
+    r_tok1 = httpx.post("http://127.0.0.1:18213/api/update",
+                        headers={"Authorization": "Bearer upd-test1234567890abcdef"}, timeout=30)
+    r_tok2 = httpx.post("http://127.0.0.1:18213/api/update",
+                        headers={"Authorization": "Bearer upd-wrong-token-xxxxxxxx"}, timeout=30)
+    a.post("/api/settings", json={"config": {"update_enabled": False, "update_token": ""}})
+    add("远程更新:开关与令牌鉴权",
+        r_up0.status_code == 400
+        and (r_tok1.status_code in (200, 500))
+        and r_tok2.status_code == 401,
+        "开关关=%s 令牌对=%s 令牌错=%s" % (r_up0.status_code, r_tok1.status_code, r_tok2.status_code))
     _qdb = {
         "config": {"queue_max_wait": 300},
         "queue": [

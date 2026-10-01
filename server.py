@@ -140,26 +140,55 @@ def _self_restart(reason: str) -> None:
 
 
 async def _watchdog_loop() -> None:
-    streak = 0
+    """雪崩看门狗(三种形态):
+
+    1. 全池账号不可用(封禁/冷却/并发满)且队列有等待者 —— 账号层雪崩
+    2. 事件循环严重滞后 —— flush 锁竞争/同步阻塞等任何形态的循环卡死;
+       asyncio.sleep 的实际超时偏差直接测量循环健康度,阻塞越大偏差越大
+    3. httpx 连接池持续满 —— 上游连接被慢流/泄漏占满(日志有 PoolTimeout 且持续)
+
+    任一形态持续 watchdog_minutes 分钟 → 落盘 + execv 自重启。
+    """
+    dead_streak = 0
     while True:
+        t0 = time.monotonic()
         await asyncio.sleep(30)
+        lag = time.monotonic() - t0 - 30.0
         try:
             cfg = cfg_all()
             if not cfg.get("watchdog_enabled", True):
-                streak = 0
+                dead_streak = 0
                 continue
+            minutes = max(1, _cfgint(cfg, "watchdog_minutes", 3)) * 60
+            _hit = False
+            _why = ""
+            # 形态1:账号层全池不可用
             dead, info = watchdog_dead(STORE.load(), pool._inflight, int(time.time()), cfg)
-            if dead:
-                streak += 30
-                limit = max(1, _cfgint(cfg, "watchdog_minutes", 3)) * 60
-                if streak >= limit:
-                    _self_restart(
-                        "全池不可用(封禁/冷却/并发满 %s/%s)且队列 %s 个等待,持续 %d 秒"
-                        % (info.get("bad"), info.get("total"), info.get("queue"), streak)
-                    )
-                    return  # execv 失败(不可重启)时退出任务,避免死循环刷日志
+            if dead and (info.get("queue") or 0) > 0:
+                _hit = True
+                _why = "全池不可用(%s/%s)且队列 %s 个等待" % (
+                    info.get("bad"), info.get("total"), info.get("queue"))
+            # 形态2:事件循环滞后(sleep 30 秒偏差 > 10 秒 = 严重阻塞)
+            if lag > 10.0:
+                _hit = True
+                _why = "事件循环滞后 %.1f 秒(锁竞争/同步阻塞)" % lag
+            # 形态3:连接池满(最近日志里持续出现 PoolTimeout)
+            db = STORE.load()
+            if db.get("logs"):
+                pool_timeout = sum(
+                    1 for x in (db.get("logs") or [])[:10]
+                    if isinstance(x, list) and len(x) > 6 and "PoolTimeout" in str(x[6])
+                )
+                if pool_timeout >= 5:
+                    _hit = True
+                    _why = "近 10 条日志中 %d 条 PoolTimeout(连接池持续满)" % pool_timeout
+            if _hit:
+                dead_streak += 30
+                if dead_streak >= minutes:
+                    _self_restart("看门狗触发:%s,持续 %d 秒" % (_why, dead_streak))
+                    return  # execv 失败时退出任务,避免死循环刷日志
             else:
-                streak = 0
+                dead_streak = 0
         except Exception:
             pass
 

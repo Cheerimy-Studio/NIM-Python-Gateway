@@ -47,6 +47,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "queue_max_wait": 15,
     "queue_poll_ms": 400,
     "update_enabled": False,
+    "update_token": "",
     # 模型限制
     "model_whitelist": "",
     "model_blacklist": "",
