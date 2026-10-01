@@ -173,17 +173,17 @@ summary{user-select:none}
 .score-mid{color:#d97706;font-weight:700}
 .score-lo{color:#dc2626;font-weight:700}
 /* 号池热力图:绿=可用 黄=繁忙/冷却 红=不可用 */
-.poolmap .pm-group{margin-bottom:10px}
-.poolmap .pm-group:last-child{margin-bottom:0}
-.poolmap .pm-head{display:flex;align-items:center;gap:8px;font-size:12px;color:#5b6b84;margin-bottom:5px}
-.poolmap .pm-head b{color:#334155;font-weight:600}
-.poolmap .pm-head .pm-dot{width:8px;height:8px;border-radius:50%}
-.poolmap .pm-cells{display:flex;flex-wrap:wrap;gap:3px}
-.poolmap .cell{width:13px;height:13px;border-radius:3px;cursor:help;transition:transform .1s ease}
-.poolmap .cell:hover{transform:scale(1.35)}
-.poolmap .cell.s0{background:#16a34a}
-.poolmap .cell.s1{background:#d97706}
-.poolmap .cell.s2{background:#dc2626}
+#poolmap .pm-group{margin-bottom:10px}
+#poolmap .pm-group:last-child{margin-bottom:0}
+#poolmap .pm-head{display:flex;align-items:center;gap:8px;font-size:12px;color:#5b6b84;margin-bottom:5px}
+#poolmap .pm-head b{color:#334155;font-weight:600}
+#poolmap .pm-head .pm-dot{width:8px;height:8px;border-radius:50%}
+#poolmap .pm-cells{display:flex;flex-wrap:wrap;gap:3px}
+#poolmap .cell{width:13px;height:13px;border-radius:3px;cursor:help;transition:transform .1s ease;display:inline-block}
+#poolmap .cell:hover{transform:scale(1.35)}
+#poolmap .cell.s0{background:#16a34a}
+#poolmap .cell.s1{background:#d97706}
+#poolmap .cell.s2{background:#dc2626}
 details.upgrp{border:1px solid var(--line);border-radius:10px;padding:9px 13px;background:#f8fafd;transition:background .14s ease}
 details.upgrp summary{cursor:pointer;font-size:13px;font-weight:600;color:#334155;user-select:none}
 details.upgrp[open]{background:#fff}
