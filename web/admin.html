@@ -853,6 +853,12 @@ details.upgrp[open]{background:#fff}
                 <label class="form-check-label small" for="set-queue">号池无可用账号时排队等待</label>
               </div>
             </div>
+            <div class="col-md-6 d-flex align-items-end pb-1">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="set-update">
+                <label class="form-check-label small" for="set-update">远程更新（从 GitHub main 拉取并自重启）</label>
+              </div>
+            </div>
             <div class="col-md-6"><label class="form-label" for="set-qwait">排队最长等待（秒）</label>
               <input type="number" min="0" class="form-control form-control-sm" id="set-qwait"></div>
             <div class="col-md-6"><label class="form-label" for="set-qpoll">排队轮询间隔（毫秒）</label>

@@ -172,7 +172,8 @@ async def _start_flush():
         while True:
             await asyncio.sleep(2)
             try:
-                STORE.flush()
+                # flush 内部有全量序列化+磁盘写,跑 executor 避免阻塞事件循环
+                await asyncio.get_event_loop().run_in_executor(None, STORE.flush)
             except Exception:
                 pass
 
@@ -822,6 +823,119 @@ def _upstream_fail(key: dict | None, res: dict | None, cfg: dict, anthropic: boo
 
 
 # ============================================================ /v1 网关
+
+
+# ============================================================ 远程更新(从 GitHub main 拉取并自重启)
+
+
+def _remote_update() -> tuple[bool, str]:
+    """从 GitHub main 分支下载最新代码,自检通过后覆盖(排除 data/)并自重启。
+
+    返回 (ok, message)。这是高危操作,由 update_enabled 配置硬开关控制
+    (默认关);覆盖前全量备份到 backup/,代码有 py_compile 自检,
+    失败绝不动现有文件。重启复用看门狗的 execv 机制(秒级闪断)。
+    """
+    import io
+    import tarfile
+    import urllib.request
+    import zipfile
+
+    import py_compile as _pc
+
+    base = os.path.dirname(os.path.abspath(__file__))
+    url = "https://codeload.github.com/Cheerimy-Studio/NIM-Python-Gateway/tar.gz/refs/heads/main"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "gateway-updater"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+    except Exception as e:
+        return False, f"下载失败: {e}"
+
+    # 解包到临时目录
+    tmpdir = os.path.join(base, "_update_tmp")
+    shutil = None
+    try:
+        import shutil as _sh
+        shutil = _sh
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        os.makedirs(tmpdir)
+        import gzip as _gz
+        raw = _gz.decompress(data)
+        import tarfile as _tf
+        with _tf.open(fileobj=io.BytesIO(raw), mode="r:gz") as tf:
+            tf.extractall(tmpdir)  # noqa: S202 - 只解 GitHub 官方 tarball
+        # 找到顶层目录
+        entries = os.listdir(tmpdir)
+        if not entries:
+            return False, "tarball 为空"
+        src = os.path.join(tmpdir, entries[0])
+        if not os.path.isdir(src):
+            src = tmpdir
+    except Exception as e:
+        return False, f"解包失败: {e}"
+
+    # 语法自检:py 文件全部通过才继续(防半成品/冲突代码上线)
+    for root, dirs, files in os.walk(src):
+        for fn in files:
+            if fn.endswith(".py"):
+                p = os.path.join(root, fn)
+                rel = os.path.relpath(p, src)
+                if rel.startswith(("data/", "tests/", "backup/", "_update_tmp/")):
+                    continue
+                try:
+                    _pc.compile(p, doraise=True)
+                except Exception as e:
+                    shutil.rmtree(tmpdir, ignore_errors=True)
+                    return False, f"语法自检失败 {rel}: {e}"
+
+    # 备份当前代码(排除 data/ 和已有的备份/临时目录)
+    backup = os.path.join(base, "backup", time.strftime("%Y%m%d-%H%M%S"))
+    os.makedirs(os.path.dirname(backup), exist_ok=True)
+    for root, dirs, files in os.walk(base):
+        dirs[:] = [d for d in dirs if d not in ("data", "backup", "_update_tmp", "__pycache__")]
+        for fn in files:
+            rel = os.path.relpath(os.path.join(root, fn), base)
+            dst = os.path.join(backup, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(os.path.join(root, fn), dst)
+
+    # 覆盖(python/静态资源;不动 data/、tests/、backup/)
+    copied = 0
+    for root, dirs, files in os.walk(src):
+        rel_root = os.path.relpath(root, src)
+        if rel_root.startswith(("data", "tests", "backup", "_update_tmp", "__pycache__")):
+            dirs[:] = []
+            continue
+        for fn in files:
+            rel = os.path.join(rel_root, fn) if rel_root != "." else fn
+            dst = os.path.join(base, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(os.path.join(root, fn), dst)
+            copied += 1
+
+    # 清理临时目录
+    shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # 记日志并重启(execv)
+    try:
+        STORE.flush()  # 数据先落盘
+    except Exception:
+        pass
+    try:
+
+        def _fn(db: dict):
+            logs = db.setdefault("logs", [])
+            logs.insert(0, [int(time.time()), "update", "updater", "-", 200, 0,
+                           f"远程更新完成:拉取 main 并覆盖 {copied} 个文件,已自动重启", "-", 1, "", 0, 0, 0, 0])
+            del logs[200:]
+
+        STORE.update(_fn)
+        STORE.flush()
+    except Exception:
+        pass
+    print(f"[update] GitHub main 已覆盖 {copied} 个文件 → execv 重启", file=sys.stderr, flush=True)
+    os.execv(sys.executable, [sys.executable] + list(sys.argv))
+    return True, ""
 
 
 @app.options("/v1/{rest:path}")

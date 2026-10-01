@@ -46,6 +46,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "queue_enabled": True,
     "queue_max_wait": 15,
     "queue_poll_ms": 400,
+    "update_enabled": False,
     # 模型限制
     "model_whitelist": "",
     "model_blacklist": "",
@@ -332,15 +333,27 @@ class Store:
             return db
 
     def flush(self) -> None:
-        """把内存态写盘（后台定期调用）。高并发下合并多次变更为一次磁盘写。"""
+        """把内存态写盘(后台定期调用)。高并发下合并多次变更为一次磁盘写。
+
+        锁内只做序列化(内存操作,快);磁盘写与 os.replace 在锁外执行 ——
+        全量 json.dump 一个大 db(账号池+日志+训练资料可达数 MB)一次
+        就是几十到上百毫秒,持锁写盘会把取号/释放/配置读全部堵住,
+        排队高峰期锁竞争雪崩,外部表现为「网关完全无响应」。
+        """
         with self._lock:
             if not self._dirty or self._memo is None:
                 return
-            self._write(self._memo[2])
+            db = self._memo[2]
+            payload = json.dumps(db, ensure_ascii=False, separators=(",", ":"))
             self._dirty = False
+        tmp = DB_PATH + f".{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(payload)
+        os.replace(tmp, DB_PATH)
+        with self._lock:
             try:
                 st = os.stat(DB_PATH)
-                self._memo = (int(st.st_mtime), st.st_size, self._memo[2])
+                self._memo = (int(st.st_mtime), st.st_size, db)
                 self._memo_at = time.monotonic()
             except OSError:
                 pass

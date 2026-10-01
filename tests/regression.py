@@ -1396,6 +1396,15 @@ try:
     # 僵尸队列条目清理:进程重启时死掉的等待请求无人出队,条目永久留在 db,
     # 仪表盘虚报「排队中 N」而队列面板为空(线上实测 36 条僵尸)
     import server as _srv
+    # 远程更新端点:开关关闭时拒绝(安全);打开后端点可达(不实际重启)
+    r_up1 = a.post("/api/update", json={})
+    a.post("/api/settings", json={"config": {"update_enabled": True}})
+    r_up2 = a.post("/api/update", json={})
+    a.post("/api/settings", json={"config": {"update_enabled": False}})
+    add("远程更新:开关控制访问",
+        r_up1.status_code == 400 and r_up2.status_code in (200, 500),
+        "关=%s 开=%s(开状态下可能因无法连 GitHub 报 500,属预期)" % (
+            r_up1.status_code, r_up2.status_code))
     _qdb = {
         "config": {"queue_max_wait": 300},
         "queue": [

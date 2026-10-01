@@ -1114,6 +1114,7 @@ async function loadSettings() {
   $('#set-logen').checked = !!c.log_enabled;
   $('#set-verify').checked = !!c.verify_tls;
   $('#set-queue').checked = !!c.queue_enabled;
+  $('#set-update').checked = !!c.update_enabled;
   $('#set-breaker').checked = !!c.breaker_enabled;
   $('#set-herr').checked = !!c.hide_upstream_errors;
   $('#set-mhide').checked = !!c.hide_mapped_names;
@@ -1127,6 +1128,7 @@ function bindSettings() {
     config.log_enabled = $('#set-logen').checked;
     config.verify_tls = $('#set-verify').checked;
     config.queue_enabled = $('#set-queue').checked;
+    config.update_enabled = $('#set-update').checked;
     config.breaker_enabled = $('#set-breaker').checked;
     config.hide_upstream_errors = $('#set-herr').checked;
     config.hide_mapped_names = $('#set-mhide').checked;

@@ -606,6 +606,7 @@ BOOL_SETTINGS = {
     "log_enabled",
     "verify_tls",
     "queue_enabled",
+    "update_enabled",
     "hide_upstream_errors",
     "hide_mapped_names",
     "breaker_enabled",
@@ -886,6 +887,25 @@ async def tokens_delete(request: Request):
     if not removed[0]:
         return JSONResponse({"error": {"message": "令牌不存在"}}, status_code=404)
     return {"ok": True}
+
+
+@router.post("/update")
+async def remote_update(request: Request):
+    bad = _require(request)
+    if bad:
+        return bad
+    db = STORE.load()
+    if not db["config"].get("update_enabled"):
+        return JSONResponse({"error": {"message": "远程更新未开启(后台「设置 → 排队与其他」打开开关)"}}, status_code=400)
+    import asyncio
+    import server as _srv
+
+    loop = asyncio.get_event_loop()
+    ok, msg = await loop.run_in_executor(None, _srv._remote_update)
+    if not ok:
+        return JSONResponse({"error": {"message": msg}}, status_code=500)
+    # execv 已排队,立即返回让客户端看到确认
+    return {"ok": True, "note": "代码已覆盖,网关正在自动重启(数秒)"}
 
 
 # ============================================================ 训练资料
