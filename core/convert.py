@@ -494,6 +494,10 @@ _THINKING_DROP_KEYS = (
     "thinking_budget_level",
     "reasoning",
     "thinking",
+    # 顶层思考开关也要删:中转客户端(Sub2API/NewAPI)常带 enable_thinking,
+    # 严格上游报 Unsupported parameter(s) —— 顶层与 kwargs 袋子必须两处都清
+    "enable_thinking",
+    "clear_thinking",
 )
 _THINKING_KWARG_KEYS = ("thinking", "enable_thinking", "clear_thinking")
 
@@ -701,7 +705,7 @@ def strip_unsupported_params(body: dict, body_text: str) -> bool:
             body.pop(name, None)
             changed = True
     # 始终兜底清理 thinking 相关
-    for k in _THINKING_DROP_KEYS + ("enable_thinking", "clear_thinking"):
+    for k in _THINKING_DROP_KEYS:
         if body.pop(k, None) is not None:
             changed = True
     ctk = body.get("chat_template_kwargs")
@@ -711,6 +715,36 @@ def strip_unsupported_params(body: dict, body_text: str) -> bool:
                 changed = True
         if not ctk:
             body.pop("chat_template_kwargs", None)
+    return changed
+
+
+def is_duplicate_field_error(body_text: str, status: int) -> bool:
+    """上游报「JSON 字段重复」(严格 serde 校验):多轮对话历史里的思考内容
+    (reasoning_content)经中转渠道二次加工后产生重复字段。"""
+    if status != 400 or not body_text:
+        return False
+    low = body_text.lower()
+    return "duplicate field" in low or "duplicate key" in low
+
+
+def strip_reasoning_from_messages(body: dict) -> bool:
+    """从多轮对话历史消息中移除思考内容字段(reasoning_content/reasoning)。
+
+    历史里的思考内容对上游没有语义价值(思考不参与后续轮次的推理),
+    却会被中转渠道(New-API 等)二次加工产生重复字段,触发严格上游的
+    serde duplicate field 校验错误。只动 messages 里的历史,不动顶层参数。
+    """
+    if not isinstance(body, dict):
+        return False
+    msgs = body.get("messages")
+    if not isinstance(msgs, list):
+        return False
+    changed = False
+    for m in msgs:
+        if isinstance(m, dict):
+            for k in ("reasoning_content", "reasoning"):
+                if m.pop(k, None) is not None:
+                    changed = True
     return changed
 
 

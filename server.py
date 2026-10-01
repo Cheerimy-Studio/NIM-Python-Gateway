@@ -1142,13 +1142,20 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                     text = first_chunk.decode("utf-8", "replace")
                     is_sse_error = text.lstrip().startswith(("event: error", 'data: {"error"')) or (
                         '"error"' in text[:500]
-                        and ("thinking" in text.lower() or "unsupported" in text.lower())
+                        and any(k in text.lower() for k in ("thinking", "unsupported", "duplicate"))
                     )
                     # 空流保护：上游 200 但流为空/无内容 → 视为失败，避免下游收到空
                     is_empty_stream = not text.strip()
                     if is_sse_error and not downgraded:
                         downgraded = True
                         rstatus = 400
+                        # 字段重复(多轮历史思考被中转二次加工):先清洗历史再重试
+                        if convert.is_duplicate_field_error(text, 400) and convert.strip_reasoning_from_messages(req):
+                            sp.task.cancel()
+                            await r.aclose()
+                            body = json.dumps(req, ensure_ascii=False, separators=(",", ":"))
+                            reuse_key = key
+                            continue
                         tdefs = convert.parse_thinking_defaults(
                             upstreams.upstream_value(key, "thinking_defaults", "")
                         )
@@ -1320,6 +1327,13 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
             # 401/403 为账号级鉴权失败：立即返回（账号已被硬封禁，重试只会得到 429 封禁掩码）
             if rstatus in (401, 403):
                 return _upstream_fail(key, last, cfg)
+            # 400 且报 JSON 字段重复(多轮历史里的思考内容被中转二次加工产生
+            # duplicate):清洗历史消息中的思考字段后重试一次
+            if rstatus == 400 and convert.is_duplicate_field_error(rbody, rstatus) and not downgraded:
+                downgraded = True
+                if convert.strip_reasoning_from_messages(req):
+                    body = json.dumps(req, ensure_ascii=False, separators=(",", ":"))
+                    continue
             # 400 且报思考参数不兼容：自动降级（去除或改用默认强度）后同号重试一次。
             # 必须 reuse_key:参数修正不是账号的问题 —— 换号重取会让 hold 被新 key
             # 覆盖,旧号的 in-flight 计数永不递减(幽灵占用,线上号池就是这样被堵死的)
@@ -2112,12 +2126,19 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                     text = first_chunk.decode("utf-8", "replace")
                     is_sse_error = text.lstrip().startswith(("event: error", 'data: {"error"')) or (
                         '"error"' in text[:500]
-                        and ("thinking" in text.lower() or "unsupported" in text.lower())
+                        and any(k in text.lower() for k in ("thinking", "unsupported", "duplicate"))
                     )
                     if is_sse_error and not downgraded:
                         downgraded = True
                         rstatus = 400
                         rbody = text
+                        # 字段重复(多轮历史思考被中转二次加工):先清洗历史再重试
+                        if convert.is_duplicate_field_error(text, 400) and convert.strip_reasoning_from_messages(chat_req):
+                            sp.task.cancel()
+                            await r.aclose()
+                            raw = json.dumps(chat_req, ensure_ascii=False, separators=(",", ":"))
+                            reuse_key = key
+                            continue
                         tdefs = convert.parse_thinking_defaults(
                             upstreams.upstream_value(key, "thinking_defaults", "")
                         )
@@ -2259,6 +2280,13 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
             # 401/403 为账号级鉴权失败：立即返回（账号已被硬封禁，重试只会得到 429 封禁掩码）
             if rstatus in (401, 403):
                 return _upstream_fail(key, last, cfg, anthropic=anthropic)
+            # 400 且报 JSON 字段重复(多轮历史思考被中转二次加工):清洗历史后同号重试一次
+            if rstatus == 400 and convert.is_duplicate_field_error(rbody, rstatus) and not downgraded:
+                downgraded = True
+                if convert.strip_reasoning_from_messages(chat_req):
+                    raw = json.dumps(chat_req, ensure_ascii=False, separators=(",", ":"))
+                    reuse_key = key  # 同号参数修正重试,防止 hold 覆盖泄漏
+                    continue
             # 400 且报思考参数不兼容：自动降级（去思考或改用模型默认强度）后重试一次
             if rstatus == 400 and convert.thinking_unsupported(rbody, rstatus) and not downgraded:
                 downgraded = True

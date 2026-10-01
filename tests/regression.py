@@ -127,6 +127,26 @@ async def chat(request: Request):
                 "choices": [{"index": 0, "message": {"role": "assistant", "content": "答案",
                              "reasoning_content": "!!!!!!!!!!!!!!!!!!!!!!!!!!"}, "finish_reason": "stop"}],
                 "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}}
+    if m == "dupfield":
+        _hist_rc = any(isinstance(mm, dict) and ("reasoning_content" in mm or "reasoning" in mm)
+                       for mm in b.get("messages", []))
+        if _hist_rc:
+            msg = "Failed to deserialize the JSON body into the target type: duplicate field `reasoning_content` at line 1 column 143731"
+            if st:
+                async def g11():
+                    yield "data: " + json.dumps({"error": {"message": msg}}) + "\\n\\n"
+                return StreamingResponse(g11(), media_type="text/event-stream")
+            return JSONResponse({"error": {"message": msg}}, status_code=400)
+        return {"id": "c1", "object": "chat.completion", "model": m,
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}}
+    if m == "enablethink" and "enable_thinking" in b:
+        msg = "Validation: Unsupported parameter(s): `enable_thinking`"
+        if st:
+            async def g12():
+                yield "data: " + json.dumps({"error": {"message": msg}}) + "\\n\\n"
+            return StreamingResponse(g12(), media_type="text/event-stream")
+        return JSONResponse({"error": {"message": msg}}, status_code=400)
     if st:
         async def g():
             for t in ["Hello"," world"]:
@@ -1328,6 +1348,50 @@ try:
     a.post("/api/keys/op", json={"op": "enable", "id": kid_off})
     add("热力图:停用账号标红", cell_off is not None and cell_off["s"] == 2,
         "s=%s 原因=%r" % ((cell_off or {}).get("s"), (cell_off or {}).get("w")))
+
+    # duplicate field:多轮历史带思考字段被中转二次加工 → 严格上游 400。
+    # 网关应清洗历史消息中的 reasoning_content 后同号重试成功
+    _hist = [
+        {"role": "user", "content": "第一轮"},
+        {"role": "assistant", "content": "第一轮回答", "reasoning_content": "第一轮思考"},
+        {"role": "user", "content": "第二轮"},
+    ]
+    r_dup = c.post(
+        "/v1/chat/completions",
+        json={"model": "dupfield", "messages": _hist},
+        timeout=30,
+    )
+    add("duplicate field:历史思考清洗后重试", r_dup.status_code == 200,
+        "st=%s(修复前 400 duplicate)" % r_dup.status_code)
+    with c.stream(
+        "POST", "/v1/chat/completions",
+        json={"model": "dupfield", "stream": True, "messages": _hist},
+    ) as r_dups:
+        st_dups = r_dups.status_code
+        raw_dups = r_dups.read().decode("utf-8", "replace")
+    add("duplicate field:流式历史思考清洗",
+        st_dups == 200 and "duplicate" not in raw_dups and "ok" in raw_dups,
+        "st=%s 含错误=%s" % (st_dups, "duplicate" in raw_dups))
+
+    # enable_thinking(顶层思考开关):严格上游拒绝 → 降级清单已含,清洗后重试成功
+    r_et = c.post(
+        "/v1/chat/completions",
+        json={"model": "enablethink", "enable_thinking": True,
+              "messages": [{"role": "user", "content": "hi"}]},
+        timeout=30,
+    )
+    add("enable_thinking:顶层降级(非流式)", r_et.status_code == 200,
+        "st=%s(修复前 400 Unsupported)" % r_et.status_code)
+    with c.stream(
+        "POST", "/v1/chat/completions",
+        json={"model": "enablethink", "enable_thinking": True, "stream": True,
+              "messages": [{"role": "user", "content": "hi"}]},
+    ) as r_ets:
+        st_ets = r_ets.status_code
+        raw_ets = r_ets.read().decode("utf-8", "replace")
+    add("enable_thinking:顶层降级(流式)",
+        st_ets == 200 and "Unsupported" not in raw_ets,
+        "st=%s 含错误=%s" % (st_ets, "Unsupported" in raw_ets))
 
     # 僵尸队列条目清理:进程重启时死掉的等待请求无人出队,条目永久留在 db,
     # 仪表盘虚报「排队中 N」而队列面板为空(线上实测 36 条僵尸)
