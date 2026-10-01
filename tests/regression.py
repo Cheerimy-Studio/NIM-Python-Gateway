@@ -1217,6 +1217,66 @@ try:
     a.post("/api/settings", json={"config": {"acct_concurrency": 0}})
     a.post("/api/keys/batch", json={"op": "enable", "ids": ids4[1:]})
 
+    # in-flight 泄漏守护:重试 continue 路径曾泄漏账号并发计数(线上号池
+    # "账户并发 201/共 202"全满、排队 300s 超时的根因)。
+    # 检测器:并发 1 + 两个专用账号 —— 泄漏存在时同一账号的 in-flight 永不归零,
+    # 后续请求必然排队超时
+    a.post("/api/settings", json={"config": {
+        "acct_concurrency": 1, "queue_max_wait": 3, "queue_poll_ms": 200,
+        "cool_429_seconds": 1, "retry_backoff_base_ms": 100, "retry_backoff_max_ms": 200,
+        "max_retries": 5, "warmup_seconds": 0,
+        "daily_request_cap": 0, "daily_token_limit": 0, "rate_limit_per_minute": 100000,
+    }})
+    kids5 = [k["id"] for k in a.get("/api/keys").json()["rows"]]
+    a.post("/api/keys/batch", json={"op": "unban", "ids": kids5})  # 清前面测试累计的封禁
+    a.post("/api/keys/import", json={
+        "text": "leak1@t.com,p,nvapi-leak00000001\nleak2@t.com,p,nvapi-leak00000002",
+        "upstream_id": uid,
+    })
+    a.post("/api/keys/batch", json={"op": "disable", "ids": kids5})  # 只留两个泄漏专用账号
+    # 场景1:429 吸收换号重试(mock rl 前两次 429,修复后应换号+真实冷却后重试成功)
+    r51 = c.post(
+        "/v1/chat/completions",
+        json={"model": "rl", "messages": [{"role": "user", "content": "hi"}]},
+        timeout=60,
+    )
+    # 泄漏检测:吸收路径若泄漏 in-flight,两个专用账号都会被幽灵占满 → 必然排队超时
+    r52 = c.post(
+        "/v1/chat/completions",
+        json={"model": "mock-model", "messages": [{"role": "user", "content": "hi"}]},
+        timeout=60,
+    )
+    add("in-flight 泄漏:429 吸收路径", r51.status_code == 200 and r52.status_code == 200,
+        "429吸收重试=%s 泄漏检测第二请求=%s" % (r51.status_code, r52.status_code))
+    # 场景2:思考降级同号重试(kimi + effort=medium 触发上游 400 → reuse 同号降级重试成功)
+    r53 = c.post(
+        "/v1/chat/completions",
+        json={"model": "kimi", "thinking_effort": "medium",
+              "messages": [{"role": "user", "content": "hi"}]},
+        timeout=60,
+    )
+    # 泄漏检测:降级路径若泄漏(修复前 continue 重新取号,旧号被 hold 覆盖),此处必然排队超时
+    r54 = c.post(
+        "/v1/chat/completions",
+        json={"model": "mock-model", "messages": [{"role": "user", "content": "hi"}]},
+        timeout=60,
+    )
+    add("in-flight 泄漏:思考降级路径", r53.status_code == 200 and r54.status_code == 200,
+        "降级重试=%s 泄漏检测第二请求=%s" % (r53.status_code, r54.status_code))
+    # 清理专用账号
+    leak_ids = [k["id"] for k in a.get("/api/keys").json()["rows"]
+                if (k.get("email") or "").startswith("leak")]
+    for kid in leak_ids:
+        a.post("/api/keys/op", json={"op": "delete", "id": kid})
+    # 恢复
+    a.post("/api/settings", json={"config": {
+        "acct_concurrency": 0, "queue_max_wait": 8, "queue_poll_ms": 150,
+        "max_retries": 2, "retry_backoff_base_ms": 10, "retry_backoff_max_ms": 20,
+        "cool_429_seconds": 1, "daily_request_cap": 100, "daily_token_limit": 0,
+    }})
+    a.post("/api/keys/batch", json={"op": "enable", "ids": kids5})
+    a.post("/api/keys/batch", json={"op": "unban", "ids": kids5})
+
     # 僵尸队列条目清理:进程重启时死掉的等待请求无人出队,条目永久留在 db,
     # 仪表盘虚报「排队中 N」而队列面板为空(线上实测 36 条僵尸)
     import server as _srv

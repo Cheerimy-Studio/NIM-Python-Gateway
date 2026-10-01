@@ -1156,6 +1156,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                             sp.task.cancel()
                             await r.aclose()
                             body = json.dumps(req, ensure_ascii=False, separators=(",", ":"))
+                            reuse_key = key  # 同号参数修正重试,防止 hold 覆盖泄漏
                             continue
                         rbody = text
                         rstatus = 400
@@ -1319,7 +1320,9 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
             # 401/403 为账号级鉴权失败：立即返回（账号已被硬封禁，重试只会得到 429 封禁掩码）
             if rstatus in (401, 403):
                 return _upstream_fail(key, last, cfg)
-            # 400 且报思考参数不兼容：自动降级（去除或改用默认强度）后原渠道重试一次
+            # 400 且报思考参数不兼容：自动降级（去除或改用默认强度）后同号重试一次。
+            # 必须 reuse_key:参数修正不是账号的问题 —— 换号重取会让 hold 被新 key
+            # 覆盖,旧号的 in-flight 计数永不递减(幽灵占用,线上号池就是这样被堵死的)
             if rstatus == 400 and convert.thinking_unsupported(rbody, rstatus) and not downgraded:
                 downgraded = True
                 tdefs = convert.parse_thinking_defaults(
@@ -1327,18 +1330,21 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                 )
                 if convert.downgrade_thinking(req, up_model, tdefs):
                     body = json.dumps(req, ensure_ascii=False, separators=(",", ":"))
+                    reuse_key = key
                     continue
-            # 400 且报 JSON 反序列化/类型错误（字符串数字被上游拒绝）：激进转换后重试一次
+            # 400 且报 JSON 反序列化/类型错误（字符串数字被上游拒绝）：激进转换后同号重试一次
             if rstatus == 400 and convert.is_deserialize_error(rbody, rstatus) and not downgraded:
                 downgraded = True
                 if convert.coerce_all_types(req):
                     body = json.dumps(req, ensure_ascii=False, separators=(",", ":"))
+                    reuse_key = key
                     continue
-            # 400 且报「不支持的参数」（如 enable_thinking）：移除被点名参数后重试一次
+            # 400 且报「不支持的参数」（如 enable_thinking）：移除被点名参数后同号重试一次
             if rstatus == 400 and convert.is_unsupported_param_error(rbody, rstatus) and not downgraded:
                 downgraded = True
                 if convert.strip_unsupported_params(req, rbody):
                     body = json.dumps(req, ensure_ascii=False, separators=(",", ":"))
+                    reuse_key = key
                     continue
             # 渠道级不可用（no available channel）：同一渠道所有账号共享渠道池，
             # 换号/重试都注定失败 → 快速失败，不浪费重试
@@ -1346,11 +1352,18 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                 return _upstream_fail(key, last, cfg)
             if not (rstatus in (0, 429) or rstatus >= 500):
                 return _upstream_fail(key, last, cfg)
-            # 429 吸收：上游限流是暂时的，延长重试预算让它走排队等账号冷却，
-            # 尽量不把 429 透传给下游（下游 429 往往直接失败或降级）
+            # 429 吸收：上游限流是暂时的,释放当前号(触发 429 冷却)后换号重试,
+            # 尽量不把 429 透传给下游(下游 429 往往直接失败或降级)。
+            # 必须先释放再 continue —— 否则 hold 被新 key 覆盖,旧号 in-flight 泄漏
             if rstatus == 429 and rl_left > 0 and cfg.get("queue_enabled", True):
                 rl_left -= 1
                 max_attempts += 1
+                hold["key"] = None
+                await pool.arelease(
+                    key["id"], False, rstatus, err, usage,
+                    _release_log(ep_tag, model, rstatus, ms, err, attempt, key, ip,
+                                 up_model=up_model, stream=stream, ttfb_ms=ms, tok=tok),
+                )
                 await asyncio.sleep(_backoff_ms(cfg, attempt, key) / 1000)
                 continue
             await asyncio.sleep(_backoff_ms(cfg, attempt, key) / 1000)
@@ -2110,6 +2123,7 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                             sp.task.cancel()
                             await r.aclose()
                             raw = json.dumps(chat_req, ensure_ascii=False, separators=(",", ":"))
+                            reuse_key = key  # 同号参数修正重试,防止 hold 覆盖泄漏
                             continue
                     elif not text.strip():
                         # 空流保护：上游 200 但流为空 → 标错误走重试，不透传空流
@@ -2251,28 +2265,38 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                 )
                 if convert.downgrade_thinking(chat_req, up_model, tdefs):
                     raw = json.dumps(chat_req, ensure_ascii=False, separators=(",", ":"))
+                    reuse_key = key  # 同号参数修正重试,防止 hold 覆盖泄漏
                     continue
             # 400 且报 JSON 反序列化/类型错误（字符串数字被上游拒绝）：激进转换后重试一次
             if rstatus == 400 and convert.is_deserialize_error(rbody, rstatus) and not downgraded:
                 downgraded = True
                 if convert.coerce_all_types(chat_req):
                     raw = json.dumps(chat_req, ensure_ascii=False, separators=(",", ":"))
+                    reuse_key = key  # 同号参数修正重试,防止 hold 覆盖泄漏
                     continue
             # 400 且报「不支持的参数」（如 enable_thinking）：移除被点名参数后重试一次
             if rstatus == 400 and convert.is_unsupported_param_error(rbody, rstatus) and not downgraded:
                 downgraded = True
                 if convert.strip_unsupported_params(chat_req, rbody):
                     raw = json.dumps(chat_req, ensure_ascii=False, separators=(",", ":"))
+                    reuse_key = key  # 同号参数修正重试,防止 hold 覆盖泄漏
                     continue
             # 渠道级不可用：快速失败，不浪费重试
             if convert.is_channel_exhausted(rbody):
                 return _upstream_fail(key, last, cfg, anthropic=anthropic)
             if not (rstatus in (0, 429) or rstatus >= 500):
                 return _upstream_fail(key, last, cfg, anthropic=anthropic)
-            # 429 吸收：延长重试预算，尽量不把 429 透传给下游
+            # 429 吸收：释放当前号(触发 429 冷却)后换号重试,不透传 429 给下游。
+            # 必须先释放再 continue —— 否则 hold 被新 key 覆盖,旧号 in-flight 泄漏
             if rstatus == 429 and rl_left > 0 and cfg.get("queue_enabled", True):
                 rl_left -= 1
                 max_attempts += 1
+                hold["key"] = None
+                await pool.arelease(
+                    key["id"], False, rstatus, err, usage,
+                    _release_log(ep, model, rstatus, ms, err, attempt, key, ip,
+                                 up_model=up_model, stream=stream, ttfb_ms=ms, tok=tok),
+                )
                 await asyncio.sleep(_backoff_ms(cfg, attempt, key) / 1000)
                 continue
             await asyncio.sleep(_backoff_ms(cfg, attempt, key) / 1000)
