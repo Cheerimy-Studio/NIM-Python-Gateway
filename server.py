@@ -2101,7 +2101,9 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                             first_chunk = item
                     except asyncio.TimeoutError:
                         hold["key"] = None  # 释放责任移交转换透传
-                        return _stream_convert(
+                        # _stream_convert 是 async 函数,必须 await —— 漏掉会返回协程
+                        # 对象而非 StreamingResponse(线上 500 的根因)
+                        return await _stream_convert(
                             request, client, r, key, ep, model, cfg, up_model, raw,
                             ip, attempt, t0, rstatus, ctype, protocol,
                             first_chunk=b"", heartbeat=True, ttfb_deadline=float(ttfb_to), pump=sp,
@@ -2466,8 +2468,8 @@ def _slow_convert_response(
                 except Exception:
                     pass
                 return
-            # 2xx:交给 _stream_convert 正常转换透传
-            inner = _stream_convert(
+            # 2xx:交给 _stream_convert 正常转换透传(await 不能少 —— 它是 async 函数)
+            inner = await _stream_convert(
                 request, client, r, key, ep, model, cfg, up_model, raw,
                 ip, attempt, t0, status, ctype, protocol,
                 first_chunk=b"", ait=None, heartbeat=False, ttfb_deadline=deadline,

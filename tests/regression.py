@@ -1277,6 +1277,58 @@ try:
     a.post("/api/keys/batch", json={"op": "enable", "ids": kids5})
     a.post("/api/keys/batch", json={"op": "unban", "ids": kids5})
 
+    # 漏 await 守护:_stream_convert 是 async 函数,两处调用曾漏 await(线上 500:
+    # 'coroutine' object has no attribute 'body_iterator')。触发条件:协议转换端点
+    # + 流式 + 慢头/慢首字节,测试 mock 上游此前从不覆盖这两条路径。
+    # 路径1:响应头超 12s → _slow_convert_response → 交接 _stream_convert(线上报错点)
+    t_slow = time.time()
+    ev_sc = []
+    with c.stream("POST", "/v1/messages",
+                  json={"model": "slowhdr", "max_tokens": 64, "stream": True,
+                        "messages": [{"role": "user", "content": "hi"}]}) as r_sc:
+        st_sc = r_sc.status_code
+        raw_sc = r_sc.read().decode("utf-8", "replace")
+    for line in raw_sc.split("\n"):
+        if line.startswith("event: "):
+            ev_sc.append(line[7:].strip())
+    add("转换流:慢头兜底路径不 500",
+        st_sc == 200 and "message_start" in ev_sc and "message_stop" in ev_sc,
+        "st=%s 事件=%s 耗时=%.0fs(修复前 coroutine 500)" % (st_sc, sorted(set(ev_sc))[:4], time.time() - t_slow))
+    # 路径2:首字节超 8s → 心跳透传分支(return await _stream_convert)
+    t_sf = time.time()
+    ev_sf = []
+    with c.stream("POST", "/v1/messages",
+                  json={"model": "slowfirst", "max_tokens": 64, "stream": True,
+                        "messages": [{"role": "user", "content": "hi"}]}) as r_sf:
+        st_sf = r_sf.status_code
+        raw_sf = r_sf.read().decode("utf-8", "replace")
+    for line in raw_sf.split("\n"):
+        if line.startswith("event: "):
+            ev_sf.append(line[7:].strip())
+    add("转换流:慢首字节心跳路径不 500",
+        st_sf == 200 and "message_start" in ev_sf and "message_stop" in ev_sf,
+        "st=%s 事件=%s 耗时=%.0fs" % (st_sf, sorted(set(ev_sf))[:4], time.time() - t_sf))
+
+    # 号池热力图端点:分组/统计/状态判定
+    pm = a.get("/api/poolmap").json()
+    pm_groups = pm.get("groups") or []
+    pm_total = sum(g["total"] for g in pm_groups)
+    kids_pm = a.get("/api/keys?status=all&page=1").json()
+    pm_keycount = kids_pm.get("total") or 0
+    pm_consistent = all(g["total"] == g["ok"] + g["busy"] + g["bad"] for g in pm_groups)
+    add("热力图:结构一致", bool(pm_groups) and pm_total == pm_keycount and pm_consistent,
+        "组=%d 总数=%d/%d 汇总一致=%s" % (len(pm_groups), pm_total, pm_keycount, pm_consistent))
+    # 停用一个账号 → 热力图应显示红色(s=2)
+    kid_off = kids_pm["rows"][0]["id"]
+    a.post("/api/keys/op", json={"op": "disable", "id": kid_off})
+    pm2 = a.get("/api/poolmap").json()
+    cell_off = None
+    for g in pm2.get("groups") or []:
+        cell_off = next((x for x in g["cells"] if x["id"] == kid_off), cell_off)
+    a.post("/api/keys/op", json={"op": "enable", "id": kid_off})
+    add("热力图:停用账号标红", cell_off is not None and cell_off["s"] == 2,
+        "s=%s 原因=%r" % ((cell_off or {}).get("s"), (cell_off or {}).get("w")))
+
     # 僵尸队列条目清理:进程重启时死掉的等待请求无人出队,条目永久留在 db,
     # 仪表盘虚报「排队中 N」而队列面板为空(线上实测 36 条僵尸)
     import server as _srv

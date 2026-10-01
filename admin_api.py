@@ -737,6 +737,53 @@ def _tokens_rows(cfg: dict) -> list:
     return out
 
 
+# ============================================================ 号池热力图
+
+
+@router.get("/poolmap")
+async def poolmap(request: Request):
+    """号池热力图:按渠道分组返回每个账号的实时状态方块。
+
+    s: 0=可用(绿) 1=繁忙(黄,并发占用中) 2=不可用(红,封禁/冷却/停用/失效)
+    """
+    bad = _require(request)
+    if bad:
+        return bad
+    db = STORE.load()
+    cfg = db["config"]
+    now = int(time.time())
+    conc = int(cfg.get("acct_concurrency") or 0)
+    up_names = {u["id"]: u["name"] for u in list(db.get("upstreams", []))}
+    groups: dict = {}
+    for k in list(db.get("keys", [])):
+        if not isinstance(k, dict):
+            continue
+        gname = up_names.get(k.get("upstream_id"), "未分组")
+        g = groups.setdefault(gname, [])
+        if not k.get("enabled"):
+            s, why = 2, "停用"
+        elif (k.get("status") or "") == "invalid":
+            s, why = 2, "密钥失效"
+        elif int(k.get("banned_until") or 0) > now:
+            s, why = 2, (k.get("ban_reason") or "封禁")
+        elif int(k.get("cooldown_until") or 0) > now:
+            s, why = 1, "冷却中"
+        elif conc > 0 and pool._inflight.get(k["id"], 0) >= conc:
+            s, why = 1, "并发占用中"
+        else:
+            s, why = 0, "可用"
+        g.append({"id": k["id"], "s": s, "w": why})
+    return {
+        "groups": [
+            {"name": gname, "cells": cells, "total": len(cells),
+             "ok": sum(1 for c in cells if c["s"] == 0),
+             "busy": sum(1 for c in cells if c["s"] == 1),
+             "bad": sum(1 for c in cells if c["s"] == 2)}
+            for gname, cells in groups.items()
+        ]
+    }
+
+
 @router.get("/tokens")
 async def tokens_list(request: Request):
     bad = _require(request)

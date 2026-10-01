@@ -181,6 +181,36 @@ async function loadOverview() {
       el('td', 'text-end small', k.fail_ratio + '%'), el('td', 'small text-danger err-cell text-truncate', k.last_error || '-'));
     tk.appendChild(tr);
   }
+  loadPoolMap();
+}
+
+async function loadPoolMap() {
+  const box = $('#poolmap');
+  if (!box) return;
+  const d = await run(() => api('poolmap'));
+  if (!d || !d.groups) return;
+  box.innerHTML = '';
+  let tot = {ok: 0, busy: 0, bad: 0, total: 0};
+  for (const g of d.groups) {
+    const grp = el('div', 'pm-group');
+    const head = el('div', 'pm-head');
+    const dot = el('span', 'pm-dot');
+    dot.style.background = g.bad === g.total ? '#dc2626' : (g.ok === g.total ? '#16a34a' : '#d97706');
+    head.append(dot, el('b', '', g.name),
+      el('span', 'text-muted', `${g.total} · 可用 ${g.ok} · 繁忙 ${g.busy} · 不可用 ${g.bad}`));
+    grp.appendChild(head);
+    const cells = el('div', 'pm-cells');
+    for (const c of g.cells) {
+      const cell = el('span', 'cell s' + c.s);
+      cell.title = c.w;
+      cells.appendChild(cell);
+    }
+    grp.appendChild(cells);
+    box.appendChild(grp);
+    tot.ok += g.ok; tot.busy += g.busy; tot.bad += g.bad; tot.total += g.total;
+  }
+  const sum = $('#poolmap-sum');
+  if (sum) sum.textContent = tot.total + ' 个账号 · ' + tot.ok + ' 可用 · ' + tot.busy + ' 繁忙 · ' + tot.bad + ' 不可用';
 }
 
 
@@ -1562,7 +1592,7 @@ document.addEventListener('DOMContentLoaded', () => {
   activate('dash');
   setInterval(() => {
     if (document.hidden) return;
-    if ($('#pane-dash').classList.contains('active')) loadOverview();
+    if ($('#pane-dash').classList.contains('active')) { loadOverview(); loadPoolMap(); }
     if ($('#pane-logs').classList.contains('active') && $('#logs-auto').checked) loadLogs();
     if ($('#pane-queue').classList.contains('active') && $('#queue-auto').checked) loadQueue();
     if ($('#pane-keys').classList.contains('active') && keysState2.openId) {
