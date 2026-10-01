@@ -1583,6 +1583,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $('#logs-filter').onchange = renderLogs;
   $('#logs-refresh').onclick = loadLogs;
+  $$('.sec-nav a').forEach(a => a.addEventListener('click', () => {
+    const t = document.getElementById(a.dataset.sec);
+    if (t) t.scrollIntoView({behavior: 'smooth', block: 'start'});
+  }));
   $('#logs-clear').onclick = guard(async () => {
     if (await uiConfirm('清空日志？')) { await api('logs/clear', {method: 'POST'}); loadLogs(); }
   });
@@ -1592,7 +1596,7 @@ document.addEventListener('DOMContentLoaded', () => {
   activate('dash');
   setInterval(() => {
     if (document.hidden) return;
-    if ($('#pane-dash').classList.contains('active')) { loadOverview(); loadPoolMap(); }
+    if ($('#pane-dash').classList.contains('active')) loadOverview();
     if ($('#pane-logs').classList.contains('active') && $('#logs-auto').checked) loadLogs();
     if ($('#pane-queue').classList.contains('active') && $('#queue-auto').checked) loadQueue();
     if ($('#pane-keys').classList.contains('active') && keysState2.openId) {

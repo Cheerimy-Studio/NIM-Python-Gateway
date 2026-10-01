@@ -41,6 +41,19 @@ a{text-decoration:none}
 .pane.active{display:block;animation:fadein .18s ease}
 @keyframes fadein{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
 .pane-title{font-size:17px;font-weight:700;margin:0 0 15px;letter-spacing:.2px;display:flex;align-items:center;gap:8px}
+/* 仪表盘分区标题条 */
+.dash-sec{display:flex;align-items:center;gap:8px;margin:20px 0 10px;font-size:13px;font-weight:600;
+  color:#334155;letter-spacing:.3px;user-select:none}
+.dash-sec:first-of-type{margin-top:0}
+.dash-sec .bi{color:var(--acc);font-size:14px}
+.dash-sec::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,#dbe3ee,transparent);border-radius:1px}
+/* 设置页分组导航 */
+.sec-nav{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px}
+.sec-nav a{display:inline-flex;align-items:center;padding:5px 13px;border-radius:999px;font-size:12.5px;
+  color:#5b6b84;background:#fff;border:1px solid var(--line);transition:all .13s ease}
+.sec-nav a:hover{color:var(--acc);border-color:#b9cdf3;background:#f6f9ff}
+.sec-nav a.danger{color:#dc2626}
+.sec-nav a.danger:hover{border-color:#f3b4b4;background:#fff5f5}
 .card{border:1px solid var(--line);border-radius:var(--r);background:#fff;transition:box-shadow .16s ease,border-color .16s ease,transform .16s ease;
   box-shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.03)}
 .card:hover{border-color:#dbe2ec}
@@ -246,8 +259,10 @@ details.upgrp[open]{background:#fff}
 
 <section class="pane active" id="pane-dash">
   <h2 class="pane-title">仪表盘</h2>
+  <div class="dash-sec"><i class="bi bi-speedometer2"></i>实时概览</div>
   <div class="row g-3" id="dash-cards"></div>
-  <div class="row g-3 mt-1">
+  <div class="dash-sec"><i class="bi bi-activity"></i>今日监控</div>
+  <div class="row g-3">
     <div class="col-lg-4">
       <div class="card h-100">
         <div class="card-header"><i class="bi bi-list-ol me-2 text-muted"></i>模型调用 TOP（今日）</div>
@@ -276,9 +291,10 @@ details.upgrp[open]{background:#fff}
       </div>
     </div>
   </div>
-  <div class="card mt-3">
+  <div class="dash-sec"><i class="bi bi-grid-3x3-gap"></i>号池健康</div>
+  <div class="card">
     <div class="card-header d-flex justify-content-between align-items-center">
-      <span><i class="bi bi-grid-3x3-gap me-2 text-muted"></i>号池状态</span>
+      <span>号池状态</span>
       <span class="small text-muted" id="poolmap-sum"></span>
     </div>
     <div class="card-body" id="poolmap"></div>
@@ -669,9 +685,21 @@ details.upgrp[open]{background:#fff}
 
 <section class="pane" id="pane-settings">
   <h2 class="pane-title">设置</h2>
+  <div class="sec-nav">
+    <a href="javascript:void(0)" data-sec="sec-sched">调度</a>
+    <a href="javascript:void(0)" data-sec="sec-retry">重试</a>
+    <a href="javascript:void(0)" data-sec="sec-ban">封禁</a>
+    <a href="javascript:void(0)" data-sec="sec-breaker">熔断</a>
+    <a href="javascript:void(0)" data-sec="sec-model">模型</a>
+    <a href="javascript:void(0)" data-sec="sec-privacy">隐私</a>
+    <a href="javascript:void(0)" data-sec="sec-misc">排队日志</a>
+    <a href="javascript:void(0)" data-sec="sec-sync">同步</a>
+    <a href="javascript:void(0)" data-sec="sec-passwd">密码</a>
+    <a href="javascript:void(0)" data-sec="sec-danger" class="text-danger">危险</a>
+  </div>
   <div class="row g-3">
     <div class="col-lg-7">
-      <div class="card mb-3">
+      <div class="card mb-3" id="sec-sched">
         <div class="card-header"><i class="bi bi-sliders me-2 text-muted"></i>调度与限额</div>
         <div class="card-body">
           <div class="row g-3">
@@ -700,7 +728,7 @@ details.upgrp[open]{background:#fff}
           </div>
         </div>
       </div>
-      <div class="card mb-3">
+      <div class="card mb-3" id="sec-retry">
         <div class="card-header"><i class="bi bi-arrow-repeat me-2 text-muted"></i>重试 / 退避 / 超时</div>
         <div class="card-body">
           <div class="row g-3">
@@ -725,7 +753,7 @@ details.upgrp[open]{background:#fff}
           </div>
         </div>
       </div>
-      <div class="card mb-3">
+      <div class="card mb-3" id="sec-ban">
         <div class="card-header"><i class="bi bi-shield-check me-2 text-muted"></i>封禁与账号保护</div>
         <div class="card-body">
           <div class="row g-3">
@@ -740,7 +768,7 @@ details.upgrp[open]{background:#fff}
           </div>
         </div>
       </div>
-      <div class="card mb-3">
+      <div class="card mb-3" id="sec-model">
         <div class="card-header"><i class="bi bi-list-check me-2 text-muted"></i>模型限制</div>
         <div class="card-body">
           <div class="row g-3">
@@ -751,7 +779,7 @@ details.upgrp[open]{background:#fff}
           </div>
         </div>
       </div>
-      <div class="card mb-3">
+      <div class="card mb-3" id="sec-privacy">
         <div class="card-header"><i class="bi bi-eye-slash me-2 text-muted"></i>隐私与渠道兼容</div>
         <div class="card-body">
           <div class="row g-3">
@@ -772,7 +800,7 @@ details.upgrp[open]{background:#fff}
           </div>
         </div>
       </div>
-      <div class="card mb-3">
+      <div class="card mb-3" id="sec-breaker">
         <div class="card-header"><i class="bi bi-activity me-2 text-muted"></i>防风控与熔断</div>
         <div class="card-body">
           <div class="row g-3">
@@ -803,7 +831,7 @@ details.upgrp[open]{background:#fff}
           </div>
         </div>
       </div>
-      <div class="card mb-3">
+      <div class="card mb-3" id="sec-sync">
         <div class="card-header"><i class="bi bi-arrow-left-right me-2 text-muted"></i>配置同步</div>
         <div class="card-body">
           <div class="d-flex flex-wrap gap-2 align-items-center">
@@ -815,7 +843,7 @@ details.upgrp[open]{background:#fff}
           <div class="form-text small mt-2 mb-0">导出内容包含全部参数与访问令牌（不含管理员密码）。把本地导出的 JSON 导入服务器（或反过来）即可完成配置同步；账号池数据不随配置走。</div>
         </div>
       </div>
-      <div class="card">
+      <div class="card" id="sec-misc">
         <div class="card-header"><i class="bi bi-hourglass-split me-2 text-muted"></i>排队与其他</div>
         <div class="card-body">
           <div class="row g-3">
@@ -862,7 +890,7 @@ details.upgrp[open]{background:#fff}
       </div>
     </div>
     <div class="col-lg-5">
-      <div class="card mb-3">
+      <div class="card mb-3" id="sec-passwd">
         <div class="card-header"><i class="bi bi-person-lock me-2 text-muted"></i>修改密码</div>
         <div class="card-body">
           <div class="row g-2">
@@ -872,7 +900,7 @@ details.upgrp[open]{background:#fff}
           </div>
         </div>
       </div>
-      <div class="card border-danger">
+      <div class="card border-danger" id="sec-danger">
         <div class="card-header text-danger"><i class="bi bi-exclamation-triangle me-2"></i>危险操作</div>
         <div class="card-body d-flex flex-wrap gap-2">
           <button id="btn-reset-stats" class="btn btn-sm btn-outline-secondary">重置全部统计</button>
