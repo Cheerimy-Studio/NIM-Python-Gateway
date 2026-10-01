@@ -1118,20 +1118,21 @@ try:
     _missing = []
     _tree = _ast.parse(open(os.path.join(ROOT, "admin_api.py"), encoding="utf-8").read())
     for _n in _tree.body:
-        if isinstance(_n, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and _n.name not in ("login", "logout", "remote_update"):
+        if isinstance(_n, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and _n.name not in ("login", "logout", "remote_update", "remote_rollback"):
             _decs = [d.func.attr for d in _n.decorator_list
                      if isinstance(d, _ast.Call) and isinstance(d.func, _ast.Attribute)]
             if any(x in ("get", "post") for x in _decs) and not _has_require(_n):
                 _missing.append(_n.name)
     add("安全:管理端点认证全覆盖", not _missing, "缺失: %s" % (_missing or "无"))
-    # remote_update 单独验证:必须含 Bearer token 鉴权或 _require 双路径
+    # remote_update/rollback 单独验证:必须含 Bearer token 鉴权或 _require 双路径
     _rtree = _ast.parse(open(os.path.join(ROOT, "admin_api.py"), encoding="utf-8").read())
-    _rt_ok = False
+    _rt_ok = True
     for _n in _rtree.body:
-        if isinstance(_n, _ast.AsyncFunctionDef) and _n.name == "remote_update":
+        if isinstance(_n, _ast.AsyncFunctionDef) and _n.name in ("remote_update", "remote_rollback"):
             _src = _ast.unparse(_n)
-            _rt_ok = "compare_digest" in _src and "_require" in _src
-    add("安全:remote_update 双路径鉴权", _rt_ok,
+            if not ("compare_digest" in _src and "_require" in _src):
+                _rt_ok = False
+    add("安全:update/rollback 双路径鉴权", _rt_ok,
         "Bearer compare_digest + _require 都在=%s" % _rt_ok)
 
     # 测试页跳过标记:带 X-NGW-Skip-Training 的请求(后台模型测试页)不进训练集
@@ -1420,6 +1421,15 @@ try:
         and (r_tok1.status_code in (200, 500))
         and r_tok2.status_code == 401,
         "开关关=%s 令牌对=%s 令牌错=%s" % (r_up0.status_code, r_tok1.status_code, r_tok2.status_code))
+    # 回滚端点:无鉴权拒绝;有令牌但无备份 → 500
+    r_rb1 = httpx.post("http://127.0.0.1:18213/api/rollback", timeout=10)
+    a.post("/api/settings", json={"config": {"update_enabled": True, "update_token": "upd-test1234567890abcdef"}})
+    r_rb2 = httpx.post("http://127.0.0.1:18213/api/rollback",
+                       headers={"Authorization": "Bearer upd-test1234567890abcdef"}, timeout=10)
+    a.post("/api/settings", json={"config": {"update_enabled": False, "update_token": ""}})
+    add("回滚:鉴权+无备份拒绝",
+        r_rb1.status_code == 401 and r_rb2.status_code == 500,
+        "无鉴权=%s 有令牌=%s(无备份应 500)" % (r_rb1.status_code, r_rb2.status_code))
     _qdb = {
         "config": {"queue_max_wait": 300},
         "queue": [

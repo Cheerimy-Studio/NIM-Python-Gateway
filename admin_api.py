@@ -924,6 +924,36 @@ async def remote_update(request: Request):
     return {"ok": True, "note": "代码已覆盖,网关正在自动重启(数秒)"}
 
 
+@router.post("/rollback")
+async def remote_rollback(request: Request):
+    """回滚到上次更新前的版本(代码+数据)。只能回滚一次,用完即清。
+
+    鉴权与更新端点一致:Bearer <update_token> 或 admin 会话+CSRF。
+    """
+    cfg = STORE.load()["config"]
+    token = str(cfg.get("update_token") or "")
+    auth = request.headers.get("authorization") or ""
+    bearer = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    token_ok = bool(token and bearer and hmac.compare_digest(token, bearer))
+    if not token_ok:
+        bad = _require(request)
+        if bad:
+            return bad
+    if not cfg.get("update_enabled"):
+        return JSONResponse(
+            {"error": {"message": "远程更新未开启,回滚不可用"}},
+            status_code=400,
+        )
+    import asyncio
+    import server as _srv
+
+    loop = asyncio.get_event_loop()
+    ok, msg = await loop.run_in_executor(None, _srv._remote_rollback)
+    if not ok:
+        return JSONResponse({"error": {"message": msg}}, status_code=500)
+    return {"ok": True, "note": "已回滚,网关正在自动重启(数秒)"}
+
+
 # ============================================================ 训练资料
 
 

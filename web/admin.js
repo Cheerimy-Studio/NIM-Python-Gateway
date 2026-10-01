@@ -1571,6 +1571,13 @@ $('#gen-updtok').onclick = () => {
   navigator.clipboard.writeText(tok).catch(() => {});
   toast('已生成并复制更新令牌(记得保存设置)');
 };
+$('#btn-rollback').onclick = guard(async () => {
+  if (!await uiConfirm('回滚到上次更新前的版本？数据也会恢复到更新前的状态，此操作只能执行一次。',
+      {danger: true, okText: '回滚'})) return;
+  const r = await api('rollback', {method: 'POST'});
+  toast(r.note || '已回滚,网关正在重启');
+  setTimeout(() => location.reload(), 3000);
+});
 $('#test-input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); testSend(); }
 });

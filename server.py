@@ -857,6 +857,28 @@ def _upstream_fail(key: dict | None, res: dict | None, cfg: dict, anthropic: boo
 # ============================================================ 远程更新(从 GitHub main 拉取并自重启)
 
 
+def _backup_current(base: str) -> str:
+    """备份当前代码+数据到 backup/(只保留一份,旧的覆盖)。返回备份路径。"""
+    import shutil
+
+    backup = os.path.join(base, "backup")
+    if os.path.isdir(backup):
+        shutil.rmtree(backup, ignore_errors=True)
+    os.makedirs(backup)
+    for root, dirs, files in os.walk(base):
+        dirs[:] = [d for d in dirs if d not in ("data", "backup", "_update_tmp", "__pycache__")]
+        for fn in files:
+            rel = os.path.relpath(os.path.join(root, fn), base)
+            dst = os.path.join(backup, "code", rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(os.path.join(root, fn), dst)
+    # 备份 data/(数据库):回滚时数据也要回到更新前状态
+    data_src = os.path.join(base, "data")
+    if os.path.isdir(data_src):
+        shutil.copytree(data_src, os.path.join(backup, "data"))
+    return backup
+
+
 def _remote_update() -> tuple[bool, str]:
     """从 GitHub main 分支下载最新代码,自检通过后覆盖(排除 data/)并自重启。
 
@@ -917,16 +939,9 @@ def _remote_update() -> tuple[bool, str]:
                     shutil.rmtree(tmpdir, ignore_errors=True)
                     return False, f"语法自检失败 {rel}: {e}"
 
-    # 备份当前代码(排除 data/ 和已有的备份/临时目录)
-    backup = os.path.join(base, "backup", time.strftime("%Y%m%d-%H%M%S"))
-    os.makedirs(os.path.dirname(backup), exist_ok=True)
-    for root, dirs, files in os.walk(base):
-        dirs[:] = [d for d in dirs if d not in ("data", "backup", "_update_tmp", "__pycache__")]
-        for fn in files:
-            rel = os.path.relpath(os.path.join(root, fn), base)
-            dst = os.path.join(backup, rel)
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
-            shutil.copy2(os.path.join(root, fn), dst)
+    # 备份当前代码+数据(只保留一份,回滚端点用)
+    backup = _backup_current(base)
+    _backup_path[0] = backup
 
     # 覆盖(python/静态资源;不动 data/、tests/、backup/)
     copied = 0
@@ -947,7 +962,7 @@ def _remote_update() -> tuple[bool, str]:
 
     # 记日志并重启(execv)
     try:
-        STORE.flush()  # 数据先落盘
+        STORE.flush()
     except Exception:
         pass
     try:
@@ -955,14 +970,82 @@ def _remote_update() -> tuple[bool, str]:
         def _fn(db: dict):
             logs = db.setdefault("logs", [])
             logs.insert(0, [int(time.time()), "update", "updater", "-", 200, 0,
-                           f"远程更新完成:拉取 main 并覆盖 {copied} 个文件,已自动重启", "-", 1, "", 0, 0, 0, 0])
+                           f"远程更新完成:拉取 main 并覆盖 {copied} 个文件(已备份),已自动重启",
+                           "-", 1, "", 0, 0, 0, 0])
             del logs[200:]
 
         STORE.update(_fn)
         STORE.flush()
     except Exception:
         pass
-    print(f"[update] GitHub main 已覆盖 {copied} 个文件 → execv 重启", file=sys.stderr, flush=True)
+    print(f"[update] GitHub main 已覆盖 {copied} 个文件(已备份)→ execv 重启", file=sys.stderr, flush=True)
+    os.execv(sys.executable, [sys.executable] + list(sys.argv))
+    return True, ""
+
+
+_backup_path: list = [None]
+
+
+def _remote_rollback() -> tuple[bool, str]:
+    """回滚到上次更新前的版本(代码+数据)。类似 Win11 的 7 天回退:
+
+    - 只能回滚一次:备份用完即删,不存在连续回滚
+    - 只保留最近一次更新的备份(更新时旧备份被覆盖)
+    - 回滚后网关自动重启(execv)
+    """
+    import shutil
+
+    base = os.path.dirname(os.path.abspath(__file__))
+    backup = os.path.join(base, "backup")
+    code_backup = os.path.join(backup, "code")
+    data_backup = os.path.join(backup, "data")
+
+    if not os.path.isdir(code_backup):
+        return False, "没有可用的更新备份(尚未执行过远程更新,或备份已被消费)"
+
+    # 先落盘当前数据(确保 flush 后再覆盖)
+    try:
+        STORE.flush()
+    except Exception:
+        pass
+
+    restored = 0
+    # 恢复代码
+    for root, dirs, files in os.walk(code_backup):
+        rel_root = os.path.relpath(root, code_backup)
+        for fn in files:
+            rel = os.path.join(rel_root, fn) if rel_root != "." else fn
+            dst = os.path.join(base, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(os.path.join(root, fn), dst)
+            restored += 1
+
+    # 恢复数据
+    if os.path.isdir(data_backup):
+        data_dst = os.path.join(base, "data")
+        shutil.rmtree(data_dst, ignore_errors=True)
+        shutil.copytree(data_backup, data_dst)
+        restored += "data"
+
+    # 删除备份(只能回滚一次)
+    shutil.rmtree(backup, ignore_errors=True)
+
+    # 恢复的数据里的日志会随新代码重启后加载;写回滚标记
+    try:
+        dbp = os.path.join(base, "data", "db.json")
+        if os.path.isfile(dbp):
+            with open(dbp, "r", encoding="utf-8") as f:
+                db = json.load(f)
+            logs = db.setdefault("logs", [])
+            logs.insert(0, [int(time.time()), "update", "updater", "-", 200, 0,
+                           "已回滚到上次更新前的版本", "-", 1, "", 0, 0, 0, 0])
+            del logs[200:]
+            with open(dbp, "w", encoding="utf-8") as f:
+                json.dump(db, f, ensure_ascii=False, separators=(",", ":"))
+    except Exception:
+        pass
+
+    print(f"[rollback] 已恢复 {restored} 项(含 data/)→ execv 重启", file=sys.stderr, flush=True)
     os.execv(sys.executable, [sys.executable] + list(sys.argv))
     return True, ""
 
