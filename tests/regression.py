@@ -151,6 +151,12 @@ async def chat(request: Request):
                 "choices": [{"index": 0, "message": {"role": "assistant", "content": "答案",
                              "reasoning_content": "!!!!!!!!!!!!!!!!!!!!!!!!!!"}, "finish_reason": "stop"}],
                 "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}}
+    if m == "thinker":
+        # 干净的思考内容:Anthropic 侧必须转成带 signature 的 thinking 块
+        return {"id": "c1", "object": "chat.completion", "model": m,
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "答案",
+                             "reasoning_content": "先想一下"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}}
     if m == "dupfield":
         _hist_rc = any(isinstance(mm, dict) and ("reasoning_content" in mm or "reasoning" in mm)
                        for mm in b.get("messages", []))
@@ -1086,6 +1092,23 @@ try:
         json={"model": "mock-model", "tool_choice": "auto", "input": "hi"},
     )
     add("tool_choice 无 tools 时被清理(Responses)", r_tc3.status_code == 200, "st=%s" % r_tc3.status_code)
+    # Responses 的 usage 字段必须齐全:openai SDK 的 pydantic 模型把
+    # input_tokens_details 的 cached_tokens 与 cache_write_tokens 都当必填,少一个整个
+    # 响应就 ValidationError(openai 3.23 实测)。流式 response.completed 里那一份同样要齐
+    # (以前 convert.py 与 streams.py 各写一份,字段一漂移就两边不一致)。
+    _ru = (r_tc3.json().get("usage") or {}) if r_tc3.status_code == 200 else {}
+    _rui = _ru.get("input_tokens_details") or {}
+    _ruo = _ru.get("output_tokens_details") or {}
+    with c.stream("POST", "/v1/responses",
+                  json={"model": "mock-model", "input": "hi", "stream": True}) as _rs:
+        _raw_rs = _rs.read().decode("utf-8", "replace")
+    _rs_done = next((ln for ln in _raw_rs.splitlines()
+                     if ln.startswith("data:") and "response.completed" in ln), "")
+    add("Responses usage 字段齐全(SDK 必填 cache_write_tokens)",
+        bool(_rui) and "cached_tokens" in _rui and "cache_write_tokens" in _rui
+        and "reasoning_tokens" in _ruo and '"cache_write_tokens"' in _rs_done,
+        "非流式 usage=%s;流式 completed 含 cache_write_tokens=%s"
+        % (json.dumps(_ru, ensure_ascii=False)[:88], '"cache_write_tokens"' in _rs_done))
     # 有 tools 时 tool_choice 必须保留(不能误删)
     from core import convert as _cv
     _keep = _cv.sanitize_request(
@@ -1230,8 +1253,24 @@ try:
         st_ms = r_ms.status_code
         raw_ms = r_ms.read().decode("utf-8", "replace")
     add("退化思考:Messages 流式清理",
-        st_ms == 200 and "!!!!!!!!" not in raw_ms and "让我思考一下" in raw_ms,
-        "思考退化已清=%s 合法思考保留=%s" % ("!!!!!!!!" not in raw_ms, "让我思考一下" in raw_ms))
+        st_ms == 200 and "!!!!!!!!" not in raw_ms and "让我思考一下" in raw_ms
+        and '"signature": ""' in raw_ms,
+        "思考退化已清=%s 合法思考保留=%s signature 在位=%s" % (
+            "!!!!!!!!" not in raw_ms, "让我思考一下" in raw_ms, '"signature": ""' in raw_ms))
+
+    # thinking 块必须带 signature:Anthropic SDK 把 signature 当必填字段,缺了它
+    # 整个响应直接 ValidationError(用 anthropic 1.11 实测:非流式 Message 与流式
+    # content_block_start 两处都会挂)。上游只要返回 reasoning_content 就暴露。
+    r_thns = c.post(
+        "/v1/messages",
+        json={"model": "thinker", "max_tokens": 64, "messages": [{"role": "user", "content": "hi"}]},
+    )
+    j_thns = r_thns.json() if r_thns.status_code == 200 else {}
+    _th_blocks = [b for b in (j_thns.get("content") or [])
+                  if isinstance(b, dict) and b.get("type") == "thinking"]
+    add("Messages 非流式:thinking 块带 signature(SDK 必填)",
+        r_thns.status_code == 200 and bool(_th_blocks) and all("signature" in b for b in _th_blocks),
+        "st=%s thinking=%s" % (r_thns.status_code, json.dumps(_th_blocks, ensure_ascii=False)[:80]))
 
     # 令牌追踪:日志记录调用令牌(遮罩)、令牌页显示最后调用 IP/时间、公开队列不泄漏
     r_trk = c.post(

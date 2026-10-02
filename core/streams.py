@@ -10,6 +10,7 @@ import json
 import time
 from typing import Callable
 
+from .convert import map_usage
 from .util import degenerate_reasoning, rand_id, sub_dict
 
 
@@ -134,17 +135,9 @@ class ResponsesStream(_Base):
         }
 
     def _usage(self) -> dict:
-        u = self.usage or {}
-        # 强制 int:None 会挂 OpenAI SDK 的 pydantic 校验(input_tokens: int)
-        tin = int(u.get("prompt_tokens") or 0)
-        tout = int(u.get("completion_tokens") or 0)
-        return {
-            "input_tokens": tin,
-            "input_tokens_details": {"cached_tokens": 0},
-            "output_tokens": tout,
-            "output_tokens_details": {"reasoning_tokens": 0},
-            "total_tokens": int(u.get("total_tokens") or 0) or (tin + tout),
-        }
+        # 与 convert.map_usage 共用一份实现:Responses 的 usage 字段是 SDK 的必填项,
+        # 两处各写一份就会各自漂移(线上踩过缺 cache_write_tokens)
+        return map_usage(self.usage)
 
     def _build_output(self) -> list:
         out: list = []
@@ -484,7 +477,7 @@ class AnthropicStream(_Base):
                 {
                     "type": "content_block_start",
                     "index": self.think_idx,
-                    "content_block": {"type": "thinking", "thinking": ""},
+                    "content_block": {"type": "thinking", "thinking": "", "signature": ""},
                 },
             )
         self.think_acc += rs

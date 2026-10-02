@@ -96,6 +96,11 @@
 - `POST /v1/embeddings`
 - `POST /v1/responses`（OpenAI Responses API，含流式事件转换）
 - `POST /v1/messages`（Anthropic Messages API，含流式事件转换）
+- **SDK 侧必填字段一个不少**（两个协议都用真 SDK 校验过）：Anthropic 的 `thinking` 块带
+  `signature`（缺了它 `anthropic` 的 pydantic 模型直接 ValidationError，非流式 `Message` 与流式
+  `content_block_start` 都会挂）；Responses 的 `usage.input_tokens_details` 同时给
+  `cached_tokens` 与 `cache_write_tokens`（`openai` 3.x 两个都是必填）。上游一旦返回
+  `reasoning_content`，这两处就会暴露
 - `GET /v1/models`、`GET /v1/models/{id}` —— **返回网关对外支持的模型**（由渠道的 `models` 白名单与
   `model_map` 别名决定），不会泄漏上游真实模型清单，也不为此访问上游（省掉一次账号消耗与缓存超时）
 - CORS 预检、`Authorization: Bearer` 鉴权
@@ -254,7 +259,7 @@ location / {
 ```bash
 pip install -r requirements-dev.txt
 
-python tests/regression.py   # 142 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
+python tests/regression.py   # 144 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
 python tests/compat.py       # 19 项：全部接口 + 协议结构兼容性
 python tests/predeploy_check.py  # 部署前预检：拉更新源演练覆盖范围 + Python 3.8 语法/API 体检 + 前端零注释
 python tests/static_check.py     # 静态检查(pyflakes)：未定义名/别名误用这类只在运行时炸的缺陷

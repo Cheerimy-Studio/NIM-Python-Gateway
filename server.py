@@ -3209,13 +3209,7 @@ def _slow_convert_response(
                         "max_output_tokens": None,
                         "tools": [],
                         "tool_choice": "auto",
-                        "usage": {
-                            "input_tokens": 0,
-                            "input_tokens_details": {"cached_tokens": 0},
-                            "output_tokens": 0,
-                            "output_tokens_details": {"reasoning_tokens": 0},
-                            "total_tokens": 0,
-                        },
+                        "usage": convert.map_usage({}),
                         "metadata": {},
                     }
                 },

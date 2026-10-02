@@ -108,13 +108,19 @@ def sanitize_request(body: dict) -> dict:
 
 
 def map_usage(u: dict | None) -> dict:
+    """Responses 协议的 usage(该协议的唯一产出点:非流式、流式、占位事件都走这里)。
+
+    字段必须齐全:openai SDK 的 pydantic 模型把 input_tokens_details.cached_tokens 与
+    cache_write_tokens 都当必填,少一个整个响应就 ValidationError(openai 3.23 实测)。
+    老 SDK 的模型允许额外字段,所以多给一个空值不会反向破坏。
+    """
     u = u or {}
     # 强制 int:None 会挂 OpenAI SDK 的 pydantic 校验(input_tokens: int)
     tin = int(u.get("prompt_tokens") or 0)
     tout = int(u.get("completion_tokens") or 0)
     return {
         "input_tokens": tin,
-        "input_tokens_details": {"cached_tokens": 0},
+        "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
         "output_tokens": tout,
         "output_tokens_details": {"reasoning_tokens": 0},
         "total_tokens": int(u.get("total_tokens") or 0) or (tin + tout),
@@ -419,7 +425,11 @@ def chat_to_anthropic(chat: dict) -> dict:
     content: list[dict] = []
     reasoning = msg.get("reasoning_content") or msg.get("reasoning")
     if isinstance(reasoning, str) and reasoning and not _degen_rs(reasoning):
-        content.append({"type": "thinking", "thinking": reasoning})
+        # signature 是 ThinkingBlock 的必填字段:少了它,Anthropic SDK(pydantic)在解析
+        # 响应时直接 ValidationError("signature Field required"),整个响应作废 ——
+        # 用 anthropic 1.11 实测的非流式 Message 与流式 content_block_start 都会挂。
+        # 我们不是原生 Claude,给不出真签名,给空串即可(客户端不会再把它发回上游)。
+        content.append({"type": "thinking", "thinking": reasoning, "signature": ""})
     text = msg.get("content") if isinstance(msg.get("content"), str) else flatten_content(msg.get("content"))
     if text or not msg.get("tool_calls"):
         content.append({"type": "text", "text": text})
