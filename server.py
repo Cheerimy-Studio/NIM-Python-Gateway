@@ -1769,7 +1769,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
                     while waited < commit_after:
                         try:
                             if await request.is_disconnected():
-                                send_task.cancel()
+                                await _abort_send_task(send_task)
                                 try:
                                     ms = int((time.time() - t0) * 1000)
                                     # 置空 hold:return 会触发 finally 兜底,不置空会再释放一次
@@ -2192,6 +2192,30 @@ class _StreamPump:
             await self.q.put(self.done)
 
 
+async def _abort_send_task(task) -> None:
+    """取消一个还没取回的 client.send 任务，并关掉它可能已经拿到的响应。
+
+    cancel() 与「上游恰好在同一瞬间返回响应头」是竞争:任务已完成时 cancel 是空操作,
+    那份 Response 就没人读、也没人 aclose —— 连接永远回不到共享池。断连请求一多
+    (长流被客户端/中间代理取消很常见),池子被一点点吃干,之后所有上游请求都卡在
+    「等连接」超时(PoolTimeout),看门狗还会因此判定雪崩重启。所以放弃任务时必须
+    把「已经拿到的响应」显式关掉。
+    """
+    task.cancel()
+    res = None
+    try:
+        res = await task
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        return
+    if res is not None:
+        try:
+            await res.aclose()
+        except Exception:
+            pass
+
+
 def _proxy_stream(
     client: httpx.AsyncClient,
     r: httpx.Response,
@@ -2605,7 +2629,7 @@ def _slow_stream_response(
             outcome = "客户端已断开"
             raise
         finally:
-            send_task.cancel()
+            await _abort_send_task(send_task)
             if not released and not handed:
                 # 兜底：断连/异常等一切未交接、未释放的情况，确保账号被回收，
                 # 否则配合 acct_concurrency 会把账号永久卡死在满载。
@@ -2818,7 +2842,7 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
                     while waited < commit_after:
                         try:
                             if await request.is_disconnected():
-                                send_task.cancel()
+                                await _abort_send_task(send_task)
                                 ms = int((time.time() - t0) * 1000)
                                 hold["key"] = None
                                 await pool.arelease(
@@ -3264,7 +3288,7 @@ def _slow_convert_response(
             outcome = "客户端已断开"
             raise
         finally:
-            send_task.cancel()
+            await _abort_send_task(send_task)
             if not released and not handed:
                 ms = int((time.time() - t0) * 1000)
                 st = 499 if outcome == "客户端已断开" else 504

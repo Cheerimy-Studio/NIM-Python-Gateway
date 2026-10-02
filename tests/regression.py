@@ -1827,6 +1827,47 @@ try:
         "取到 %d 次/跨 %d 个号;单号在途 %s" % (len(_lru_picks), len(set(_lru_picks)),
                                             sorted(_lru_conc.values())))
 
+    # 断连时放弃 send 任务,必须把「已完成任务已经拿到的响应」关掉。
+    # cancel() 与「上游恰好在同一瞬间返回响应头」是竞争:任务已完成时 cancel 是空操作,
+    # 那份 Response 没人 aclose → 上游连接永远回不到共享池;断连一多池子被吃干,
+    # 之后全是「等连接」超时(PoolTimeout),看门狗还会因此判雪崩重启。
+    async def _abort_probe():
+        _closed = {"n": 0}
+
+        class _FR:
+            async def aclose(self):
+                _closed["n"] += 1
+
+        async def _return_resp():
+            return _FR()
+
+        async def _never():
+            await asyncio.sleep(30)
+
+        async def _boom():
+            raise RuntimeError("发送阶段异常")
+
+        _t_done = asyncio.ensure_future(_return_resp())
+        await asyncio.sleep(0)  # 先让它跑完:cancel 对已完成任务无效,只能靠 aclose 回收
+        await _srv._abort_send_task(_t_done)
+        _t_pend = asyncio.ensure_future(_never())
+        await asyncio.sleep(0)
+        await _srv._abort_send_task(_t_pend)
+        _t_err = asyncio.ensure_future(_boom())
+        await asyncio.sleep(0)
+        _raised = False
+        try:
+            await _srv._abort_send_task(_t_err)
+        except Exception:
+            _raised = True
+        return _closed["n"], _t_pend.cancelled(), (not _raised)
+
+    _ab_closed, _ab_cancelled, _ab_quiet = asyncio.run(_abort_probe())
+    add("断连放弃 send 任务时回收已拿到的响应(否则连接泄漏)",
+        _ab_closed == 1 and _ab_cancelled and _ab_quiet,
+        "已完成任务 aclose=%d(应 1);未完成任务已取消=%s;异常任务不上抛=%s"
+        % (_ab_closed, _ab_cancelled, _ab_quiet))
+
     # 连接池容量:池上限 = max(配置值, 号池理论并发)。池小于理论并发时满负荷必然
     # PoolTimeout,而它会被误读成「连接池故障」甚至触发看门狗重启(重启不增加容量)。
     _sz_small = _srv._pool_size({"pool_max_connections": 10, "acct_concurrency": 2}, 30)

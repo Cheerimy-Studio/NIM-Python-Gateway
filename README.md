@@ -85,6 +85,10 @@
   公开队列页只给粗粒度结论（账号繁忙 / 账号限流冷却中 / 模型熔断恢复中），不含 IP 与令牌
 - **号池与连接池水位可见**：账号池显示每账号「在途」，概览显示「在途 / 连接池上限」
   （在途接近上限说明是容量问题，远小于上限却仍超时才是连接泄漏）
+- **放弃上游请求时必定回收连接**：客户端断连（长流被取消很常见）时会取消还没取回的
+  `client.send` 任务——`cancel()` 与「上游恰好同一瞬间返回响应头」是竞争，任务已完成时
+  cancel 是空操作，那份响应必须显式 `aclose()`，否则连接永远回不到共享池，断连一多就
+  退化成清一色「等连接」超时（PoolTimeout），看门狗还会因此判雪崩重启
 
 ### 协议兼容
 - `POST /v1/chat/completions`（流式 / 非流式）
@@ -250,7 +254,7 @@ location / {
 ```bash
 pip install -r requirements-dev.txt
 
-python tests/regression.py   # 141 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
+python tests/regression.py   # 142 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
 python tests/compat.py       # 19 项：全部接口 + 协议结构兼容性
 python tests/predeploy_check.py  # 部署前预检：拉更新源演练覆盖范围 + Python 3.8 语法/API 体检 + 前端零注释
 python tests/static_check.py     # 静态检查(pyflakes)：未定义名/别名误用这类只在运行时炸的缺陷
