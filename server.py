@@ -1135,6 +1135,45 @@ def _apply_update(src: str, base: str) -> int:
     return len(rels)
 
 
+def _restart_argv() -> list[str]:
+    """构造重启用的命令行。
+
+    坑:`python -m uvicorn` 启动时 sys.argv[0] 是 `<...>/uvicorn/__main__.py`,
+    直接 execv 它会把这个目录放进 sys.path[0],于是包内的 logging.py 遮蔽了
+    标准库 logging,重启后的进程立刻 AttributeError 崩掉(本机实测)。所以
+    遇到 __main__.py 一律还原成 `-m <包名>` 形态;其它启动方式(supervisor
+    拉起的 console script、python server.py 等)保持原样不动。
+    """
+    argv = [str(x) for x in (sys.argv or [])]
+    if argv and os.path.basename(argv[0]) == "__main__.py":
+        pkg_dir = os.path.dirname(os.path.abspath(argv[0]))
+        pkg = os.path.basename(pkg_dir)
+        if not pkg.isidentifier():
+            pkg = "uvicorn"
+        return [sys.executable, "-m", pkg] + argv[1:]
+    return [sys.executable] + argv
+
+
+def _schedule_restart(delay: float = 2.0, tag: str = "restart") -> None:
+    """延迟重启:把 execv 放到响应写回之后再执行。
+
+    execv 会立刻替换整个进程。若在请求处理过程中直接调用,调用方永远收不到
+    响应 —— 线上实测表现为 nginx 502(尽管更新其实成功了)。延迟一小段让响应
+    先落地,调用方就能正常看到 200 与说明。
+    """
+    import threading
+
+    cmd = _restart_argv()
+
+    def _do() -> None:
+        try:
+            os.execv(sys.executable, cmd)
+        except Exception as e:
+            print(f"[{tag}] execv 失败: {e}", file=sys.stderr, flush=True)
+
+    threading.Timer(delay, _do).start()
+
+
 def _backup_current(base: str) -> str:
     """备份当前代码+数据到 backup/(只保留一份,旧的覆盖)。返回备份路径。"""
     import shutil
@@ -1219,7 +1258,7 @@ def _remote_update() -> tuple[bool, str]:
         def _fn(db: dict):
             logs = db.setdefault("logs", [])
             logs.insert(0, [int(time.time()), "update", "updater", "-", 200, 0,
-                           f"远程更新完成:拉取 main 并覆盖 {copied} 个文件(已备份),已自动重启",
+                           f"远程更新完成:拉取 main 并覆盖 {copied} 个文件(已备份),即将自动重启",
                            "-", 1, "", 0, 0, 0, 0])
             del logs[200:]
 
@@ -1227,8 +1266,8 @@ def _remote_update() -> tuple[bool, str]:
         STORE.flush()
     except Exception:
         pass
-    print(f"[update] GitHub main 已覆盖 {copied} 个文件(已备份)→ execv 重启", file=sys.stderr, flush=True)
-    os.execv(sys.executable, [sys.executable] + list(sys.argv))
+    print(f"[update] GitHub main 已覆盖 {copied} 个文件(已备份)→ 稍后 execv 重启", file=sys.stderr, flush=True)
+    _schedule_restart(2.0, "update")
     return True, ""
 
 
@@ -1295,8 +1334,8 @@ def _remote_rollback(base: str | None = None, restart: bool = True) -> tuple[boo
     tail = f"{restored} 个代码文件" + ("+ data/" if data_restored else "")
     if not restart:
         return True, f"已回滚({tail},未重启)"
-    print(f"[rollback] 已恢复 {tail} → execv 重启", file=sys.stderr, flush=True)
-    os.execv(sys.executable, [sys.executable] + list(sys.argv))
+    print(f"[rollback] 已恢复 {tail} → 稍后 execv 重启", file=sys.stderr, flush=True)
+    _schedule_restart(2.0, "rollback")
     return True, ""
 
 

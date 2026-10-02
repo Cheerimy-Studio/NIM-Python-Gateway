@@ -52,6 +52,17 @@
   —— 正则引擎没有超时，而网关是单进程事件循环，一次灾难性回溯就是全站无响应
 - `embeddings` 不参与拦截（其输入非对话文本，返回形态无法对齐）
 
+### 远程更新与回滚
+- `POST /api/update`（`Authorization: Bearer <更新令牌>`，或后台会话触发）：拉取更新源 tarball → 解包
+  → **全量语法自检** → 备份当前代码与数据到 `backup/` → 覆盖（**永不触碰 `data/`、`tests/`、`backup/`**）
+  → 自重启；任何一步失败都不动现有文件
+- 触发成功后**先返回结果、约 2 秒后才重启**：`execv` 会立刻替换整个进程，放在响应之前会把这次响应吞掉
+  （调用方只能看到网关连接被重置）
+- `POST /api/rollback`：回到上次更新前的代码与数据；**只能回滚一次**（备份用完即删）
+- 演练与换源：`NGW_UPDATE_DRYRUN=1` 只做下载→解包→自检（不覆盖、不重启），`NGW_UPDATE_URL` 可指向自建镜像
+- 重启沿用原启动形态；`python -m uvicorn` 启动时会还原成 `-m` 形态 —— 直接执行 `uvicorn/__main__.py`
+  会把该目录放进 `sys.path[0]`，包内 `logging.py` 会遮蔽标准库导致重启后立刻崩溃
+
 ### 协议兼容
 - `POST /v1/chat/completions`（流式 / 非流式）
 - `POST /v1/completions`
@@ -215,9 +226,10 @@ location / {
 ```bash
 pip install -r requirements-dev.txt
 
-python tests/regression.py   # 111 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
+python tests/regression.py   # 116 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
 python tests/compat.py       # 19 项：全部接口 + 协议结构兼容性
 python tests/predeploy_check.py  # 部署前预检：拉更新源演练覆盖范围 + Python 3.8 语法/API 体检
+python tests/update_e2e.py   # 真实更新路径端到端：临时副本上真的覆盖 + execv 重启
 ```
 
 ---
