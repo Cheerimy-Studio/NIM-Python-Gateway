@@ -814,6 +814,15 @@ def _check_model(model: str, entry: dict | None, cfg: dict, anthropic: bool = Fa
 # ============================================================ 排队与取号
 
 
+def _breaker_queue_reason(br: dict) -> str:
+    """熔断打开时排队条目的原因文案。
+
+    熔断期间取号整段被跳过，队列条目本来没有原因，面板上只能看到「排队中」——
+    线上实测 kimi-k3 熔断时 19 条排队全无原因，看不出是模型在熔断。
+    """
+    return "模型熔断中（连续失败 %s 次，约 %s 秒后恢复探测）" % (br.get("fails"), br.get("left"))
+
+
 async def take_account(request: Request, ep: str, model: str, est_tokens: int, cfg: dict, tok: str = "") -> dict:
     max_wait = _cfgint(cfg, "queue_max_wait", 30)
     # 队列等待必须覆盖 429 冷却，否则账号还没到解禁时间队列就先放弃了，
@@ -875,7 +884,12 @@ async def take_account(request: Request, ep: str, model: str, est_tokens: int, c
             "status": 503,
             "message": f"排队已满（{_waiting.get(model, 0)} 个请求在等账号），请稍后重试",
         }
-    qid = queue.add(ep, model, _client_ip(request), _tok_mask(tok), acq.get("reason", ""))
+    # 熔断打开时取号被整段跳过，队列条目会没有原因 —— 把熔断状态写进去，
+    # 面板上就能直接看到「为什么在等」（线上实测:kimi-k3 熔断时 19 条排队全无原因）
+    _q_reason = acq.get("reason", "")
+    if br:
+        _q_reason = _breaker_queue_reason(br)
+    qid = queue.add(ep, model, _client_ip(request), _tok_mask(tok), _q_reason)
     deadline = time.time() + max_wait
     poll = max(0.05, _cfgint(cfg, "queue_poll_ms", 400) / 1000)
     # 熔断打开时先不取号，排队等恢复；非熔断则正常取号+排队
@@ -908,6 +922,8 @@ async def take_account(request: Request, ep: str, model: str, est_tokens: int, c
                 backoff = poll if (hint > 0 or not crowded) else min(backoff * 2, QUEUE_POLL_MAX)
             else:
                 hint = float((pool.breaker_open(model) or {}).get("left") or 0)
+                _bo = pool.breaker_open(model) or {}
+                queue.set_reason(qid, _breaker_queue_reason(_bo))
             # 关键：加上抖动。否则几百个等待者会在同一时刻一起重试、把存储锁打满
             wait = max(poll, hint if hint > 0 else backoff)
             await asyncio.sleep(wait * (0.7 + random.random() * 0.6))

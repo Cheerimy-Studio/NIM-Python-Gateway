@@ -1928,6 +1928,14 @@ try:
         "首次 st=%s %dms;缓存已落盘=%s;二次 st=%s %dms 网关自判=%s;msg=%s" % (
             r_nm1.status_code, _ms_nm1, _mm_saved, r_nm2.status_code, _ms_nm2, _nm_self, r_nm2.text[:44]))
 
+    # 熔断中的排队条目必须写清原因:线上实测 kimi-k3 熔断时 19 条排队全无原因,
+    # 面板上只能看到「排队中」,根本看不出是模型熔断(熔断期间取号整段被跳过)
+    _br_txt = _srv._breaker_queue_reason({"fails": 3, "left": 42})
+    add("熔断中的排队原因与公开提示",
+        ("熔断" in _br_txt) and ("3" in _br_txt) and ("42" in _br_txt)
+        and _srv.queue.public_hint(_br_txt) == "该模型正在熔断恢复",
+        "原因=%s;公开提示=%s" % (_br_txt[:34], _srv.queue.public_hint(_br_txt)))
+
     first_bad = []
 
     async def w(_):

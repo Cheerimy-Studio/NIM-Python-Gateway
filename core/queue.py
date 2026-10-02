@@ -70,6 +70,8 @@ def public_hint(reason: str) -> str:
     r = str(reason or "")
     if not r:
         return "排队等待中"
+    if "熔断" in r:
+        return "该模型正在熔断恢复"
     if any(k in r for k in ("封禁", "冷却", "RPM", "TPM", "日限", "上游RPM", "上游日限")):
         return "账号限流冷却中"
     if any(k in r for k in ("账户并发", "渠道并发")):

@@ -796,7 +796,6 @@ def release(
 
     def _fn(db: dict):
         now = int(time.time())
-        now_f = time.time()
         cfg = db["config"]
         minute = time.strftime("%Y%m%d%H%M", time.gmtime(now))
         hour = time.strftime("%Y%m%d%H", time.gmtime(now))

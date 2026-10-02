@@ -271,8 +271,6 @@ async def keydetail(request: Request):
     bad = _require(request)
     if bad:
         return bad
-    from urllib.parse import unquote
-
     kid = request.query_params.get("id") or ""
     db = STORE.load()
     for k in list(db["keys"]):
