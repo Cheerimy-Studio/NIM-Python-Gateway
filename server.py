@@ -379,10 +379,11 @@ def _tok_mask(t: str) -> str:
     return t[:10] + "…" + t[-4:]
 
 
-def _match_custom_rule(req: dict, cfg: dict) -> tuple[dict, str] | None:
-    """自定义回复拦截:最后一条 user 消息按规则匹配(包含/等于/前缀/正则)。
+def _match_custom_rule(req: dict, cfg: dict, allow_prompt: bool = False) -> tuple[dict, str] | None:
+    """自定义回复拦截:最后一条 user 消息按规则匹配(包含/等于/前缀/后缀/正则)。
 
     命中返回 (规则, 消息内容);未启用/无规则/无用户消息返回 None。
+    allow_prompt 供 /v1/completions 使用(它的输入在 prompt 字段)。
     """
     if not cfg.get("intercept_enabled"):
         return None
@@ -399,6 +400,12 @@ def _match_custom_rule(req: dict, cfg: dict) -> tuple[dict, str] | None:
             elif isinstance(c, list):
                 last_user = flatten_content(c)
             break
+    if not last_user and allow_prompt:
+        p = req.get("prompt")
+        if isinstance(p, list):
+            p = " ".join([x for x in p if isinstance(x, str)])
+        if isinstance(p, str) and p:
+            last_user = p
     if not last_user:
         return None
     for r in rules:
@@ -457,6 +464,38 @@ def _custom_reply_response(reply_text: str, model: str, stream: bool, protocol: 
         ],
         "usage": {"prompt_tokens": 0, "completion_tokens": max(1, len(reply_text) // 3), "total_tokens": max(1, len(reply_text) // 3)},
     }
+    if protocol == "completions":
+        comp = {
+            "id": rand_id("cmpl-"),
+            "object": "text_completion",
+            "model": model,
+            "choices": [{"index": 0, "text": reply_text, "logprobs": None, "finish_reason": "stop"}],
+            "usage": chat["usage"],
+        }
+        if stream:
+            chunk = {
+                "id": comp["id"],
+                "object": "text_completion",
+                "model": model,
+                "choices": [{"index": 0, "text": reply_text, "logprobs": None, "finish_reason": None}],
+            }
+            tail = {
+                "id": comp["id"],
+                "object": "text_completion",
+                "model": model,
+                "choices": [{"index": 0, "text": "", "logprobs": None, "finish_reason": "stop"}],
+            }
+            sse = (
+                "data: " + json.dumps(chunk, ensure_ascii=False) + "\n\n"
+                + "data: " + json.dumps(tail, ensure_ascii=False) + "\n\n"
+                + "data: [DONE]\n\n"
+            )
+            return StreamingResponse(iter([sse]), media_type="text/event-stream", headers=_cors())
+        return Response(
+            content=json.dumps(comp, ensure_ascii=False, separators=(",", ":")),
+            media_type="application/json",
+            headers=_cors(),
+        )
     if stream:
         if protocol == "chat":
             chunk = {
@@ -1007,6 +1046,88 @@ def _upstream_fail(key: dict | None, res: dict | None, cfg: dict, anthropic: boo
 
 # ============================================================ 远程更新(从 GitHub main 拉取并自重启)
 
+# 更新源(可用 NGW_UPDATE_URL 覆盖:自建镜像、内网源、本地演练用的假源)
+_UPDATE_URL = os.environ.get("NGW_UPDATE_URL") or (
+    "https://codeload.github.com/Cheerimy-Studio/NIM-Python-Gateway/tar.gz/refs/heads/main"
+)
+# 更新/备份时一律不动的目录(数据、测试、备份、缓存)
+_UPDATE_SKIP_DIRS = ("data", "tests", "backup", "_update_tmp", "__pycache__", ".git")
+
+
+def _unpack_update(data: bytes, base: str) -> tuple[bool, str, str]:
+    """把更新 tarball 解包到 base/_update_tmp,返回 (ok, 消息, 源码顶层目录)。
+
+    tarfile 直读 gzip(内部用 GzipFile 逐块解压),刻意不经过 gzip.decompress:
+    Python 3.8 的 gzip.decompress 对部分 gzip 变体抛 "Not a gzipped file"
+    (线上实测就是它),而 r:gz 模式全版本兼容。
+    """
+    import io
+    import shutil
+    import tarfile
+
+    tmpdir = os.path.join(base, "_update_tmp")
+    try:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        os.makedirs(tmpdir)
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
+            # 只解 GitHub 官方 tarball,仍挡掉绝对路径与 ../ 成员(双保险)
+            safe = [
+                m
+                for m in tf.getmembers()
+                if not m.name.startswith(("/", "\\"))
+                and ".." not in m.name.replace("\\", "/").split("/")
+            ]
+            tf.extractall(tmpdir, members=safe)  # noqa: S202
+        entries = os.listdir(tmpdir)
+        if not entries:
+            return False, "tarball 为空", ""
+        src = os.path.join(tmpdir, entries[0])
+        if not os.path.isdir(src):
+            src = tmpdir
+        return True, "", src
+    except Exception as e:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        return False, f"解包失败: {e}", ""
+
+
+def _selfcheck_update(src: str) -> tuple[bool, str]:
+    """更新前语法自检:源码里所有 .py 编译通过才允许覆盖(防半成品上线)。"""
+    import py_compile
+
+    for root, dirs, files in os.walk(src):
+        dirs[:] = [d for d in dirs if d not in _UPDATE_SKIP_DIRS]
+        for fn in files:
+            if not fn.endswith(".py"):
+                continue
+            rel = os.path.relpath(os.path.join(root, fn), src)
+            try:
+                py_compile.compile(os.path.join(root, fn), doraise=True)
+            except Exception as e:
+                return False, f"语法自检失败 {rel}: {e}"
+    return True, ""
+
+
+def _update_file_list(src: str) -> list[str]:
+    """本次更新会覆盖的文件清单(相对路径;data/tests/backup 等一律不动)。"""
+    rels: list[str] = []
+    for root, dirs, files in os.walk(src):
+        dirs[:] = [d for d in dirs if d not in _UPDATE_SKIP_DIRS]
+        for fn in files:
+            rels.append(os.path.relpath(os.path.join(root, fn), src))
+    return rels
+
+
+def _apply_update(src: str, base: str) -> int:
+    """把解包出的源码覆盖到 base,返回覆盖的文件数。"""
+    import shutil
+
+    rels = _update_file_list(src)
+    for rel in rels:
+        dst = os.path.join(base, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy2(os.path.join(src, rel), dst)
+    return len(rels)
+
 
 def _backup_current(base: str) -> str:
     """备份当前代码+数据到 backup/(只保留一份,旧的覆盖)。返回备份路径。"""
@@ -1036,19 +1157,17 @@ def _remote_update() -> tuple[bool, str]:
     返回 (ok, message)。这是高危操作,由 update_enabled 配置硬开关控制
     (默认关);覆盖前全量备份到 backup/,代码有 py_compile 自检,
     失败绝不动现有文件。重启复用看门狗的 execv 机制(秒级闪断)。
-    """
-    import io
-    import tarfile
-    import urllib.request
-    import zipfile
 
-    import py_compile as _pc
+    环境变量:NGW_UPDATE_URL 覆盖更新源;NGW_UPDATE_DRYRUN=1 时只做
+    下载 → 解包 → 自检,不覆盖文件也不重启(本地与生产演练用)。
+    """
+    import shutil
+    import urllib.request
 
     base = os.path.dirname(os.path.abspath(__file__))
-    url = "https://codeload.github.com/Cheerimy-Studio/NIM-Python-Gateway/tar.gz/refs/heads/main"
-    data = b""
+    tmpdir = os.path.join(base, "_update_tmp")
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "gateway-updater"})
+        req = urllib.request.Request(_UPDATE_URL, headers={"User-Agent": "gateway-updater"})
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = resp.read()
     except Exception as e:
@@ -1056,70 +1175,30 @@ def _remote_update() -> tuple[bool, str]:
 
     # 非 gzip 内容诊断:代理残留/劫持页会返回 HTML —— 带前 120 字节进错误消息
     if not data.startswith(b"\x1f\x8b"):
-        head = data[:120]
-        try:
-            head_txt = head.decode("utf-8", "replace")
-        except Exception:
-            head_txt = head.hex()
+        head_txt = data[:120].decode("utf-8", "replace")
         return False, f"下载内容不是 gzip(前120字节: {head_txt})"
 
-    # 解包到临时目录
-    tmpdir = os.path.join(base, "_update_tmp")
-    try:
-        import shutil as _sh
-        shutil.rmtree(tmpdir, ignore_errors=True)
-        os.makedirs(tmpdir)
-        # tarfile 直读 gzip(内部用 GzipFile 逐块解压)—— 不经过 gzip.decompress:
-        # Python 3.8 的 gzip.decompress 对部分 gzip 变体会抛 "Not a gzipped file",
-        # 服务器实测就是它;tarfile 的 r:gz 模式全版本兼容
-        import tarfile as _tf
-        with _tf.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
-            tf.extractall(tmpdir)  # noqa: S202 - 只解 GitHub 官方 tarball
-        # 找到顶层目录
-        entries = os.listdir(tmpdir)
-        if not entries:
-            return False, "tarball 为空"
-        src = os.path.join(tmpdir, entries[0])
-        if not os.path.isdir(src):
-            src = tmpdir
-    except Exception as e:
-        try:
-            import shutil as _sh2
-            _sh2.rmtree(tmpdir, ignore_errors=True)
-        except Exception:
-            pass
-        return False, f"解包失败: {e}"
+    ok, msg, src = _unpack_update(data, base)
+    if not ok:
+        return False, msg
 
     # 语法自检:py 文件全部通过才继续(防半成品/冲突代码上线)
-    for root, dirs, files in os.walk(src):
-        for fn in files:
-            if fn.endswith(".py"):
-                p = os.path.join(root, fn)
-                rel = os.path.relpath(p, src)
-                if rel.startswith(("data/", "tests/", "backup/", "_update_tmp/")):
-                    continue
-                try:
-                    _pc.compile(p, doraise=True)
-                except Exception as e:
-                    shutil.rmtree(tmpdir, ignore_errors=True)
-                    return False, f"语法自检失败 {rel}: {e}"
+    ok, msg = _selfcheck_update(src)
+    if not ok:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        return False, msg
+
+    # 覆盖前先算清单(dryrun 也据此报告将覆盖多少文件)
+    pending = _update_file_list(src)
+    if os.environ.get("NGW_UPDATE_DRYRUN"):
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        return True, f"演练通过:解包与语法自检正常,待覆盖 {len(pending)} 个文件(未改动任何文件)"
 
     # 备份当前代码+数据(只保留一份,回滚端点用)
-    backup = _backup_current(base)
+    _backup_current(base)
 
     # 覆盖(python/静态资源;不动 data/、tests/、backup/)
-    copied = 0
-    for root, dirs, files in os.walk(src):
-        rel_root = os.path.relpath(root, src)
-        if rel_root.startswith(("data", "tests", "backup", "_update_tmp", "__pycache__")):
-            dirs[:] = []
-            continue
-        for fn in files:
-            rel = os.path.join(rel_root, fn) if rel_root != "." else fn
-            dst = os.path.join(base, rel)
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
-            shutil.copy2(os.path.join(root, fn), dst)
-            copied += 1
+    copied = _apply_update(src, base)
 
     # 清理临时目录
     shutil.rmtree(tmpdir, ignore_errors=True)
@@ -1147,9 +1226,7 @@ def _remote_update() -> tuple[bool, str]:
     return True, ""
 
 
-
-
-def _remote_rollback() -> tuple[bool, str]:
+def _remote_rollback(base: str | None = None, restart: bool = True) -> tuple[bool, str]:
     """回滚到上次更新前的版本(代码+数据)。类似 Win11 的 7 天回退:
 
     - 只能回滚一次:备份用完即删,不存在连续回滚
@@ -1158,7 +1235,7 @@ def _remote_rollback() -> tuple[bool, str]:
     """
     import shutil
 
-    base = os.path.dirname(os.path.abspath(__file__))
+    base = base or os.path.dirname(os.path.abspath(__file__))
     backup = os.path.join(base, "backup")
     code_backup = os.path.join(backup, "code")
     data_backup = os.path.join(backup, "data")
@@ -1184,11 +1261,12 @@ def _remote_rollback() -> tuple[bool, str]:
             restored += 1
 
     # 恢复数据
+    data_restored = False
     if os.path.isdir(data_backup):
         data_dst = os.path.join(base, "data")
         shutil.rmtree(data_dst, ignore_errors=True)
         shutil.copytree(data_backup, data_dst)
-        restored += "data"
+        data_restored = True
 
     # 删除备份(只能回滚一次)
     shutil.rmtree(backup, ignore_errors=True)
@@ -1208,7 +1286,10 @@ def _remote_rollback() -> tuple[bool, str]:
     except Exception:
         pass
 
-    print(f"[rollback] 已恢复 {restored} 项(含 data/)→ execv 重启", file=sys.stderr, flush=True)
+    tail = f"{restored} 个代码文件" + ("+ data/" if data_restored else "")
+    if not restart:
+        return True, f"已回滚({tail},未重启)"
+    print(f"[rollback] 已恢复 {tail} → execv 重启", file=sys.stderr, flush=True)
     os.execv(sys.executable, [sys.executable] + list(sys.argv))
     return True, ""
 
@@ -1325,11 +1406,14 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
     if bad:
         return bad
     # 自定义回复拦截:规则命中直接返回,不打上游
-    _im = _match_custom_rule(req, cfg)
-    if _im is not None:
-        rule, content = _im
-        await _log_intercept(cfg, ep_tag, rule, content, ip, tok, model)
-        return _custom_reply_response(str(rule.get("reply") or ""), model, stream, "chat", {})
+    # embeddings 不参与(它的 input 不是对话文本,返回形态也对不上)
+    if ep_tag != "emb":
+        _im = _match_custom_rule(req, cfg, allow_prompt=(ep_tag == "cmpl"))
+        if _im is not None:
+            rule, content = _im
+            await _log_intercept(cfg, ep_tag, rule, content, ip, tok, model)
+            proto = "completions" if ep_tag == "cmpl" else "chat"
+            return _custom_reply_response(str(rule.get("reply") or ""), model, stream, proto, {})
     max_attempts = max(1, _cfgint(cfg, "max_retries", 3) + 1)
     attempt = 0
     last: dict | None = None
@@ -2371,8 +2455,10 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
     if bad:
         return bad
     ip = _client_ip(request)
-    # 自定义回复拦截:规则命中直接返回(按客户端协议),不打上游
-    _im = _match_custom_rule(req, cfg)
+    # 自定义回复拦截:规则命中直接返回(按客户端协议),不打上游。
+    # 用规范化后的 chat 请求匹配:Responses 的输入在 input 字段、Anthropic 的
+    # content 是块数组,只有 chat 形态是统一的
+    _im = _match_custom_rule(chat_req, cfg)
     if _im is not None:
         rule, content = _im
         tok0 = str((entry or {}).get("t") or "")

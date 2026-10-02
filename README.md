@@ -43,6 +43,13 @@
 - **`ttfb_timeout` / `sse_idle_timeout`**：分别约束「首字节」与「流中相邻 chunk 间隔」
 - **空响应 / 空流保护**：绝不把空响应或空流透传给下游
 
+### 请求拦截（自定义回复）
+- 后台「拦截」面板维护规则：`包含 / 等于 / 前缀 / 后缀 / 正则` 五种匹配模式，匹配**最后一条用户消息**
+- 命中即直接返回自定义回复，**不打上游**（不消耗账号额度）；回复按客户端协议构造
+  （Chat 流式/非流式、Anthropic Messages、Responses、Completions 文本补全）
+- **拦截记录**：时间、来源 IP、访问令牌（遮罩）、模型、命中规则与内容预览，上限可配（默认 200 条）
+- `embeddings` 不参与拦截（其输入非对话文本，返回形态无法对齐）
+
 ### 协议兼容
 - `POST /v1/chat/completions`（流式 / 非流式）
 - `POST /v1/completions`
@@ -99,6 +106,8 @@ NGW_ADMIN_PASSWORD='your-strong-password' ./run.sh
 |---|---|---|
 | `NGW_DATA_DIR` | 数据目录（`db.json` 所在位置） | 项目根 `data/` |
 | `NGW_ADMIN_PASSWORD` | 仅首次初始化时使用的管理员密码 | 随机生成 |
+| `NGW_UPDATE_URL` | 远程更新源（tarball 地址，便于自建镜像/内网源） | GitHub `main` |
+| `NGW_UPDATE_DRYRUN` | 置 `1` 时远程更新只做下载→解包→语法自检，不覆盖文件也不重启 | 关 |
 | `PORT` | 监听端口（仅 `run.sh`） | `8080` |
 
 ### Docker
@@ -204,7 +213,7 @@ location / {
 ```bash
 pip install -r requirements-dev.txt
 
-python tests/regression.py   # 50 项：调度、限速、重试、保活、并发、断连、协议守护
+python tests/regression.py   # 111 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
 python tests/compat.py       # 19 项：全部接口 + 协议结构兼容性
 ```
 

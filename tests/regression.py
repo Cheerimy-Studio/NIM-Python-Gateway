@@ -14,8 +14,8 @@ os.makedirs(TMP)
 
 mock = """
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
-import json, asyncio
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+import io, json, asyncio, tarfile
 app = FastAPI()
 _c = {"rl": 0, "flaky": 0}
 
@@ -28,6 +28,25 @@ async def chat_fail(request: Request):
     # 只按「渠道」失败的路径：用于验证按模型的可靠性路由
     await request.json()
     return JSONResponse({"error":{"message":"this channel is broken for the model"}}, status_code=500)
+
+@app.get("/update-test.tar.gz")
+async def upd_tar():
+    # 演练用的「更新包」:结构等同 GitHub tarball(顶层目录 + 源码 + data/tests)
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, body in [
+            ("pkg-main/server.py", "x = 1"),
+            ("pkg-main/core/util.py", "y = 2"),
+            ("pkg-main/web/upd.html", "<b>upd</b>"),
+            ("pkg-main/notes.txt", "hello"),
+            ("pkg-main/data/db.json", '{"REAL":1}'),
+            ("pkg-main/tests/t.py", "z = 3"),
+        ]:
+            b = body.encode("utf-8")
+            ti = tarfile.TarInfo(name)
+            ti.size = len(b)
+            tf.addfile(ti, io.BytesIO(b))
+    return Response(content=buf.getvalue(), media_type="application/gzip")
 
 @app.post("/v1/chat/completions")
 async def chat(request: Request):
@@ -160,7 +179,22 @@ async def chat(request: Request):
 """
 open(os.path.join(TMP, "mock.py"), "w", encoding="utf-8").write(mock)
 
-env = {**os.environ, "NGW_DATA_DIR": TMP, "NGW_ADMIN_PASSWORD": ADMIN_PW}
+env = {
+    **os.environ,
+    "NGW_DATA_DIR": TMP,
+    "NGW_ADMIN_PASSWORD": ADMIN_PW,
+    # 更新管线回归:源指向本地 mock 的假更新包,演练模式只下载/解包/自检,
+    # 不覆盖任何文件也不重启(真实 GitHub 源与非演练路径不在此测试)
+    "NGW_UPDATE_DRYRUN": "1",
+    "NGW_UPDATE_URL": "http://127.0.0.1:18212/update-test.tar.gz",
+    # 避免本机残留代理设置把 127.0.0.1 的假更新源绕到代理上
+    "http_proxy": "",
+    "https_proxy": "",
+    "HTTP_PROXY": "",
+    "HTTPS_PROXY": "",
+    "no_proxy": "*",
+    "NO_PROXY": "*",
+}
 mk = subprocess.Popen(
     [sys.executable, "-m", "uvicorn", "mock:app", "--port", "18212"],
     cwd=TMP,
@@ -1449,6 +1483,21 @@ try:
         raw_i3 = r_i3.read().decode("utf-8", "replace")
     add("拦截:流式回复", st_i3 == 200 and "傻子都没你蠢" in raw_i3 and "[DONE]" in raw_i3,
         "st=%s 含内容=%s" % (st_i3, "傻子都没你蠢" in raw_i3))
+    # Responses 协议:输入在 input 字段(没有 messages),匹配走规范化后的 chat 请求
+    r_i5 = c.post("/v1/responses", json={"model": "mock-model", "input": "hi Reply and OK"}, timeout=30)
+    _i5 = json.dumps(r_i5.json(), ensure_ascii=False) if r_i5.status_code == 200 else r_i5.text
+    add("拦截:Responses 协议回复", r_i5.status_code == 200 and "傻子都没你蠢" in _i5,
+        "st=%s 含内容=%s" % (r_i5.status_code, "傻子都没你蠢" in _i5))
+    # completions 协议:必须回 text_completion 形态(不是 chat 对象)
+    r_i6 = c.post("/v1/completions", json={"model": "mock-model", "prompt": "hello Reply and OK"}, timeout=30)
+    j_i6 = r_i6.json() if r_i6.status_code == 200 else {}
+    _i6_text = ((j_i6.get("choices") or [{}])[0].get("text") or "")
+    add("拦截:completions 协议回复(text_completion)",
+        r_i6.status_code == 200 and j_i6.get("object") == "text_completion" and "傻子都没你蠢" in _i6_text,
+        "st=%s object=%s text=%r" % (r_i6.status_code, j_i6.get("object"), _i6_text[:30]))
+    # embeddings 不参与拦截(input 不是对话文本,返回形态对不上)
+    r_i7 = c.post("/v1/embeddings", json={"model": "mock-model", "input": "hello Reply and OK"}, timeout=30)
+    add("拦截:embeddings 不参与", "傻子都没你蠢" not in r_i7.text, "st=%s" % r_i7.status_code)
     a.post("/api/intercept/toggle", json={"enabled": False})
     r_i4 = c.post(
         "/v1/chat/completions",
@@ -1463,21 +1512,91 @@ try:
     for r in rules_now:
         a.post("/api/intercept/rules/delete", json={"id": r["id"]})
 
-    # 远程更新端点:开关关闭时拒绝;Bearer 令牌鉴权路径验证
+    # 远程更新:开关/令牌鉴权 + 完整管线演练(下载→解包→语法自检;演练不改文件)
     a.post("/api/settings", json={"config": {"update_enabled": False, "update_token": "upd-test1234567890abcdef"}})
     r_up0 = a.post("/api/update", json={})  # admin 会话 + 开关关 → 400
     a.post("/api/settings", json={"config": {"update_enabled": True}})
     # Bearer 令牌路径(无需 admin cookie)
     r_tok1 = httpx.post("http://127.0.0.1:18213/api/update",
-                        headers={"Authorization": "Bearer upd-test1234567890abcdef"}, timeout=30)
+                        headers={"Authorization": "Bearer upd-test1234567890abcdef"}, timeout=60)
     r_tok2 = httpx.post("http://127.0.0.1:18213/api/update",
                         headers={"Authorization": "Bearer upd-wrong-token-xxxxxxxx"}, timeout=30)
     a.post("/api/settings", json={"config": {"update_enabled": False, "update_token": ""}})
-    add("远程更新:开关与令牌鉴权",
-        r_up0.status_code == 400
-        and (r_tok1.status_code in (200, 500))
+    try:
+        _note1 = str(r_tok1.json().get("note") or "")
+    except Exception:
+        _note1 = r_tok1.text[:80]
+    add("远程更新:鉴权 + 管线演练(下载/解包/自检)",
+        r_up0.status_code == 400 and r_tok1.status_code == 200 and "演练通过" in _note1
         and r_tok2.status_code == 401,
-        "开关关=%s 令牌对=%s 令牌错=%s" % (r_up0.status_code, r_tok1.status_code, r_tok2.status_code))
+        "开关关=%s 令牌对=%s(%s) 令牌错=%s"
+        % (r_up0.status_code, r_tok1.status_code, _note1[:38], r_tok2.status_code))
+    add("远程更新:演练后不留临时目录", not os.path.isdir(os.path.join(ROOT, "_update_tmp")),
+        "_update_tmp 存在=%s" % os.path.isdir(os.path.join(ROOT, "_update_tmp")))
+
+    # 更新/回滚纯函数直测(全部在临时目录里做,不碰真实仓库):
+    # 解包、排除 data/tests、语法自检、备份与回滚
+    import io as _io
+    import tarfile as _tar
+
+    def _mk_tar(files):
+        buf = _io.BytesIO()
+        with _tar.open(fileobj=buf, mode="w:gz") as tf:
+            for name, body in files:
+                b = body.encode("utf-8")
+                ti = _tar.TarInfo(name)
+                ti.size = len(b)
+                tf.addfile(ti, _io.BytesIO(b))
+        return buf.getvalue()
+
+    _ub = os.path.join(TMP, "upd-base")
+    shutil.rmtree(_ub, ignore_errors=True)
+    os.makedirs(os.path.join(_ub, "data"))
+    os.makedirs(os.path.join(_ub, "tests"))
+    open(os.path.join(_ub, "server.py"), "w", encoding="utf-8").write("OLD = 1\n")
+    open(os.path.join(_ub, "data", "db.json"), "w", encoding="utf-8").write('{"real":1}')
+    open(os.path.join(_ub, "tests", "t.py"), "w", encoding="utf-8").write("REAL_TEST = 1\n")
+    _tar_ok = _mk_tar([
+        ("pkg-main/server.py", "OLD = 2\n"),
+        ("pkg-main/web/a.html", "<b>x</b>"),
+        ("pkg-main/data/db.json", '{"hacked":1}'),
+        ("pkg-main/tests/t.py", "HACKED = 1\n"),
+    ])
+    _ok1, _msg1, _src1 = _srv._unpack_update(_tar_ok, _ub)
+    _list1 = _srv._update_file_list(_src1) if _ok1 else []
+    _copied = _srv._apply_update(_src1, _ub) if _ok1 else -1
+    _server_after = open(os.path.join(_ub, "server.py"), encoding="utf-8").read().strip()
+    _data_after = open(os.path.join(_ub, "data", "db.json"), encoding="utf-8").read().strip()
+    _test_after = open(os.path.join(_ub, "tests", "t.py"), encoding="utf-8").read().strip()
+    add("更新:解包 + 只覆盖代码(不动 data/tests)",
+        _ok1 and _copied == 2 and _server_after == "OLD = 2" and _data_after == '{"real":1}'
+        and _test_after == "REAL_TEST = 1" and sorted(_list1) == ["server.py", os.path.join("web", "a.html")],
+        "ok=%s copied=%s 清单=%s data=%s" % (_ok1, _copied, _list1, _data_after))
+    _ok2, _msg2, _ = _srv._unpack_update(b"<!DOCTYPE html><html>blocked", _ub)
+    _ok3, _msg3, _ = _srv._unpack_update(b"", _ub)
+    add("更新:非 gzip / 空内容报错而不抛异常",
+        (not _ok2) and "解包失败" in _msg2 and (not _ok3) and "解包失败" in _msg3,
+        "html=%s 空=%s" % (_msg2[:34], _msg3[:34]))
+    _tar_bad = _mk_tar([("pkg-main/server.py", "def broken(:\n")])
+    _ok4, _msg4, _src4 = _srv._unpack_update(_tar_bad, _ub)
+    _ok5, _msg5 = _srv._selfcheck_update(_src4) if _ok4 else (False, "")
+    add("更新:语法自检拦下坏代码", (not _ok5) and "语法自检失败" in _msg5, _msg5[:50])
+    _rb = os.path.join(TMP, "rollback-base")
+    shutil.rmtree(_rb, ignore_errors=True)
+    os.makedirs(os.path.join(_rb, "data"))
+    open(os.path.join(_rb, "server.py"), "w", encoding="utf-8").write("VER = 2\n")
+    open(os.path.join(_rb, "data", "db.json"), "w", encoding="utf-8").write('{"logs":[],"ver":2}')
+    _srv._backup_current(_rb)
+    open(os.path.join(_rb, "server.py"), "w", encoding="utf-8").write("VER = 3\n")
+    open(os.path.join(_rb, "data", "db.json"), "w", encoding="utf-8").write('{"logs":[],"ver":3}')
+    _rb_ok1, _rb_msg1 = _srv._remote_rollback(_rb, restart=False)
+    _rb_code = open(os.path.join(_rb, "server.py"), encoding="utf-8").read().strip()
+    _rb_data = open(os.path.join(_rb, "data", "db.json"), encoding="utf-8").read()
+    _rb_ok2, _rb_msg2 = _srv._remote_rollback(_rb, restart=False)
+    add("回滚:代码+数据还原且只能用一次",
+        _rb_ok1 and _rb_code == "VER = 2" and '"ver":2' in _rb_data
+        and (not _rb_ok2) and "备份" in _rb_msg2,
+        "ok=%s code=%s data还原=%s 二次=%s" % (_rb_ok1, _rb_code, '"ver":2' in _rb_data, _rb_msg2[:26]))
     # 回滚端点:无鉴权拒绝;有令牌但无备份 → 500
     r_rb1 = httpx.post("http://127.0.0.1:18213/api/rollback", timeout=10)
     a.post("/api/settings", json={"config": {"update_enabled": True, "update_token": "upd-test1234567890abcdef"}})

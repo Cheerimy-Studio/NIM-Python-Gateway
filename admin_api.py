@@ -922,8 +922,8 @@ async def remote_update(request: Request):
     ok, msg = await loop.run_in_executor(None, _srv._remote_update)
     if not ok:
         return JSONResponse({"error": {"message": msg}}, status_code=500)
-    # execv 已排队,立即返回让客户端看到确认
-    return {"ok": True, "note": "代码已覆盖,网关正在自动重启(数秒)"}
+    # 正常路径 execv 已在即,立即返回让客户端看到确认;演练时把结果说明带回
+    return {"ok": True, "note": msg or "代码已覆盖,网关正在自动重启(数秒)"}
 
 
 @router.post("/rollback")
@@ -953,7 +953,7 @@ async def remote_rollback(request: Request):
     ok, msg = await loop.run_in_executor(None, _srv._remote_rollback)
     if not ok:
         return JSONResponse({"error": {"message": msg}}, status_code=500)
-    return {"ok": True, "note": "已回滚,网关正在自动重启(数秒)"}
+    return {"ok": True, "note": msg or "已回滚,网关正在自动重启(数秒)"}
 
 
 # ============================================================ 拦截(自定义回复)
