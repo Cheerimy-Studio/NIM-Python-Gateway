@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import os
@@ -188,8 +189,14 @@ def _parse_rows(text: str, loose: bool) -> tuple[list[dict], int]:
         if loose:
             account = _parse_line_loose(line)
         else:
-            # 保留中间空列(空密码是合法数据:"email,,apikey"),只去尾部空列
-            cells = [c.strip() for c in re.split(r",+", line)]
+            # 按 CSV 规则拆,而不是 re.split(r",+") —— 后者把 ",," 折叠成一个分隔符,
+            # 于是「密码为空」的行("email,,apikey")整行被判无效。而 /api/keys/export
+            # 导出的正是这个形态,等于「导出备份 → 再导入恢复」会丢掉密码为空的账号。
+            # 引号字段(导出的转义形式)也由 csv 还原。中间空列保留,只去尾部空列。
+            try:
+                cells = [c.strip() for c in next(csv.reader([line]))]
+            except Exception:
+                cells = [c.strip() for c in line.split(",")]
             while cells and not cells[-1]:
                 cells.pop()
             account = _from_cells(cells)
@@ -201,7 +208,19 @@ def _parse_rows(text: str, loose: bool) -> tuple[list[dict], int]:
 
 
 def _parse_line_loose(line: str) -> dict | None:
-    cells = [c.strip() for c in re.split(r"[\s,;|]+", line)]
+    # 含引号时先按 CSV 规则拆一次:导出的 CSV 会给含逗号的字段加引号,直接按
+    # [\s,;|] 拆会把一个字段劈成两半(密码/密钥被截断)。拆不出两个以上字段
+    # (例如引号只是包着空格分隔的值)再退回宽松拆分,并去掉字段外层引号。
+    cells: list[str] = []
+    if '"' in line:
+        try:
+            cells = [c.strip() for c in next(csv.reader([line]))]
+        except Exception:
+            cells = []
+        if len([c for c in cells if c]) < 2:
+            cells = []
+    if not cells:
+        cells = [c.strip().strip('"') for c in re.split(r"[\s,;|]+", line)]
     api_key = ""
     email = ""
     for c in cells:

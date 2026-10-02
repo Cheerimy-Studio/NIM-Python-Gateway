@@ -900,6 +900,49 @@ try:
     sys.path.insert(0, ROOT)
     from core import pool as _pool
 
+    # 导入解析契约:严格模式按 CSV 规则拆(空密码列 "email,,apikey" 必须保住 —— 导出的
+    # 就是这形态,老写法 re.split(r",+") 会把 ",," 折叠成一个分隔符,整行判无效,
+    # 等于「导出备份再导入」丢掉密码为空的账号);引号字段(导出的转义形式)必须还原,
+    # 宽松模式(上传文件)也一样。
+    _csv_strict, _csv_strict_bad = _pool.parse_accounts("rt1@e.com,,nvapi-rt000001")
+    _csv_q, _csv_q_bad = _pool.parse_accounts('rt2@e.com,"p,w",nvapi-rt000002')
+    _csv_loose, _ = _pool.parse_accounts_loose('rt2@e.com,"p,w",nvapi-rt000002')
+    _csv_ok = (
+        len(_csv_strict) == 1 and _csv_strict[0]["password"] == "" and _csv_strict_bad == 0
+        and len(_csv_q) == 1 and _csv_q[0]["password"] == "p,w" and _csv_q_bad == 0
+        and len(_csv_loose) == 1 and _csv_loose[0]["apikey"] == "nvapi-rt000002"
+        and _csv_loose[0]["email"] == "rt2@e.com"
+    )
+    add("导入解析:空密码列不丢 + 引号字段还原(严格/宽松)",
+        _csv_ok,
+        "空密码=%s 引号严格=%s 引号宽松=%s"
+        % (_csv_strict[0]["password"] if _csv_strict else None,
+           _csv_q[0]["password"] if _csv_q else None,
+           _csv_loose[0]["password"] if _csv_loose else None))
+
+    # 端到端:导入 → 导出 CSV → 删掉 → 用导出的 CSV 重新导入,两条账号必须原样回来
+    # (老写法第二条会因为密码含逗号被引号包起来而在宽松解析里被劈成两半)
+    a.post("/api/keys/import", json={"text": 'rt1@e.com,,nvapi-rt000001\nrt2@e.com,"p,w",nvapi-rt000002',
+                                     "upstream_id": uid})
+    _exp = a.get("/api/keys/export").text
+    _exp_lines = [ln for ln in _exp.splitlines() if "nvapi-rt" in ln]
+    _rt_ids = [r["id"] for r in a.get("/api/keys?page=1&size=200").json()["rows"]
+               if r["email"] in ("rt1@e.com", "rt2@e.com")]
+    a.post("/api/keys/batch", json={"op": "delete", "ids": _rt_ids})
+    _gone = [r for r in a.get("/api/keys?page=1&size=200").json()["rows"]
+             if r["email"] in ("rt1@e.com", "rt2@e.com")]
+    _rg = a.post("/api/keys/import", json={"text": "\n".join(_exp_lines), "upstream_id": uid}).json()
+    _back = {r["email"]: r for r in a.get("/api/keys?page=1&size=200").json()["rows"]
+             if r["email"] in ("rt1@e.com", "rt2@e.com")}
+    add("密钥导出→重新导入往返无损(含空密码/含逗号密码)",
+        not _gone and len(_rt_ids) == 2 and len(_back) == 2 and _rg.get("added") == 2
+        and _back.get("rt1@e.com", {}).get("password") == ""
+        and _back.get("rt2@e.com", {}).get("password") == "p,w"
+        and _back.get("rt2@e.com", {}).get("apikey") == "nvapi-rt000002",
+        "删除后=%d 重新导入 added=%s 空密码=%r 逗号密码=%r"
+        % (len(_gone), _rg.get("added"), _back.get("rt1@e.com", {}).get("password"),
+           _back.get("rt2@e.com", {}).get("password")))
+
     want = {
         (402, "payment"),
         (401, "auth"),
@@ -1271,6 +1314,33 @@ try:
     add("Messages 非流式:thinking 块带 signature(SDK 必填)",
         r_thns.status_code == 200 and bool(_th_blocks) and all("signature" in b for b in _th_blocks),
         "st=%s thinking=%s" % (r_thns.status_code, json.dumps(_th_blocks, ensure_ascii=False)[:80]))
+
+    # 管理端点的鉴权面:全部端点静态上都调了 _require(单独扫过一遍),这里用真实请求
+    # 再确认 —— 密钥列表/导出、配置导出、设置、拦截、日志都是敏感面,漏一个就是凭据泄漏。
+    _anon = httpx.Client(base_url="http://127.0.0.1:18213", timeout=30)
+    _guard = []
+    for _gp in ("/api/keys", "/api/keys/export", "/api/config/export", "/api/settings",
+                "/api/intercept", "/api/logs", "/api/tokens", "/api/overview", "/api/poolmap"):
+        _gr = _anon.get(_gp)
+        if _gr.status_code != 401:
+            _guard.append("%s→%s" % (_gp, _gr.status_code))
+    _r_anon_post = _anon.post("/api/intercept/toggle", json={"enabled": True})
+    # 有会话、但既没有 X-CSRF 头也没有 CSRF cookie 的 POST 必须 403。
+    # (cookie 兜底是给表单提交用的;跨站伪造 POST 靠 SameSite=Lax 使 cookie 根本不参与,
+    #  两条路合起来才是完整的 CSRF 防护 —— 下面单独验 cookie 标志。)
+    _sess_only = {"ngw_session": a.cookies.get("ngw_session")}
+    _r_csrf = httpx.post("http://127.0.0.1:18213/api/intercept/toggle", json={"enabled": True},
+                         cookies=_sess_only)
+    add("管理端点鉴权:未登录 401 / 无 CSRF 的 POST 403",
+        not _guard and _r_anon_post.status_code == 401 and _r_csrf.status_code == 403,
+        "漏网=%s;未登录 POST→%s;仅有会话无 CSRF→%s"
+        % (_guard or "无", _r_anon_post.status_code, _r_csrf.status_code))
+    _fresh = httpx.Client(base_url="http://127.0.0.1:18213", timeout=30)
+    _lr = _fresh.post("/api/login", json={"username": ADMIN_USER, "password": ADMIN_PW})
+    _setc = " | ".join(_lr.headers.get_list("set-cookie")).lower()
+    add("会话 cookie 标志:HttpOnly + SameSite=Lax(跨站 POST 不带 cookie)",
+        _lr.status_code == 200 and "httponly" in _setc and "samesite=lax" in _setc,
+        "st=%s set-cookie=%s" % (_lr.status_code, _setc[:110]))
 
     # 令牌追踪:日志记录调用令牌(遮罩)、令牌页显示最后调用 IP/时间、公开队列不泄漏
     r_trk = c.post(

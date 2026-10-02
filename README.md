@@ -18,7 +18,9 @@
 ## 特性
 
 ### 账号池与调度
-- **多账号池**：批量导入邮箱/密码/API Key，自动在渠道间调度
+- **多账号池**：批量导入邮箱/密码/API Key，自动在渠道间调度。导入按 CSV 规则拆行：
+  空列（`email,,apikey`）与引号字段（`"p,w"`）都能原样解析，所以**导出的 CSV 能直接再导入**
+  （空密码、密码含逗号的账号不会丢或被截断）
 - **LRU + 可行度路由**：优先使用最久未用的健康账号；渠道选择按**「渠道 + 模型」维度的成功率**
   加权（同一上游对不同模型的可用性差别很大，用整体成功率会让好模型被差模型拖累）
 - **并发保护**：账号级 / 渠道级并发上限，避免同一把 Key 被并行打爆
@@ -259,7 +261,7 @@ location / {
 ```bash
 pip install -r requirements-dev.txt
 
-python tests/regression.py   # 144 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
+python tests/regression.py   # 148 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
 python tests/compat.py       # 19 项：全部接口 + 协议结构兼容性
 python tests/predeploy_check.py  # 部署前预检：拉更新源演练覆盖范围 + Python 3.8 语法/API 体检 + 前端零注释
 python tests/static_check.py     # 静态检查(pyflakes)：未定义名/别名误用这类只在运行时炸的缺陷
