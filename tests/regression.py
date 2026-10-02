@@ -1253,11 +1253,27 @@ try:
 
     # 排队条目携带令牌:hold4 占住并发,第二个请求在排队等待期间管理端可见其令牌
     a.post("/api/settings", json={"config": {"acct_concurrency": 1}})
-    ids4 = [k["id"] for k in a.get("/api/keys").json()["rows"]]
-    a.post("/api/keys/batch", json={"op": "disable", "ids": ids4[1:]})
-    th = threading.Thread(target=lambda: c.post(
-        "/v1/chat/completions", json={"model": "hold4", "messages": [{"role": "user", "content": "h"}]}
-    ), daemon=True)
+    _all_rows = a.get("/api/keys?page=1").json()["rows"]
+    ids4 = [k["id"] for k in _all_rows]
+    # 只留主渠道(T,且启用)的**一个**账号:其余全停用。这样一个请求持号时,
+    # 第二个请求才必然排队(旧写法停用 ids4[1:],剩下的那个账号可能属于被停用的
+    # 渠道 → 现在会被正确地立刻 404,测不到排队)。
+    _main_ids = [k["id"] for k in _all_rows if k.get("upstream_id") == uid]
+    _keep = _main_ids[:1]
+    a.post("/api/keys/batch", json={"op": "enable", "ids": _keep})
+    a.post("/api/keys/batch", json={"op": "disable",
+                                    "ids": [k["id"] for k in _all_rows if k["id"] not in _keep]})
+    _hold = {}
+
+    def _hold_req():
+        try:
+            _hold["code"] = c.post(
+                "/v1/chat/completions", json={"model": "hold4", "messages": [{"role": "user", "content": "h"}]}
+            ).status_code
+        except Exception as e:
+            _hold["code"] = type(e).__name__
+
+    th = threading.Thread(target=_hold_req, daemon=True)
     th.start()
     time.sleep(0.8)  # 第一个请求已持号(hold4 占 4s)
     q_status = {}
@@ -1277,9 +1293,10 @@ try:
     q_tok_ok = any((x.get("tok") or "") == _tok_mask for x in q_rows)
     th2.join(20)
     add("令牌:排队条目携带令牌", q_tok_ok,
-        "排队可见令牌=%s(排队中 %d 条)" % (q_tok_ok, len(q_rows)))
+        "排队可见令牌=%s(排队中 %d 条;持号请求=%s 排队请求=%s)"
+        % (q_tok_ok, len(q_rows), _hold.get("code"), q_status.get("code")))
     a.post("/api/settings", json={"config": {"acct_concurrency": 0}})
-    a.post("/api/keys/batch", json={"op": "enable", "ids": ids4[1:]})
+    a.post("/api/keys/batch", json={"op": "enable", "ids": ids4})
 
     # in-flight 泄漏守护:重试 continue 路径曾泄漏账号并发计数(线上号池
     # "账户并发 201/共 202"全满、排队 300s 超时的根因)。
@@ -1752,6 +1769,10 @@ try:
 
     # 队列条目要带「为什么在等」:线上真出现过 29 个 kimi-k3 请求排队 50+ 秒却看不出
     # 原因(候选账号太少?冷却?并发满?)。后台给完整原因,公开页只给粗粒度结论。
+    # 本块会临时改并发/冷却设置,结束前按原值还原,避免污染后面的用例。
+    _cfg_snapshot = a.get("/api/settings").json()
+    _q_fields = ("acct_concurrency", "account_cooldown_ms", "queue_max_wait", "queue_poll_ms")
+    _q_restore = {k: _cfg_snapshot.get(k) for k in _q_fields if _cfg_snapshot.get(k) is not None}
     a.post("/api/settings", json={"config": {"acct_concurrency": 1, "account_cooldown_ms": 8000,
                                             "queue_max_wait": 20, "queue_poll_ms": 200}})
 
@@ -1788,7 +1809,28 @@ try:
         "公开 %d 条,hint=%s" % (len(_pub_rows), (_pub_rows[0].get("hint") if _pub_rows else "无")))
     add("排队期间 4 个流式请求全部成功", all(c == 200 for c, _n in _codes4),
         "状态=%s" % [c for c, _n in _codes4])
-    a.post("/api/settings", json={"config": {"acct_concurrency": 0, "account_cooldown_ms": 0}})
+    if _q_restore:
+        a.post("/api/settings", json={"config": _q_restore})
+
+    # 模型在所有渠道都不可用时必须立刻 404 —— 不能先排队等 5 分钟再失败。
+    # 线上实测:某客户端请求没被任何渠道白名单放行的模型,结果在队列里挂了 54s+
+    # (旧判定要求「所有账号都因模型原因被拒」,只要有一个账号因冷却/上游停用先被
+    #  跳过,就永远判不成 permanent)。
+    _up_base = json.dumps({"id": uid, "name": "T", "base": "http://127.0.0.1:18212/v1", "enabled": True})
+    a.post("/api/upstreams", json={"id": uid, "name": "T", "base": "http://127.0.0.1:18212/v1",
+                                   "enabled": True, "models": "mock-model"})
+    _t_un = time.time()
+    r_un = c.post("/v1/chat/completions",
+                  json={"model": "no-channel-serves-this", "messages": [{"role": "user", "content": "hi"}]},
+                  timeout=30)
+    _un_ms = int((time.time() - _t_un) * 1000)
+    add("模型无渠道放行:立刻 404 而不是排队",
+        r_un.status_code == 404 and _un_ms < 5000,
+        "st=%s 用时=%dms msg=%s" % (r_un.status_code, _un_ms, r_un.text[:60]))
+    # 还原:清空白名单(回到透传),后续用例依赖这个状态
+    a.post("/api/upstreams", json={"id": uid, "name": "T", "base": "http://127.0.0.1:18212/v1",
+                                   "enabled": True, "models": ""})
+    _ = _up_base
 
     first_bad = []
 

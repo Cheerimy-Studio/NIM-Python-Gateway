@@ -411,6 +411,7 @@ def _acquire_fn(db: dict, out: dict, est_tokens: int, model: str) -> None:
             chan_inflight[u2] = chan_inflight.get(u2, 0) + c
     pools: dict[str, dict] = {}
     total = 0
+    model_ok = 0  # 「结构上」能服务这个模型的账号数（只看渠道白名单/原名禁用，不看冷却/封禁）
 
     # 渠道覆盖设置按渠道预计算一次（同渠道账号共享），避免每账号重复解析（大号池显著提速）
     def _chan_eff(up: dict | None, field: str, default: int) -> int:
@@ -474,6 +475,7 @@ def _acquire_fn(db: dict, out: dict, est_tokens: int, model: str) -> None:
             if models and model not in models:
                 reason["channel_model"] += 1
                 continue
+        model_ok += 1
 
         if (k.get("banned_until") or 0) > now:
             reason["banned"] += 1
@@ -557,10 +559,11 @@ def _acquire_fn(db: dict, out: dict, est_tokens: int, model: str) -> None:
 
     out["reason"] = _reason_text(reason, total)
     out["total"] = total
-    # 只有全部启用账号都因「真正不可恢复」原因被拒才判 permanent（渠道模型不匹配/原名禁用）。
-    # 上游停用、日限、封禁、冷却、限流、并发满都是暂时的，会恢复 → 值得排队等待。
-    perm_cnt = reason["channel_model"] + reason["model_hidden"]
-    out["permanent"] = total > 0 and perm_cnt == total
+    # 没有任何账号能在结构上服务这个模型（渠道白名单不放行 / 原名被禁用）→ 立刻 404。
+    # 旧判定是「所有账号都因模型原因被拒」，只要有一个账号因其它原因（上游停用、
+    # 冷却、封禁）先被跳过，就永远判不成永久 —— 线上实测出现「模型在所有渠道都
+    # 不可用，请求却先排队 5 分钟再失败」。
+    out["permanent"] = total > 0 and model_ok == 0
     if not pools:
         # 全部账号当前不可用：给出最早恢复的等待秒数（队列据此退避，
         # 避免固定 400ms 轮询对正在限流/冷却的账号反复空转打风暴）
