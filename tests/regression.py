@@ -86,6 +86,9 @@ async def chat(request: Request):
         return JSONResponse({"error":{"message":"No available channel"}}, status_code=500)
     if m == "nomodel":
         return JSONResponse({"error":{"message":"model '%s' not found" % m}}, status_code=404)
+    if m == "path404":
+        # 上游对「不存在的资源/错误路径」的 404:泛化短语不含模型,不能算模型不存在
+        return JSONResponse({"error":{"message":"Endpoint does not exist"}}, status_code=404)
     if m == "nousage":
         # 上游不返回 usage —— 严格客户端(New-API)会因此判渠道测试失败
         return {"id":"c1","object":"chat.completion","model":m,
@@ -1793,6 +1796,37 @@ try:
         and _srv.pool.inflight_odd_releases() >= _before_odd + 1,
         "剩余 %s/%s;异常释放 %d→%d" % (_d1, _d2, _before_odd, _srv.pool.inflight_odd_releases()))
 
+    # 取号分散性(纯函数直测,不依赖测试实例当前号池状态):同一渠道内连续取号必须跨账号
+    # 轮换(LRU),而不是一直压着同一个号 —— 号池「只有一个账号在干活、其余全闲」的检查点。
+    # 6 个号 × 单号并发 2 = 12 个槽位:取 12 次应正好铺满 6 个号、每个号 2 个在途。
+    _lru_db = {
+        "config": {
+            "rate_limit_per_minute": 0, "tpm_limit": 0, "account_cooldown_ms": 0,
+            "daily_request_cap": 0, "daily_token_limit": 0, "hourly_request_limit": 0,
+            "warmup_seconds": 0, "acct_concurrency": 2, "total_concurrency": 0,
+            "pool_rpm_cap": 0, "pool_daily_cap": 0,
+        },
+        "upstreams": [{"id": "u_lru", "name": "LRU", "base": "http://127.0.0.1:1/v1",
+                       "enabled": True, "models": [], "model_map": {}, "weight": 10}],
+        "keys": [{"id": "k_lru%d" % i, "enabled": True, "upstream_id": "u_lru",
+                  "email": "lru%d@x.com" % i, "apikey": "nvapi-lru", "last_used_at": 0}
+                 for i in range(1, 7)],
+        "buckets": {}, "pool_buckets": {}, "pool_daily": {}, "model_missing": {}, "up_recent": {},
+    }
+    _lru_picks = []
+    for _li in range(12):
+        _lres = _srv.pool.acquire(_lru_db, est_tokens=10, model="m0")
+        if _lres.get("result") == "ok":
+            _lru_picks.append(_lres["key"]["id"])
+    _lru_conc = {kk["id"]: _srv.pool.inflight_of(kk["id"]) for kk in _lru_db["keys"]}
+    for _kid in _lru_conc:
+        for _un in range(_lru_conc[_kid]):
+            _srv.pool._dec_inflight(_kid)
+    add("取号分散:同渠道 12 次取号铺满 6 个号(单号不超并发)",
+        len(_lru_picks) == 12 and len(set(_lru_picks)) == 6 and max(_lru_conc.values() or [0]) == 2,
+        "取到 %d 次/跨 %d 个号;单号在途 %s" % (len(_lru_picks), len(set(_lru_picks)),
+                                            sorted(_lru_conc.values())))
+
     # 连接池容量:池上限 = max(配置值, 号池理论并发)。池小于理论并发时满负荷必然
     # PoolTimeout,而它会被误读成「连接池故障」甚至触发看门狗重启(重启不增加容量)。
     _sz_small = _srv._pool_size({"pool_max_connections": 10, "acct_concurrency": 2}, 30)
@@ -1956,6 +1990,36 @@ try:
         r_nm1.status_code >= 400 and _mm_saved and r_nm2.status_code == 404 and _nm_self,
         "首次 st=%s %dms;缓存已落盘=%s;二次 st=%s %dms 网关自判=%s;msg=%s" % (
             r_nm1.status_code, _ms_nm1, _mm_saved, r_nm2.status_code, _ms_nm2, _nm_self, r_nm2.text[:44]))
+
+    # 泛化短语不能被判成「模型不存在」:上游 404「Endpoint does not exist」若算模型级,
+    # 账号侧不惩罚(401 会被洗成模型级)、还会往负缓存写一条假记录 → 该渠道+该模型静默
+    # 失效一整个 TTL(最像用户说的「莫名其妙就有模型不可用」)。二次必须仍打上游拿原文。
+    _cls_rows = [
+        (404, "Endpoint does not exist", "req"),
+        (400, "Endpoint does not exist", "req"),
+        (401, "User does not exist", "auth"),
+        (404, "model 'x' not found", "model"),
+        (404, "模型 x 不存在", "model"),
+        (429, "rate limited", "429"),
+    ]
+    _cls_bad = ["%s/%s→%s(应 %s)" % (s, t, _srv.pool._classify(s, 0, t), w)
+                for s, t, w in _cls_rows if _srv.pool._classify(s, 0, t) != w]
+    add("错误分级:泛化短语不误判为模型级", not _cls_bad, "偏差=%s" % (_cls_bad or "无"))
+    r_p1 = c.post("/v1/chat/completions",
+                  json={"model": "path404", "messages": [{"role": "user", "content": "hi"}]}, timeout=30)
+    time.sleep(3.0)
+    _db_p = json.loads(open(os.path.join(TMP, "db.json"), encoding="utf-8").read())
+    _p_fake = "path404" in json.dumps(_db_p.get("model_missing") or {})
+    r_p2 = c.post("/v1/chat/completions",
+                  json={"model": "path404", "messages": [{"role": "user", "content": "hi"}]}, timeout=30)
+    # 客户端面按设计隐藏上游原文(回「渠道不支持该请求或模型」),原文必须留在后台日志里
+    _plogs = a.get("/api/logs?n=50").json().get("rows") or []
+    _p_logged = any("Endpoint does not exist" in str(x[6])
+                    for x in _plogs if isinstance(x, list) and len(x) > 6)
+    add("错误分级:泛化 404 不写假负缓存(二次仍打上游,原文留日志)",
+        (not _p_fake) and r_p2.status_code == 404 and "所有渠道均不可用" not in r_p2.text and _p_logged,
+        "假缓存=%s 首次 st=%s 二次 st=%s 网关自判=%s 上游原文进日志=%s"
+        % (_p_fake, r_p1.status_code, r_p2.status_code, "所有渠道均不可用" in r_p2.text, _p_logged))
 
     # 熔断中的排队条目必须写清原因:线上实测 kimi-k3 熔断时 19 条排队全无原因,
     # 面板上只能看到「排队中」,根本看不出是模型熔断(熔断期间取号整段被跳过)

@@ -29,7 +29,10 @@
   同类请求直接由网关判定「所有渠道均不可用」，**不再排队等一个必然失败的 404**
 
 ### 稳定性
-- **错误分级处理**：`channel` / `model` / `429` / `auth` / `timeout` / `conn` / `5xx` / `req` 分类，各自对应不同处置策略
+- **错误分级处理**：`channel` / `model` / `429` / `auth` / `timeout` / `conn` / `5xx` / `req` 分类，各自对应不同处置策略。
+  判 `model` 级必须同时提到「模型」（`model 'x' not found` / `模型 x 不存在`）：上游 400/404 里的泛化短语
+  （`Endpoint does not exist`）不算 —— 否则账号的真实故障（401）会被洗成模型级不惩罚，还会往负缓存写一条
+  假记录，那条路径上的模型静默失效一整个 `model_missing_ttl`
 - **分级冷却**：429 / 5xx / 超时 / 连接失败各有独立冷却时长；429 冷却按连续次数**指数递增**（上限 5 分钟）
 - **同号快速重试**：瞬态错误（连接失败 / 5xx / 空响应）先用同一账号重试一次，避免误判账号故障
 - **429 吸收**：命中限流时在账号池内换号重试，而不是直接把 429 抛给客户端
@@ -247,7 +250,7 @@ location / {
 ```bash
 pip install -r requirements-dev.txt
 
-python tests/regression.py   # 134 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
+python tests/regression.py   # 141 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
 python tests/compat.py       # 19 项：全部接口 + 协议结构兼容性
 python tests/predeploy_check.py  # 部署前预检：拉更新源演练覆盖范围 + Python 3.8 语法/API 体检 + 前端零注释
 python tests/static_check.py     # 静态检查(pyflakes)：未定义名/别名误用这类只在运行时炸的缺陷

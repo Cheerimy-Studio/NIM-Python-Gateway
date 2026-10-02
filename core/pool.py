@@ -114,11 +114,16 @@ def _classify(http_status: int, errno: int, error: str) -> str:
     ):
         return "channel"
     # 模型级不可用（下线/无通道）：换钥有意义，但不该惩罚账号。
-    # 404 且提到 model + not found/不存在 一律算模型级 —— 真实上游的写法很花：
-    # 「model 'x' not found」「The model `x` does not exist」「模型 x 不存在」，
-    # 名字夹在关键词中间时旧的固定串匹配会漏判（漏判的代价是：请求排队等 404、
-    # 负缓存也学不到）。
-    if http_status == 404 and "model" in low and ("not found" in low or "不存在" in low):
+    # 判模型级必须同时提到「模型」——上游 400/404 里的泛化短语（Endpoint does not
+    # exist / User does not exist）过去一律算模型级，后果有两条：账号的真实问题
+    # （401）被洗掉不惩罚，坏号永远不会被封；`cls=="model" and status in (400,404)`
+    # 还会往负缓存写一条假记录，那一路模型静默失效一整个 TTL。
+    # 真实上游的模型名写法很花（model 'x' not found / The model `x` does not exist /
+    # 模型 x 不存在），所以按「模型」+ 否定短语的组合判，而不是固定串（漏判的代价是：
+    # 请求排队等 404、负缓存也学不到）。
+    if http_status in (400, 404) and ("model" in low or "模型" in low) and any(
+        k in low for k in ("not found", "does not exist", "不存在", "no such", "已关闭", "已下线")
+    ):
         return "model"
     if http_status >= 400 and any(
         k in low
@@ -127,8 +132,6 @@ def _classify(http_status: int, errno: int, error: str) -> str:
             "model not found",
             "model_disabled",
             "model disabled",
-            "model does not exist",
-            "does not exist",
             "模型已关闭",
             "模型不存在",
             "not available on any",
