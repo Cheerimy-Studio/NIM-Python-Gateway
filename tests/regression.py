@@ -84,6 +84,8 @@ async def chat(request: Request):
         )
     if m == "chdown":
         return JSONResponse({"error":{"message":"No available channel"}}, status_code=500)
+    if m == "nomodel":
+        return JSONResponse({"error":{"message":"model '%s' not found" % m}}, status_code=404)
     if m == "nousage":
         # 上游不返回 usage —— 严格客户端(New-API)会因此判渠道测试失败
         return {"id":"c1","object":"chat.completion","model":m,
@@ -1887,6 +1889,44 @@ try:
     a.post("/api/upstreams", json={"id": uid, "name": "T", "base": "http://127.0.0.1:18212/v1",
                                    "enabled": True, "models": ""})
     _ = _up_base
+
+    # 负缓存:某渠道对某模型回过「模型不存在」后,同类请求不再排队等一个必然失败的
+    # 404,而是直接秒回(透传渠道无法提前枚举模型清单,只能靠这一次失败去学)
+    _mmdb = {"config": {"model_missing_ttl": 60}, "model_missing": {}}
+    _srv.pool.mark_model_missing(_mmdb, "up1", "m1")
+    _mm_fresh = _srv.pool.model_missing_fresh(_mmdb, "up1", "m1")
+    _mm_other = _srv.pool.model_missing_fresh(_mmdb, "up1", "m2")
+    _mmdb["model_missing"]["up1"]["m1"] = time.time() - 1
+    _mm_expired = _srv.pool.model_missing_fresh(_mmdb, "up1", "m1")
+    _mmdb["config"]["model_missing_ttl"] = 0
+    _mm_off = _srv.pool.model_missing_fresh(_mmdb, "up1", "m1")
+    add("负缓存:TTL 内生效 / 过期失效 / 0=关闭",
+        _mm_fresh and (not _mm_other) and (not _mm_expired) and (not _mm_off),
+        "命中=%s 别的模型=%s 过期=%s 关闭=%s" % (_mm_fresh, _mm_other, _mm_expired, _mm_off))
+
+    a.post("/api/settings", json={"config": {"model_missing_ttl": 3600}})
+    # 渠道保持透传(没白名单),这样第一次请求会真的打到上游并被 404 —— 负缓存
+    # 就是靠这一次失败学的
+    a.post("/api/upstreams", json={"id": uid, "name": "T", "base": "http://127.0.0.1:18212/v1",
+                                   "enabled": True, "models": ""})
+    _t_nm1 = time.time()
+    r_nm1 = c.post("/v1/chat/completions",
+                   json={"model": "nomodel", "messages": [{"role": "user", "content": "hi"}]}, timeout=30)
+    _ms_nm1 = int((time.time() - _t_nm1) * 1000)
+    time.sleep(3.0)  # 等网关把负缓存落盘
+    _db_now = json.loads(open(os.path.join(TMP, "db.json"), encoding="utf-8").read()) if os.path.isfile(
+        os.path.join(TMP, "db.json")) else {}
+    _mm_saved = bool(_db_now.get("model_missing"))
+    _t_nm2 = time.time()
+    r_nm2 = c.post("/v1/chat/completions",
+                   json={"model": "nomodel", "messages": [{"role": "user", "content": "hi"}]}, timeout=30)
+    _ms_nm2 = int((time.time() - _t_nm2) * 1000)
+    # 第二次必须是「网关自己判定的永久不可用」,而不是又去上游撞一次 404
+    _nm_self = "所有渠道均不可用" in r_nm2.text
+    add("负缓存:首次打上游学一次,之后由网关直接判定不可用",
+        r_nm1.status_code >= 400 and _mm_saved and r_nm2.status_code == 404 and _nm_self,
+        "首次 st=%s %dms;缓存已落盘=%s;二次 st=%s %dms 网关自判=%s;msg=%s" % (
+            r_nm1.status_code, _ms_nm1, _mm_saved, r_nm2.status_code, _ms_nm2, _nm_self, r_nm2.text[:44]))
 
     first_bad = []
 

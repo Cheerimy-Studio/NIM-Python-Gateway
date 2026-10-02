@@ -113,7 +113,13 @@ def _classify(http_status: int, errno: int, error: str) -> str:
         or "channel_exhausted" in low
     ):
         return "channel"
-    # 模型级不可用（下线/无通道）：换钥有意义，但不该惩罚账号
+    # 模型级不可用（下线/无通道）：换钥有意义，但不该惩罚账号。
+    # 404 且提到 model + not found/不存在 一律算模型级 —— 真实上游的写法很花：
+    # 「model 'x' not found」「The model `x` does not exist」「模型 x 不存在」，
+    # 名字夹在关键词中间时旧的固定串匹配会漏判（漏判的代价是：请求排队等 404、
+    # 负缓存也学不到）。
+    if http_status == 404 and "model" in low and ("not found" in low or "不存在" in low):
+        return "model"
     if http_status >= 400 and any(
         k in low
         for k in (
@@ -344,9 +350,9 @@ def _compare(a: dict, b: dict) -> int:
 def capable_channels(db: dict, model: str) -> set[str]:
     """「结构上」能服务该模型的渠道集合。
 
-    只看渠道是否启用 + 模型有没有被渠道白名单/原名禁用排除,不看在途、冷却、封禁
-    —— 用于「按渠道生效」的拦截规则:即使此刻号池全在冷却,也能判断某渠道是否
-    本来就能接这个模型。
+    只看渠道是否启用 + 模型有没有被渠道白名单/原名禁用排除 + 有没有在负缓存里
+    (该渠道最近回过「模型不存在」),不看在途、冷却、封禁 —— 用于「按渠道生效」
+    的拦截规则与渠道预测:即使此刻号池全在冷却,也能判断某渠道是否本来就能接这个模型。
     """
     ups = {u["id"]: u for u in db.get("upstreams", []) if isinstance(u, dict)}
     cfg = db["config"]
@@ -366,8 +372,66 @@ def capable_channels(db: dict, model: str) -> set[str]:
             models = up.get("models") or []
             if models and model not in models:
                 continue
+        if model and model_missing_fresh(db, uid, model):
+            continue
         out.add(uid)
     return out
+
+
+# 模型不存在的「负缓存」：某渠道对某模型回过 404/model-not-found 之后，在 TTL 内
+# 直接把它当作不可用。没配 models 白名单的渠道是透传的，网关无法提前判断模型是否
+# 存在，于是这类请求会先排队等一个必然失败的 404（线上实测 mimo-* 就卡在这里）。
+_MODEL_MISSING_MAX = 2000
+
+
+def _model_missing_ttl(cfg: dict) -> int:
+    """负缓存有效期（秒）。0 = 关闭该特性。"""
+    v = (cfg or {}).get("model_missing_ttl")
+    if v is None:
+        return 3600
+    try:
+        return max(0, int(v))
+    except (TypeError, ValueError):
+        return 3600
+
+
+def model_missing_fresh(db: dict, uid: str, model: str) -> bool:
+    """该渠道最近是否对某模型回过「模型不存在」（TTL 内）。"""
+    if not uid or not model:
+        return False
+    if _model_missing_ttl(db.get("config") or {}) <= 0:
+        return False
+    ent = (db.get("model_missing") or {}).get(uid)
+    if not isinstance(ent, dict):
+        return False
+    return float(ent.get(model) or 0) > time.time()
+
+
+def mark_model_missing(db: dict, uid: str, model: str) -> None:
+    """记录「该渠道没有这个模型」，TTL 内不再拿它去试。"""
+    if not uid or not model:
+        return
+    ttl = _model_missing_ttl(db.get("config") or {})
+    if ttl <= 0:
+        return
+    now = time.time()
+    store = db.get("model_missing")
+    if not isinstance(store, dict):
+        store = {}
+        db["model_missing"] = store
+    ent = store.get(uid)
+    if not isinstance(ent, dict):
+        ent = {}
+        store[uid] = ent
+    ent[str(model)[:80]] = now + ttl
+    for k2 in list(ent):  # 顺手清理过期项
+        if float(ent.get(k2) or 0) <= now:
+            del ent[k2]
+    total = sum(len(v) for v in store.values() if isinstance(v, dict))
+    if total > _MODEL_MISSING_MAX:  # 整体上限：只保留最近写入的渠道
+        for k2 in list(store):
+            if k2 != uid:
+                store.pop(k2, None)
 
 
 def resolve_channel(db: dict, model: str) -> str:
@@ -456,6 +520,7 @@ def _acquire_fn(db: dict, out: dict, est_tokens: int, model: str) -> None:
         "model_hidden": 0,
         "acct_conc": 0,
         "chan_conc": 0,
+        "model_missing": 0,
     }
     # 渠道在途总量（进程内计数，release 时递减）
     chan_inflight: dict[str, int] = {}
@@ -530,6 +595,11 @@ def _acquire_fn(db: dict, out: dict, est_tokens: int, model: str) -> None:
             if models and model not in models:
                 reason["channel_model"] += 1
                 continue
+        # 负缓存:该渠道刚回过「模型不存在」,TTL 内别再拿它去试(否则必然垫一次
+        # 排队 + 一次注定失败的 404)
+        if model and model_missing_fresh(db, uid, model):
+            reason["model_missing"] += 1
+            continue
         model_ok += 1
 
         if (k.get("banned_until") or 0) > now:
@@ -697,6 +767,7 @@ def _reason_text(r: dict, total: int) -> str:
         ("上游日限", "pool_daily"),
         ("渠道模型", "channel_model"),
         ("原名禁用", "model_hidden"),
+        ("模型不存在", "model_missing"),
         ("账户并发", "acct_conc"),
         ("渠道并发", "chan_conc"),
     ]
@@ -753,6 +824,10 @@ def release(
                 else:
                     k["total_fail"] = k.get("total_fail", 0) + 1
                     cls = _classify(http_status, errno, error)
+                    if cls == "model" and http_status in (400, 404) and isinstance(log, dict):
+                        # 上游明确说「没有这个模型」→ 记进负缓存:透传渠道无法提前枚举
+                        # 模型清单,这条记录能避免后续同类请求再排队等一个必然的 404
+                        mark_model_missing(db, str(k.get("upstream_id") or ""), str(log.get("model") or ""))
                     if cls in ("req", "channel", "model", "pool_exhausted"):
                         # 请求类/渠道级/模型级错误、连接池耗尽：不是账号的问题，不惩罚账号
                         k["consecutive_failures"] = 0

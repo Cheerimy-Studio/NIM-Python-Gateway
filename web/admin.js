@@ -1114,6 +1114,7 @@ const SET_FIELDS = [
   ['set-watchmin', 'watchdog_minutes'],
   ['set-updtok', 'update_token'],
   ['set-restart-h', 'restart_interval_hours'],
+  ['set-mttl', 'model_missing_ttl'],
 ];
 
 async function loadSettings() {

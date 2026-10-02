@@ -49,6 +49,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "update_enabled": False,
     "update_token": "",
     "restart_interval_hours": 0,
+    "model_missing_ttl": 3600,
     "intercept_enabled": False,
     # 模型限制
     "model_whitelist": "",
@@ -214,6 +215,8 @@ class Store:
             db["logs"] = []
         if not isinstance(db.get("intercepted"), list):
             db["intercepted"] = []
+        if not isinstance(db.get("model_missing"), dict):
+            db["model_missing"] = {}
         if not isinstance(db.get("training"), list):
             db["training"] = []
         if not isinstance(db.get("keys"), list):
