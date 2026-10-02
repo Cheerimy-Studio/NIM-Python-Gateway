@@ -9,7 +9,9 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-orange.svg)](https://www.python.org/)
 
 - 纯异步（FastAPI + httpx），单进程可支撑高并发
-- 无数据库、无 Redis：状态存于 `data/db.json`，原子写入
+- 无数据库、无 Redis：状态存于 `data/db.json`，原子写入。落盘失败（磁盘满 / 文件被占用 / 权限）
+  会保留内存态并持续重试、同时打一行告警；`db.json` 损坏会另存 `.corrupt-*` 备份并告警，
+  不会静默重置成默认配置
 - 真流式（SSE 逐块透传），并针对慢速推理模型做了**保活**处理
 - 开箱即用的 Web 后台：账号、渠道、限额、日志、排队一屏管理
 
@@ -261,7 +263,7 @@ location / {
 ```bash
 pip install -r requirements-dev.txt
 
-python tests/regression.py   # 148 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
+python tests/regression.py   # 149 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
 python tests/compat.py       # 19 项：全部接口 + 协议结构兼容性
 python tests/predeploy_check.py  # 部署前预检：拉更新源演练覆盖范围 + Python 3.8 语法/API 体检 + 前端零注释
 python tests/static_check.py     # 静态检查(pyflakes)：未定义名/别名误用这类只在运行时炸的缺陷

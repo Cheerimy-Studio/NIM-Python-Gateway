@@ -1342,6 +1342,66 @@ try:
         _lr.status_code == 200 and "httponly" in _setc and "samesite=lax" in _setc,
         "st=%s set-cookie=%s" % (_lr.status_code, _setc[:110]))
 
+    # 存储层三条「静默丢数据」路径(独立数据目录 + 临时改模块路径,跑完立刻还原,不碰在跑的实例):
+    # ① db.json 损坏必须留 .corrupt-* 备份并告警,而不是悄悄重置成默认值;
+    # ② 落盘失败(磁盘满/文件被占用/权限)必须保持 dirty 以便重试并告警;
+    # ③ 落盘成功后 memo 指纹必须与文件一致 —— 否则并发 update 会以为 memo 过期而重读磁盘,
+    #    把内存里已改未落盘的变更丢掉。
+    import contextlib as _cl
+    import io as _io2
+    import core.store as _st
+    _sd_base = os.path.join(TMP, "storeprobe")
+    shutil.rmtree(_sd_base, ignore_errors=True)
+    _old_dir, _old_path = _st.DATA_DIR, _st.DB_PATH
+    _st_res = {}
+    try:
+        _d1 = os.path.join(_sd_base, "corrupt")
+        os.makedirs(_d1, exist_ok=True)
+        _st.DATA_DIR, _st.DB_PATH = _d1, os.path.join(_d1, "db.json")
+        with open(_st.DB_PATH, "w", encoding="utf-8") as _f:
+            _f.write('{"keys": [{"id": "k1"')
+        _cap1 = _io2.StringIO()
+        with _cl.redirect_stderr(_cap1), _cl.redirect_stdout(_io2.StringIO()):
+            _s1 = _st.Store()
+            _db1 = _s1.load()
+        _st_res["corrupt"] = (
+            bool([x for x in os.listdir(_d1) if ".corrupt-" in x]),
+            isinstance(_db1.get("config"), dict) and bool((_db1.get("config") or {}).get("session_secret")),
+            "解析失败" in _cap1.getvalue(),
+        )
+        _d2 = os.path.join(_sd_base, "flush")
+        os.makedirs(_d2, exist_ok=True)
+        _st.DATA_DIR, _st.DB_PATH = _d2, os.path.join(_d2, "db.json")
+        _cap2 = _io2.StringIO()
+        with _cl.redirect_stdout(_io2.StringIO()):
+            _s2 = _st.Store()
+            _s2.load()
+            _s2.update(lambda db: db.setdefault("keys", []).append({"id": "k_probe"}))
+            _real_path = _st.DB_PATH
+            _st.DB_PATH = os.path.join(_d2, "nope", "db.json")
+            with _cl.redirect_stderr(_cap2):
+                _s2.flush()
+            _dirty_after = _s2._dirty
+            _st.DB_PATH = _real_path
+            _s2.flush()
+        _written = json.loads(open(_real_path, encoding="utf-8").read())
+        _stat2 = os.stat(_real_path)
+        _st_res["flush"] = (
+            bool(_dirty_after),
+            any(k.get("id") == "k_probe" for k in _written.get("keys", [])),
+            "落盘失败" in _cap2.getvalue(),
+            tuple(_s2._memo[0:2]) == (int(_stat2.st_mtime), _stat2.st_size),
+        )
+    finally:
+        _st.DATA_DIR, _st.DB_PATH = _old_dir, _old_path
+    add("存储:损坏留备份+告警 / 落盘失败保持 dirty 并重试 / memo 指纹一致",
+        _st_res.get("corrupt") == (True, True, True)
+        and _st_res.get("flush") == (True, True, True, True)
+        and (_st.DATA_DIR, _st.DB_PATH) == (_old_dir, _old_path),
+        "损坏=%s 落盘=%s 路径已还原=%s"
+        % (_st_res.get("corrupt"), _st_res.get("flush"),
+           (_st.DATA_DIR, _st.DB_PATH) == (_old_dir, _old_path)))
+
     # 令牌追踪:日志记录调用令牌(遮罩)、令牌页显示最后调用 IP/时间、公开队列不泄漏
     r_trk = c.post(
         "/v1/chat/completions",

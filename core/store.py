@@ -8,6 +8,7 @@ import hmac
 import json
 import os
 import secrets
+import sys
 import threading
 import time
 from typing import Any, Callable
@@ -17,6 +18,29 @@ DATA_DIR = os.environ.get("NGW_DATA_DIR") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data"
 )
 DB_PATH = os.path.join(DATA_DIR, "db.json")
+
+_persist_warn_at = 0.0
+
+
+def _warn_persist(err: Exception) -> None:
+    """落盘失败的告警(5 分钟一次)。
+
+    以前这里是静默吞掉的:磁盘满 / 文件被占用(Windows 上备份脚本、杀毒、索引器都会
+    短时占用 db.json)/ 权限变更导致的写失败,管理员完全看不到,而状态只活在内存里,
+    重启即丢。必须留下痕迹并说明数据还没落盘。
+    """
+    global _persist_warn_at
+    now = time.time()
+    if now - _persist_warn_at < 300:
+        return
+    _persist_warn_at = now
+    print(
+        f"[store] 落盘失败({type(err).__name__}: {err});状态仍在内存、下一轮会重试,"
+        f"持续失败则重启会丢这段变更 —— 检查磁盘空间与 data/ 权限",
+        file=sys.stderr,
+        flush=True,
+    )
+
 
 DEFAULT_CONFIG: dict[str, Any] = {
     # 调度与限额（渠道 0=继承此处）
@@ -150,9 +174,20 @@ class Store:
             try:
                 db = json.loads(raw)
             except Exception:
+                # 损坏时不能只留个副本了事:静默把状态重置成默认值、管理员却在几小时后
+                # 才发现「账号池/配置全空了」才是最危险的表现。备份之外必须有一行告警,
+                # 并给出可用的恢复来源(更新流程会在 backup/data/ 留一份)。
                 try:
-                    with open(DB_PATH + f".corrupt-{int(time.time())}", "wb") as f:
+                    bak = DB_PATH + f".corrupt-{int(time.time())}"
+                    with open(bak, "wb") as f:
                         f.write(raw)
+                    print(
+                        f"[store] {os.path.basename(DB_PATH)} 解析失败({len(raw)} 字节),"
+                        f"原文件已另存 {os.path.basename(bak)},本次以默认配置继续;"
+                        f"找回数据:用该备份或 backup/data/db.json 覆盖 data/db.json 后重启",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                 except OSError:
                     pass
         if not isinstance(db, dict):
@@ -359,16 +394,26 @@ class Store:
             payload = json.dumps(db, ensure_ascii=False, separators=(",", ":"))
             self._dirty = False
         tmp = DB_PATH + f".{os.getpid()}.tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(payload)
-        os.replace(tmp, DB_PATH)
-        with self._lock:
-            try:
-                st = os.stat(DB_PATH)
-                self._memo = (int(st.st_mtime), st.st_size, db)
-                self._memo_at = time.monotonic()
-            except OSError:
-                pass
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(payload)
+            with self._lock:
+                # replace 与 memo 指纹刷新必须在同一把锁内:否则在「replace 完成 → memo
+                # 刷新」这段空隙里,别的线程 stat 到新文件、以为 memo 失效而重新读盘,
+                # 把内存里已经改好、还没写进这份 payload 的变更丢掉。os.replace 只是
+                # 元数据操作,持锁代价可忽略(慢的是上面的序列化与写文件,都在锁外)。
+                os.replace(tmp, DB_PATH)
+                try:
+                    st = os.stat(DB_PATH)
+                    self._memo = (int(st.st_mtime), st.st_size, db)
+                    self._memo_at = time.monotonic()
+                except OSError:
+                    pass
+        except OSError as e:
+            # 写失败不能把 dirty 清掉:否则这段变更永远不再尝试落盘,重启即静默丢失
+            with self._lock:
+                self._dirty = True
+            _warn_persist(e)
 
     # ---------- 异步便捷封装 ----------
 
