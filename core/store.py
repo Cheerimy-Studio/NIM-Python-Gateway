@@ -48,6 +48,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "queue_poll_ms": 400,
     "update_enabled": False,
     "update_token": "",
+    "restart_interval_hours": 0,
     # 模型限制
     "model_whitelist": "",
     "model_blacklist": "",

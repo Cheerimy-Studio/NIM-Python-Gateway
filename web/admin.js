@@ -1106,6 +1106,7 @@ const SET_FIELDS = [
   ['set-trmin', 'training_min_chars'],
   ['set-watchmin', 'watchdog_minutes'],
   ['set-updtok', 'update_token'],
+  ['set-restart-h', 'restart_interval_hours'],
 ];
 
 async function loadSettings() {

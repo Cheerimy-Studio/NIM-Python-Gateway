@@ -582,6 +582,7 @@ INT_SETTINGS = {
     "ttfb_timeout",
     "sse_idle_timeout",
     "pool_max_connections",
+    "restart_interval_hours",
     "request_timeout",
     "connect_timeout",
     "log_max",

@@ -820,7 +820,7 @@ details.upgrp[open]{background:#fff}
               <input type="number" min="0" class="form-control form-control-sm" id="set-ttfb"></div>
             <div class="col-md-3"><label class="form-label" for="set-sidle">流式空闲超时（秒）</label>
               <input type="number" min="10" class="form-control form-control-sm" id="set-sidle"></div>
-            <div class="col-md-3"><label class="form-label" for="set-poolconns">上游连接池上限（重启生效）</label>
+            <div class="col-md-3"><label class="form-label" for="set-poolconns">上游连接池上限</label>
               <input type="number" min="50" class="form-control form-control-sm" id="set-poolconns"></div>
             <div class="col-12 d-flex align-items-end pb-1">
               <div class="form-check form-switch">
@@ -856,10 +856,12 @@ details.upgrp[open]{background:#fff}
             <div class="col-md-6 d-flex align-items-end pb-1">
               <div class="form-check form-switch">
                 <input class="form-check-input" type="checkbox" id="set-update">
-                <label class="form-check-label small" for="set-update">远程更新（从 GitHub main 拉取并自重启）</label>
+                <label class="form-check-label small" for="set-update">远程更新</label>
               </div>
             </div>
-            <div class="col-md-6"><label class="form-label" for="set-updtok">更新令牌（Bearer 鉴权，留空仅限后台会话触发）</label>
+            <div class="col-md-6"><label class="form-label" for="set-restart-h">定时重启间隔（小时，0=关闭）</label>
+              <input type="number" min="0" class="form-control form-control-sm" id="set-restart-h" value="0"></div>
+            <div class="col-md-6"><label class="form-label" for="set-updtok">更新令牌</label>
               <div class="d-flex gap-2">
                 <input class="form-control form-control-sm font-monospace" id="set-updtok" placeholder="upd-…">
                 <button type="button" id="gen-updtok" class="btn btn-sm btn-outline-secondary text-nowrap">生成</button>
@@ -878,7 +880,7 @@ details.upgrp[open]{background:#fff}
             <div class="col-md-6 d-flex align-items-end pb-1">
               <div class="form-check form-switch">
                 <input class="form-check-input" type="checkbox" id="set-watchdog">
-                <label class="form-check-label small" for="set-watchdog">雪崩自动重启（全池不可用时）</label>
+                <label class="form-check-label small" for="set-watchdog">雪崩自动重启</label>
               </div>
             </div>
             <div class="col-md-6"><label class="form-label" for="set-watchmin">雪崩持续判定分钟数</label>

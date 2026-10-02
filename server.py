@@ -193,6 +193,28 @@ async def _watchdog_loop() -> None:
             pass
 
 
+async def _periodic_restart_loop() -> None:
+    """定时重启(可选):间隔 N 小时自动重启一次,清理进程内存累积。
+
+    每分钟检查一次配置(秒级生效);重启前落盘+记日志;0 表示关闭。
+    """
+    while True:
+        await asyncio.sleep(60)
+        try:
+            cfg = cfg_all()
+            interval = _cfgint(cfg, "restart_interval_hours", 0)
+            if interval <= 0:
+                continue
+            await asyncio.sleep(interval * 3600)
+            cfg = cfg_all()
+            if _cfgint(cfg, "restart_interval_hours", 0) <= 0:
+                continue
+            _self_restart("定时重启(每 %d 小时)" % interval)
+            return
+        except Exception:
+            pass
+
+
 @app.on_event("startup")
 async def _start_flush():
     global _flush_task
@@ -209,6 +231,8 @@ async def _start_flush():
     _flush_task = asyncio.create_task(_loop())
     # 雪崩看门狗:全池不可用且队列有等待者持续 N 分钟 → 自动重启(并发泄漏自愈)
     asyncio.create_task(_watchdog_loop())
+    # 定时重启(可选):间隔 N 小时自动重启,清理进程内存累积
+    asyncio.create_task(_periodic_restart_loop())
     # 启动时确保存在可用渠道：无渠道、或账号绑定了不存在的渠道时自动建默认 NVIDIA 渠道，
     # 否则导入的账号会因没有归属渠道而永远无法被调度
     try:
