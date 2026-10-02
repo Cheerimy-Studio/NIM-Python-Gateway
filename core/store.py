@@ -49,6 +49,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "update_enabled": False,
     "update_token": "",
     "restart_interval_hours": 0,
+    "intercept_enabled": False,
     # 模型限制
     "model_whitelist": "",
     "model_blacklist": "",
@@ -211,12 +212,17 @@ class Store:
             cfg.pop(legacy, None)
         if not isinstance(db.get("logs"), list):
             db["logs"] = []
+        if not isinstance(db.get("intercepted"), list):
+            db["intercepted"] = []
         if not isinstance(db.get("training"), list):
             db["training"] = []
         if not isinstance(db.get("keys"), list):
             db["keys"] = []
         if not isinstance(db.get("queue"), list):
             db["queue"] = []
+        cr = db["config"].get("custom_rules")
+        if not isinstance(cr, list):
+            db["config"]["custom_rules"] = []
         for k, v in {
             "buckets": {},
             "pool_buckets": {},

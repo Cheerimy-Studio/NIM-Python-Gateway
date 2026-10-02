@@ -120,6 +120,7 @@ const LOADERS = {
   keys: () => loadKeys(),
   upstreams: () => loadUpstreams(),
   tokens: () => loadTokens(),
+  intercept: () => loadIntercept(),
   logs: () => loadLogs(),
   queue: () => loadQueue(),
   test: () => loadTestModels(),
@@ -1335,6 +1336,72 @@ $('#sessions-clear').onclick = guard(async () => {
   if (await uiConfirm('清空全部会话日志？')) { await api('sessions/clear', {method: 'POST'}); loadSessions(); }
 });
 
+
+async function loadIntercept() {
+  const d = await run(() => api('intercept'));
+  if (!d) return;
+  $('#int-enabled').checked = !!d.enabled;
+  $('#int-meta').textContent = d.logs.length ? `${d.logs.length} 条记录` : '';
+  const tb = $('#int-rules'); tb.innerHTML = '';
+  if (!d.rules.length) {
+    const tr = el('tr'); const td = el('td', 'text-muted text-center py-3', '—');
+    td.colSpan = 4; tr.appendChild(td); tb.appendChild(tr);
+  }
+  for (const r of d.rules) {
+    const tr = el('tr');
+    tr.append(
+      (() => { const td = el('td'); td.appendChild(el('span', 'badge bg-secondary-subtle text-secondary', r.match_mode || '')); return td; })(),
+      el('td', 'small key-mono', r.pattern || ''),
+      el('td', 'small text-truncate', r.reply || ''),
+    );
+    const tdOp = el('td', 'text-end');
+    const del = el('button', 'btn btn-sm btn-outline-danger', '删除');
+    del.onclick = guard(async () => {
+      await api('intercept/rules/delete', {method: 'POST', json: {id: r.id}});
+      loadIntercept();
+    });
+    tdOp.appendChild(del);
+    tr.appendChild(tdOp);
+    tb.appendChild(tr);
+  }
+  const tb2 = $('#int-logs'); tb2.innerHTML = '';
+  if (!d.logs.length) {
+    const tr = el('tr'); const td = el('td', 'text-muted text-center py-3', '—');
+    td.colSpan = 6; tr.appendChild(td); tb2.appendChild(tr);
+  }
+  for (const x of d.logs) {
+    const tr = el('tr');
+    tr.append(
+      el('td', 'small text-muted', fmtTime(x.t)),
+      el('td', 'small', x.ip || '-'),
+      el('td', 'small key-mono', x.tok || '-'),
+      el('td', 'small', x.model || '-'),
+      el('td', 'small', x.rule || x.pattern || ''),
+      el('td', 'small text-truncate', x.content || ''),
+    );
+    tb2.appendChild(tr);
+  }
+}
+
+$('#int-refresh').onclick = loadIntercept;
+$('#int-clear').onclick = guard(async () => {
+  if (await uiConfirm('清空全部拦截记录？', {danger: true, okText: '清空'})) {
+    await api('intercept/clear', {method: 'POST'}); loadIntercept();
+  }
+});
+$('#int-enabled').onchange = guard(async () => {
+  await api('intercept/toggle', {method: 'POST', json: {enabled: $('#int-enabled').checked}});
+  toast($('#int-enabled').checked ? '拦截已启用' : '拦截已关闭');
+});
+$('#int-add').onclick = guard(async () => {
+  await api('intercept/rules', {method: 'POST', json: {
+    match_mode: $('#int-mode').value,
+    pattern: $('#int-pattern').value.trim(),
+    reply: $('#int-reply').value,
+  }});
+  $('#int-pattern').value = ''; $('#int-reply').value = '';
+  toast('规则已添加'); loadIntercept();
+});
 
 let testToken = null;   
 let testMsgs = [];      

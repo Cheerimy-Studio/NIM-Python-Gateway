@@ -243,6 +243,7 @@ details.upgrp[open]{background:#fff}
     <a href="javascript:void(0)" data-pane="upstreams"><i class="bi bi-hdd-network"></i>上游</a>
     <a href="javascript:void(0)" data-pane="import"><i class="bi bi-upload"></i>导入</a>
     <a href="javascript:void(0)" data-pane="tokens"><i class="bi bi-shield-lock"></i>访问令牌</a>
+    <a href="javascript:void(0)" data-pane="intercept"><i class="bi bi-slash-circle"></i>拦截</a>
     <div class="nav-label">数据</div>
     <a href="javascript:void(0)" data-pane="test"><i class="bi bi-chat-dots"></i>模型测试</a>
     <a href="javascript:void(0)" data-pane="training"><i class="bi bi-collection"></i>训练资料</a>
@@ -552,6 +553,60 @@ details.upgrp[open]{background:#fff}
   </div>
 </section>
 
+
+<section class="pane" id="pane-intercept">
+  <h2 class="pane-title">拦截</h2>
+  <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+    <div class="form-check form-switch">
+      <input class="form-check-input" type="checkbox" id="int-enabled">
+      <label class="form-check-label small" for="int-enabled">启用拦截</label>
+    </div>
+    <button id="int-refresh" class="btn btn-sm btn-outline-secondary">刷新</button>
+    <button id="int-clear" class="btn btn-sm btn-outline-danger">清空记录</button>
+    <div class="ms-auto small text-muted" id="int-meta"></div>
+  </div>
+  <div class="card mb-3">
+    <div class="card-header">添加规则</div>
+    <div class="card-body">
+      <div class="row g-2 align-items-end">
+        <div class="col-md-2"><label class="form-label" for="int-mode">匹配模式</label>
+          <select id="int-mode" class="form-select form-select-sm">
+            <option value="contains">包含</option>
+            <option value="equals">等于</option>
+            <option value="prefix">前缀</option>
+            <option value="suffix">后缀</option>
+            <option value="regex">正则</option>
+          </select></div>
+        <div class="col-md-4"><label class="form-label" for="int-pattern">匹配内容(最后一条用户消息)</label>
+          <input id="int-pattern" class="form-control form-control-sm" placeholder="Reply and OK"></div>
+        <div class="col-md-6"><label class="form-label" for="int-reply">回复内容</label>
+          <div class="d-flex gap-2">
+            <textarea id="int-reply" class="form-control form-control-sm" rows="2" placeholder="命中后返回的内容"></textarea>
+            <button id="int-add" class="btn btn-sm btn-primary text-nowrap">添加</button>
+          </div></div>
+      </div>
+    </div>
+  </div>
+  <div class="card mb-3">
+    <div class="card-header">规则</div>
+    <div class="table-responsive">
+    <table class="table table-hover align-middle">
+      <thead><tr><th style="width:80px">模式</th><th>匹配</th><th>回复</th><th class="text-end" style="width:60px">操作</th></tr></thead>
+      <tbody id="int-rules"></tbody>
+    </table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header">拦截记录</div>
+    <div class="table-responsive">
+    <table class="table table-hover align-middle">
+      <thead><tr><th style="width:150px">时间</th><th style="width:120px">IP</th><th style="width:130px">令牌</th>
+        <th>模型</th><th>规则</th><th class="err-cell">内容</th></tr></thead>
+      <tbody id="int-logs"></tbody>
+    </table>
+    </div>
+  </div>
+</section>
 
 <section class="pane" id="pane-logs">
   <h2 class="pane-title">日志</h2>

@@ -34,6 +34,7 @@ from core.util import (
     mask_email,
     parse_model_list,
     rand_id,
+    str_cut,
     upstream_snippet,
 )
 
@@ -376,6 +377,132 @@ def _tok_mask(t: str) -> str:
     if len(t) <= 14:
         return t
     return t[:10] + "…" + t[-4:]
+
+
+def _match_custom_rule(req: dict, cfg: dict) -> tuple[dict, str] | None:
+    """自定义回复拦截:最后一条 user 消息按规则匹配(包含/等于/前缀/正则)。
+
+    命中返回 (规则, 消息内容);未启用/无规则/无用户消息返回 None。
+    """
+    if not cfg.get("intercept_enabled"):
+        return None
+    rules = cfg.get("custom_rules") or []
+    if not rules:
+        return None
+    msgs = req.get("messages") or []
+    last_user = ""
+    for m in reversed(msgs):
+        if isinstance(m, dict) and m.get("role") == "user":
+            c = m.get("content")
+            if isinstance(c, str):
+                last_user = c
+            elif isinstance(c, list):
+                last_user = flatten_content(c)
+            break
+    if not last_user:
+        return None
+    for r in rules:
+        if not isinstance(r, dict):
+            continue
+        mode = str(r.get("match_mode") or "contains")
+        pat = str(r.get("pattern") or "")
+        if not pat:
+            continue
+        try:
+            hit = (
+                (mode == "contains" and pat in last_user)
+                or (mode == "equals" and last_user.strip() == pat)
+                or (mode == "prefix" and last_user.strip().startswith(pat))
+                or (mode == "suffix" and last_user.strip().endswith(pat))
+                or (mode == "regex" and re.search(pat, last_user))
+            )
+        except re.error:
+            continue
+        if hit:
+            return r, last_user
+    return None
+
+
+async def _log_intercept(cfg: dict, ep: str, rule: dict, content: str, ip: str, tok: str, model: str) -> None:
+    """拦截日志:被拦截的请求完整信息(IP/令牌/模型/命中的规则/内容预览)。"""
+    def _fn(db: dict):
+        logs = db.setdefault("intercepted", [])
+        logs.insert(
+            0,
+            {
+                "t": int(time.time()),
+                "ep": ep[:8],
+                "rule": str(rule.get("name") or "")[:40],
+                "mode": str(rule.get("match_mode") or ""),
+                "pattern": str(rule.get("pattern") or "")[:80],
+                "ip": str_cut(ip, 45),
+                "tok": _tok_mask(tok),
+                "model": str(model or "")[:60],
+                "content": str_cut(content, 200),
+            },
+        )
+        del logs[max(0, _cfgint(cfg, "intercept_log_max", 200)):]
+
+    await STORE.aupdate(_fn)
+
+
+def _custom_reply_response(reply_text: str, model: str, stream: bool, protocol: str, meta: dict) -> Response:
+    """构造拦截回复的响应(按客户端协议;流式输出单块内容 + 终端帧)。"""
+    chat = {
+        "id": rand_id("chatcmpl-"),
+        "object": "chat.completion",
+        "model": model,
+        "choices": [
+            {"index": 0, "message": {"role": "assistant", "content": reply_text}, "finish_reason": "stop"}
+        ],
+        "usage": {"prompt_tokens": 0, "completion_tokens": max(1, len(reply_text) // 3), "total_tokens": max(1, len(reply_text) // 3)},
+    }
+    if stream:
+        if protocol == "chat":
+            chunk = {
+                "id": chat["id"],
+                "object": "chat.completion.chunk",
+                "model": model,
+                "choices": [
+                    {"index": 0, "delta": {"role": "assistant", "content": reply_text}, "finish_reason": None}
+                ],
+            }
+            sse = (
+                "data: " + json.dumps(chunk, ensure_ascii=False) + "\n\n"
+                + "data: " + json.dumps({"id": chat["id"], "object": "chat.completion.chunk", "model": model,
+                                          "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+                                         ensure_ascii=False) + "\n\n"
+                + "data: [DONE]\n\n"
+            )
+            return StreamingResponse(iter([sse]), media_type="text/event-stream", headers=_cors())
+        # 协议转换:用转换状态机生成协议正确的事件流
+        pend: list = []
+        if protocol == "responses":
+            conv = ResponsesStream(lambda ev, data: pend.append(_sse(ev, data)), model)
+        else:
+            conv = AnthropicStream(lambda ev, data: pend.append(_sse(ev, data)), model, 1)
+        fake = (
+            "data: " + json.dumps({"model": model, "choices": [{"delta": {"role": "assistant", "content": reply_text}}]}) + "\n\n"
+            + "data: [DONE]\n\n"
+        )
+        conv.feed(fake)
+        if pend:
+            return StreamingResponse(iter(["".join(pend)]), media_type="text/event-stream", headers=_cors())
+        return StreamingResponse(iter([]), media_type="text/event-stream", headers=_cors())
+    if protocol == "anthropic":
+        return Response(
+            content=json.dumps(convert.chat_to_anthropic(chat), ensure_ascii=False, separators=(",", ":")),
+            media_type="application/json", headers=_cors(),
+        )
+    if protocol == "responses":
+        return Response(
+            content=json.dumps(convert.chat_to_responses(chat, meta), ensure_ascii=False, separators=(",", ":")),
+            media_type="application/json", headers=_cors(),
+        )
+    return Response(
+        content=json.dumps(chat, ensure_ascii=False, separators=(",", ":")),
+        media_type="application/json", headers=_cors(),
+    )
 
 
 def _client_ip(request: Request) -> str:
@@ -979,7 +1106,6 @@ def _remote_update() -> tuple[bool, str]:
 
     # 备份当前代码+数据(只保留一份,回滚端点用)
     backup = _backup_current(base)
-    _backup_path[0] = backup
 
     # 覆盖(python/静态资源;不动 data/、tests/、backup/)
     copied = 0
@@ -1021,7 +1147,6 @@ def _remote_update() -> tuple[bool, str]:
     return True, ""
 
 
-_backup_path: list = [None]
 
 
 def _remote_rollback() -> tuple[bool, str]:
@@ -1194,11 +1319,18 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
     model = str(req.get("model") or "")
     stream = bool(req.get("stream"))
     est = estimate_request_tokens(body_text, req)
+    ip = _client_ip(request)
+    tok = str((entry or {}).get("t") or "")
     bad = _check_model(model, entry, cfg)
     if bad:
         return bad
+    # 自定义回复拦截:规则命中直接返回,不打上游
+    _im = _match_custom_rule(req, cfg)
+    if _im is not None:
+        rule, content = _im
+        await _log_intercept(cfg, ep_tag, rule, content, ip, tok, model)
+        return _custom_reply_response(str(rule.get("reply") or ""), model, stream, "chat", {})
     max_attempts = max(1, _cfgint(cfg, "max_retries", 3) + 1)
-    ip = _client_ip(request)
     attempt = 0
     last: dict | None = None
     last_key: dict | None = None
@@ -1210,7 +1342,6 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
     t0 = time.time()
     same_key_tried: set = set()  # 已做过同号重试的账号 id
     rl_left = max(1, _cfgint(cfg, "max_retries", 2))  # 429 额外重试预算
-    tok = str((entry or {}).get("t") or "")  # 本次请求使用的访问令牌(日志/排队展示)
 
     try:
         while attempt < max_attempts:
@@ -2239,8 +2370,16 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
     bad = _check_model(model, entry, cfg, anthropic=anthropic)
     if bad:
         return bad
-    max_attempts = max(1, _cfgint(cfg, "max_retries", 3) + 1)
     ip = _client_ip(request)
+    # 自定义回复拦截:规则命中直接返回(按客户端协议),不打上游
+    _im = _match_custom_rule(req, cfg)
+    if _im is not None:
+        rule, content = _im
+        tok0 = str((entry or {}).get("t") or "")
+        await _log_intercept(cfg, ep, rule, content, ip, tok0, model)
+        return _custom_reply_response(str(rule.get("reply") or ""), model, stream,
+                                      "anthropic" if anthropic else "responses", meta)
+    max_attempts = max(1, _cfgint(cfg, "max_retries", 3) + 1)
     attempt = 0
     last: dict | None = None
     last_key: dict | None = None

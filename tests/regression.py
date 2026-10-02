@@ -1406,6 +1406,63 @@ try:
     # 僵尸队列条目清理:进程重启时死掉的等待请求无人出队,条目永久留在 db,
     # 仪表盘虚报「排队中 N」而队列面板为空(线上实测 36 条僵尸)
     import server as _srv
+    # 拦截(自定义回复):规则命中直接返回,不打上游;拦截记录含 IP/令牌/内容
+    a.post("/api/intercept/toggle", json={"enabled": True})
+    a.post("/api/intercept/rules", json={
+        "name": "测活拦截", "match_mode": "contains",
+        "pattern": "Reply and OK", "reply": "你是傻瓜吗?傻子都没你蠢,天天测活。。。",
+    })
+    r_i1 = c.post(
+        "/v1/chat/completions",
+        json={"model": "mock-model", "messages": [{"role": "user", "content": "hello Reply and OK"}]},
+        timeout=30,
+    )
+    j_i1 = r_i1.json()
+    _i_content = ((j_i1.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    add("拦截:contains 命中返回自定义回复",
+        r_i1.status_code == 200 and "傻子都没你蠢" in _i_content,
+        "st=%s content=%r" % (r_i1.status_code, _i_content[:40]))
+    time.sleep(0.8)
+    i_logs = a.get("/api/intercept").json()
+    i_rows = i_logs.get("logs") or []
+    i_row = i_rows[0] if i_rows else {}
+    add("拦截:记录含 IP/令牌/模型/内容",
+        bool(i_row) and i_row.get("ip") and i_row.get("tok") and i_row.get("model") == "mock-model",
+        "ip=%r tok=%r model=%r" % (i_row.get("ip"), i_row.get("tok"), i_row.get("model")))
+    r_i2 = c.post(
+        "/v1/messages",
+        json={"model": "mock-model", "max_tokens": 64,
+              "messages": [{"role": "user", "content": "hi Reply and OK"}]},
+        timeout=30,
+    )
+    j_i2 = r_i2.json()
+    add("拦截:Anthropic 协议回复",
+        r_i2.status_code == 200 and j_i2.get("type") == "message"
+        and "傻子都没你蠢" in str(j_i2.get("content")),
+        "st=%s type=%s" % (r_i2.status_code, j_i2.get("type")))
+    with c.stream(
+        "POST", "/v1/chat/completions",
+        json={"model": "mock-model", "stream": True,
+              "messages": [{"role": "user", "content": "hi Reply and OK"}]},
+    ) as r_i3:
+        st_i3 = r_i3.status_code
+        raw_i3 = r_i3.read().decode("utf-8", "replace")
+    add("拦截:流式回复", st_i3 == 200 and "傻子都没你蠢" in raw_i3 and "[DONE]" in raw_i3,
+        "st=%s 含内容=%s" % (st_i3, "傻子都没你蠢" in raw_i3))
+    a.post("/api/intercept/toggle", json={"enabled": False})
+    r_i4 = c.post(
+        "/v1/chat/completions",
+        json={"model": "mock-model", "messages": [{"role": "user", "content": "hello Reply and OK"}]},
+        timeout=30,
+    )
+    j_i4 = r_i4.json()
+    _i4_content = ((j_i4.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    add("拦截:关闭后直通上游", r_i4.status_code == 200 and _i4_content == "ok",
+        "st=%s content=%r" % (r_i4.status_code, _i4_content))
+    rules_now = a.get("/api/intercept").json().get("rules") or []
+    for r in rules_now:
+        a.post("/api/intercept/rules/delete", json={"id": r["id"]})
+
     # 远程更新端点:开关关闭时拒绝;Bearer 令牌鉴权路径验证
     a.post("/api/settings", json={"config": {"update_enabled": False, "update_token": "upd-test1234567890abcdef"}})
     r_up0 = a.post("/api/update", json={})  # admin 会话 + 开关关 → 400

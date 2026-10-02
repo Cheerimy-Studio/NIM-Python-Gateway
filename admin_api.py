@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import os
 import time
 
 from fastapi import APIRouter, Request
@@ -953,6 +954,114 @@ async def remote_rollback(request: Request):
     if not ok:
         return JSONResponse({"error": {"message": msg}}, status_code=500)
     return {"ok": True, "note": "已回滚,网关正在自动重启(数秒)"}
+
+
+# ============================================================ 拦截(自定义回复)
+
+
+@router.get("/intercept")
+async def intercept_get(request: Request):
+    bad = _require(request)
+    if bad:
+        return bad
+    db = STORE.load()
+    cfg = db["config"]
+    rules = [r for r in (cfg.get("custom_rules") or []) if isinstance(r, dict)]
+    logs = [x for x in (db.get("intercepted") or []) if isinstance(x, dict)][:100]
+    return {"enabled": bool(cfg.get("intercept_enabled")), "rules": rules, "logs": logs}
+
+
+@router.post("/intercept/rules")
+async def intercept_rule_add(request: Request):
+    bad = _require(request)
+    if bad:
+        return bad
+    body = await _json_dict(request)
+    if body is None:
+        return JSONResponse({"error": {"message": "请求体格式错误"}}, status_code=400)
+    mode = str(body.get("match_mode") or "contains")
+    if mode not in ("contains", "equals", "prefix", "suffix", "regex"):
+        return JSONResponse({"error": {"message": "未知匹配模式"}}, status_code=400)
+    pattern = str(body.get("pattern") or "").strip()
+    reply = str(body.get("reply") or "")
+    name = str(body.get("name") or "").strip()[:40]
+    if not pattern or not reply:
+        return JSONResponse({"error": {"message": "匹配内容与回复内容不能为空"}}, status_code=400)
+    if mode == "regex":
+        import re as _re
+        try:
+            _re.compile(pattern)
+        except Exception as e:
+            return JSONResponse({"error": {"message": f"正则无效: {e}"}}, status_code=400)
+
+    def _fn(db: dict):
+        db["config"].setdefault("custom_rules", []).append({
+            "id": "r_" + os.urandom(4).hex(),
+            "name": name,
+            "match_mode": mode,
+            "pattern": pattern[:120],
+            "reply": reply[:2000],
+        })
+
+    await STORE.aupdate(_fn)
+    STORE.flush()
+    return {"ok": True}
+
+
+@router.post("/intercept/rules/delete")
+async def intercept_rule_delete(request: Request):
+    bad = _require(request)
+    if bad:
+        return bad
+    body = await _json_dict(request)
+    if body is None:
+        return JSONResponse({"error": {"message": "请求体格式错误"}}, status_code=400)
+    rid = str(body.get("id") or "")
+    removed = [False]
+
+    def _fn(db: dict):
+        rules = db["config"].get("custom_rules") or []
+        new = [r for r in rules if not (isinstance(r, dict) and r.get("id") == rid)]
+        if len(new) != len(rules):
+            removed[0] = True
+        db["config"]["custom_rules"] = new
+
+    await STORE.aupdate(_fn)
+    STORE.flush()
+    return {"ok": removed[0]}
+
+
+@router.post("/intercept/toggle")
+async def intercept_toggle(request: Request):
+    bad = _require(request)
+    if bad:
+        return bad
+    body = await _json_dict(request)
+    if body is None:
+        return JSONResponse({"error": {"message": "请求体格式错误"}}, status_code=400)
+
+    def _fn(db: dict):
+        from core.util import as_bool
+
+        db["config"]["intercept_enabled"] = as_bool(body.get("enabled"), False)
+
+    await STORE.aupdate(_fn)
+    STORE.flush()
+    return {"ok": True}
+
+
+@router.post("/intercept/clear")
+async def intercept_clear(request: Request):
+    bad = _require(request)
+    if bad:
+        return bad
+
+    def _fn(db: dict):
+        db["intercepted"] = []
+
+    await STORE.aupdate(_fn)
+    STORE.flush()
+    return {"ok": True}
 
 
 # ============================================================ 训练资料
