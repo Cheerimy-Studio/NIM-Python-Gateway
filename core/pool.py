@@ -341,6 +341,61 @@ def _compare(a: dict, b: dict) -> int:
     return (ka > kb) - (ka < kb)
 
 
+def capable_channels(db: dict, model: str) -> set[str]:
+    """「结构上」能服务该模型的渠道集合。
+
+    只看渠道是否启用 + 模型有没有被渠道白名单/原名禁用排除,不看在途、冷却、封禁
+    —— 用于「按渠道生效」的拦截规则:即使此刻号池全在冷却,也能判断某渠道是否
+    本来就能接这个模型。
+    """
+    ups = {u["id"]: u for u in db.get("upstreams", []) if isinstance(u, dict)}
+    cfg = db["config"]
+    out: set[str] = set()
+    for k in db.get("keys") or []:
+        if not k.get("enabled"):
+            continue
+        uid = str(k.get("upstream_id") or "")
+        up = ups.get(uid)
+        if up is not None and not up.get("enabled"):
+            continue
+        if model and up is not None:
+            hide = upstreams.hide_original(up, cfg)
+            targets = list((up.get("model_map") or {}).values())
+            if hide and model in targets:
+                continue
+            models = up.get("models") or []
+            if models and model not in models:
+                continue
+        out.add(uid)
+    return out
+
+
+def resolve_channel(db: dict, model: str) -> str:
+    """预测这次请求会被调度到哪个渠道。
+
+    排序规则与 _acquire_fn 完全一致(先近「渠道+模型」成功率、再渠道权重),
+    但不取号、不看冷却/在途,所以是「只读预测」—— 只用于按渠道生效的拦截规则判定。
+    没有任何渠道能服务这个模型时返回空串。
+    """
+    cand = capable_channels(db, model)
+    if not cand:
+        return ""
+    recent = db.get("up_recent", {})
+    weights = {
+        u["id"]: max(1, int(u.get("weight") or 10))
+        for u in db.get("upstreams", [])
+        if isinstance(u, dict)
+    }
+    scores: dict[str, float] = {}
+    for pid in cand:
+        rec_m = recent.get(_model_key(pid, model)) or []
+        rec = rec_m if len(rec_m) >= _MODEL_RECENT_MIN else (recent.get(pid) or [])
+        ok_n = sum(1 for v in rec if v)
+        scores[pid] = (ok_n + 5) / (len(rec) + 10)
+    ordered = sorted(cand, key=lambda p: (scores[p], weights.get(p, 10)), reverse=True)
+    return ordered[0]
+
+
 def acquire(db: dict | None = None, est_tokens: int = 0, model: str = "") -> dict:
     """取号。db=None 时自行加锁更新（独立调用），否则在调用方的锁内执行。"""
     if db is not None:

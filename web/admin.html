@@ -581,6 +581,11 @@ details.upgrp[open]{background:#fff}
             <textarea id="int-reply" class="form-control form-control-sm" rows="2" placeholder="命中后返回的内容"></textarea>
             <button id="int-add" class="btn btn-sm btn-primary text-nowrap">添加</button>
           </div></div>
+        <div class="col-md-5"><label class="form-label" for="int-models">限定模型</label>
+          <input id="int-models" class="form-control form-control-sm" placeholder="留空=全部，多个用逗号分隔"></div>
+        <div class="col-md-5"><label class="form-label" for="int-ups">限定渠道</label>
+          <select id="int-ups" class="form-select form-select-sm" multiple size="3"></select></div>
+        <div class="col-md-2 small text-muted pb-1">不限则留空</div>
       </div>
     </div>
   </div>
@@ -588,7 +593,7 @@ details.upgrp[open]{background:#fff}
     <div class="card-header">规则</div>
     <div class="table-responsive">
     <table class="table table-hover align-middle">
-      <thead><tr><th style="width:80px">模式</th><th>匹配</th><th>回复</th><th class="text-end" style="width:60px">操作</th></tr></thead>
+      <thead><tr><th style="width:80px">模式</th><th>作用范围</th><th>匹配</th><th>回复</th><th class="text-end" style="width:60px">操作</th></tr></thead>
       <tbody id="int-rules"></tbody>
     </table>
     </div>

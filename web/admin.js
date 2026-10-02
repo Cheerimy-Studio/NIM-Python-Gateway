@@ -1347,15 +1347,30 @@ async function loadIntercept() {
   if (!d) return;
   $('#int-enabled').checked = !!d.enabled;
   $('#int-meta').textContent = d.logs.length ? `${d.logs.length} 条记录` : '';
+  const upRows = (await run(() => api('upstreams')))?.rows || [];
+  const upName = new Map(upRows.map(u => [u.id, u.name]));
+  const sel = $('#int-ups');
+  const keep = new Set(Array.from(sel.selectedOptions).map(o => o.value));
+  sel.innerHTML = '';
+  for (const u of upRows) {
+    const o = document.createElement('option');
+    o.value = u.id; o.textContent = u.name;
+    if (keep.has(u.id)) o.selected = true;
+    sel.appendChild(o);
+  }
   const tb = $('#int-rules'); tb.innerHTML = '';
   if (!d.rules.length) {
     const tr = el('tr'); const td = el('td', 'text-muted text-center py-3', '—');
-    td.colSpan = 4; tr.appendChild(td); tb.appendChild(tr);
+    td.colSpan = 5; tr.appendChild(td); tb.appendChild(tr);
   }
   for (const r of d.rules) {
     const tr = el('tr');
+    const upNames = (r.upstreams || []).map(x => upName.get(x) || x);
+    const scopeTxt = [(r.models || []).length ? '模型 ' + (r.models || []).join(',') : '',
+                      upNames.length ? '渠道 ' + upNames.join(',') : ''].filter(Boolean).join(' · ') || '全部';
     tr.append(
       (() => { const td = el('td'); td.appendChild(el('span', 'badge bg-secondary-subtle text-secondary', r.match_mode || '')); return td; })(),
+      (() => { const td = el('td', 'small text-muted text-truncate', scopeTxt); td.style.maxWidth = '220px'; td.title = scopeTxt; return td; })(),
       el('td', 'small key-mono', r.pattern || ''),
       el('td', 'small text-truncate', r.reply || ''),
     );
@@ -1403,8 +1418,10 @@ $('#int-add').onclick = guard(async () => {
     match_mode: $('#int-mode').value,
     pattern: $('#int-pattern').value.trim(),
     reply: $('#int-reply').value,
+    models: $('#int-models').value.trim(),
+    upstreams: Array.from($('#int-ups').selectedOptions).map(o => o.value),
   }});
-  $('#int-pattern').value = ''; $('#int-reply').value = '';
+  $('#int-pattern').value = ''; $('#int-reply').value = ''; $('#int-models').value = '';
   toast('规则已添加'); loadIntercept();
 });
 

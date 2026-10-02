@@ -506,11 +506,43 @@ def _tok_mask(t: str) -> str:
 _REGEX_SCAN_MAX = 8000
 
 
-def _match_custom_rule(req: dict, cfg: dict, allow_prompt: bool = False) -> tuple[dict, str] | None:
+def _resolve_channel(model: str) -> str:
+    """当前调度会选中的渠道 id（只读预测，不消耗账号）。拦截规则按渠道判定时用。"""
+    try:
+        return pool.resolve_channel(STORE.load(), model)
+    except Exception:
+        return ""
+
+
+def _rule_scope_hit(rule: dict, model: str) -> bool:
+    """规则作用域：限定模型列表 + 限定渠道列表（任一为空 = 不限）。
+
+    渠道按「当前调度会选中的那个渠道」判定；若此刻一个候选都没有（全在冷却/封禁），
+    退化成「规则里的渠道中是否有一个结构上能服务该模型」—— 否则一遇上游抖动，
+    按渠道限定的拦截就整个哑掉，而那正是最需要它的时候。
+    """
+    ms = [str(x) for x in (rule.get("models") or []) if str(x).strip()]
+    if ms:
+        if not model or model not in ms:
+            return False
+    us = [str(x) for x in (rule.get("upstreams") or []) if str(x).strip()]
+    if not us:
+        return True
+    cur = _resolve_channel(model)
+    if cur:
+        return cur in us
+    try:
+        return bool(set(us) & pool.capable_channels(STORE.load(), model))
+    except Exception:
+        return False
+
+
+def _match_custom_rule(req: dict, cfg: dict, allow_prompt: bool = False, model: str = "") -> tuple[dict, str] | None:
     """自定义回复拦截:最后一条 user 消息按规则匹配(包含/等于/前缀/后缀/正则)。
 
     命中返回 (规则, 消息内容);未启用/无规则/无用户消息返回 None。
     allow_prompt 供 /v1/completions 使用(它的输入在 prompt 字段)。
+    规则可限定「模型」与「渠道」(见 _rule_scope_hit),范围外不生效。
     """
     if not cfg.get("intercept_enabled"):
         return None
@@ -541,6 +573,9 @@ def _match_custom_rule(req: dict, cfg: dict, allow_prompt: bool = False) -> tupl
         mode = str(r.get("match_mode") or "contains")
         pat = str(r.get("pattern") or "")
         if not pat:
+            continue
+        # 作用域(限定模型/渠道)先判:范围外直接跳过,连正则都不用跑
+        if not _rule_scope_hit(r, model):
             continue
         try:
             hit = (
@@ -1567,7 +1602,7 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
     # 自定义回复拦截:规则命中直接返回,不打上游
     # embeddings 不参与(它的 input 不是对话文本,返回形态也对不上)
     if ep_tag != "emb":
-        _im = _match_custom_rule(req, cfg, allow_prompt=(ep_tag == "cmpl"))
+        _im = _match_custom_rule(req, cfg, allow_prompt=(ep_tag == "cmpl"), model=model)
         if _im is not None:
             rule, content = _im
             await _log_intercept(cfg, ep_tag, rule, content, ip, tok, model)
@@ -2617,7 +2652,7 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
     # 自定义回复拦截:规则命中直接返回(按客户端协议),不打上游。
     # 用规范化后的 chat 请求匹配:Responses 的输入在 input 字段、Anthropic 的
     # content 是块数组,只有 chat 形态是统一的
-    _im = _match_custom_rule(chat_req, cfg)
+    _im = _match_custom_rule(chat_req, cfg, model=model)
     if _im is not None:
         rule, content = _im
         tok0 = str((entry or {}).get("t") or "")

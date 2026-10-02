@@ -1547,6 +1547,43 @@ try:
     _ib = ((r_ib.json().get("choices") or [{}])[0].get("message") or {}).get("content") or ""
     add("拦截:正则只扫描前 8000 字符", _ia == "ok" and _ib == "窗口内命中",
         "超长尾部=%r 短文本=%r" % (_ia[:12], _ib[:12]))
+    # 规则作用域:限定模型 / 限定渠道。渠道判定用「只读预测当前会选中哪个渠道」,
+    # 不消耗账号 —— 为了判定确定,这里先把候选渠道收敛成主渠道 T(账号页只有一页)。
+    a.post("/api/intercept/rules", json={"match_mode": "contains", "pattern": "SCOPE-MODEL",
+                                         "reply": "模型内命中", "models": "mock-model"})
+    _r_s1 = c.post("/v1/chat/completions", json={"model": "mock-model",
+                   "messages": [{"role": "user", "content": "x SCOPE-MODEL"}]}, timeout=30)
+    _s1 = ((_r_s1.json().get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    _r_s2 = c.post("/v1/chat/completions", json={"model": "kimi",
+                   "messages": [{"role": "user", "content": "x SCOPE-MODEL"}]}, timeout=30)
+    _s2 = ((_r_s2.json().get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    add("拦截:限定模型生效(范围外不拦)", _s1 == "模型内命中" and _s2 == "ok",
+        "mock-model=%r kimi=%r" % (_s1[:12], _s2[:12]))
+
+    _rows_scope = a.get("/api/keys?page=1").json()["rows"]
+    _keep_main = [k["id"] for k in _rows_scope if k.get("upstream_id") == uid]
+    a.post("/api/upstreams", json={"id": uid, "name": "T", "base": "http://127.0.0.1:18212/v1",
+                                   "enabled": True, "models": ""})
+    a.post("/api/keys/batch", json={"op": "enable", "ids": _keep_main})
+    a.post("/api/keys/batch", json={"op": "disable",
+                                    "ids": [k["id"] for k in _rows_scope if k["id"] not in _keep_main]})
+    a.post("/api/intercept/rules", json={"match_mode": "contains", "pattern": "CHAN-HIT",
+                                         "reply": "渠道内命中", "upstreams": [uid]})
+    a.post("/api/intercept/rules", json={"match_mode": "contains", "pattern": "CHAN-MISS",
+                                         "reply": "不该命中", "upstreams": ["u_not_exist"]})
+    _r_s3 = c.post("/v1/chat/completions", json={"model": "mock-model",
+                   "messages": [{"role": "user", "content": "y CHAN-HIT"}]}, timeout=30)
+    _s3 = ((_r_s3.json().get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    _r_s4 = c.post("/v1/chat/completions", json={"model": "mock-model",
+                   "messages": [{"role": "user", "content": "y CHAN-MISS"}]}, timeout=30)
+    _s4 = ((_r_s4.json().get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    _scope_rows = a.get("/api/intercept").json().get("rules") or []
+    _scope_saved = any((r.get("upstreams") or []) == [uid] for r in _scope_rows)
+    add("拦截:限定渠道生效(范围外不拦,作用域入库)",
+        _s3 == "渠道内命中" and _s4 == "ok" and _scope_saved,
+        "本渠道=%r 不存在的渠道=%r 作用域入库=%s" % (_s3[:12], _s4[:12], _scope_saved))
+    a.post("/api/keys/batch", json={"op": "enable", "ids": [k["id"] for k in _rows_scope]})
+
     a.post("/api/intercept/toggle", json={"enabled": False})
     r_i4 = c.post(
         "/v1/chat/completions",

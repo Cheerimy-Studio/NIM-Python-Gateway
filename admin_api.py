@@ -990,6 +990,22 @@ async def intercept_get(request: Request):
     return {"enabled": bool(cfg.get("intercept_enabled")), "rules": rules, "logs": logs}
 
 
+def _list_arg(v) -> list[str]:
+    """把「列表 / 逗号(或换行)分隔字符串」统一成去空去重的字符串列表。"""
+    if isinstance(v, str):
+        items = v.replace("\n", ",").split(",")
+    elif isinstance(v, (list, tuple)):
+        items = [str(x) for x in v]
+    else:
+        items = []
+    out: list[str] = []
+    for x in items:
+        s = str(x).strip()[:80]
+        if s and s not in out:
+            out.append(s)
+    return out[:50]
+
+
 @router.post("/intercept/rules")
 async def intercept_rule_add(request: Request):
     bad = _require(request)
@@ -1006,6 +1022,15 @@ async def intercept_rule_add(request: Request):
     pattern = str(body.get("pattern") or "").strip()[:120]
     reply = str(body.get("reply") or "")[:2000]
     name = str(body.get("name") or "").strip()[:40]
+    # 作用域(可选):限定模型 / 限定渠道,任一为空 = 不限。渠道可写 id 或名称,
+    # 名称在这里折算成 id(前端下拉直接给 id)。
+    models = _list_arg(body.get("models"))
+    _by_name = {
+        str(u.get("name") or ""): u["id"]
+        for u in (STORE.load().get("upstreams") or [])
+        if isinstance(u, dict)
+    }
+    upstreams = [_by_name.get(x, x) for x in _list_arg(body.get("upstreams"))]
     if not pattern or not reply:
         return JSONResponse({"error": {"message": "匹配内容与回复内容不能为空"}}, status_code=400)
     if mode == "regex":
@@ -1030,6 +1055,8 @@ async def intercept_rule_add(request: Request):
             "match_mode": mode,
             "pattern": pattern,
             "reply": reply,
+            "models": models,
+            "upstreams": upstreams,
         })
 
     await STORE.aupdate(_fn)
