@@ -1115,6 +1115,7 @@ const SET_FIELDS = [
   ['set-updtok', 'update_token'],
   ['set-restart-h', 'restart_interval_hours'],
   ['set-mttl', 'model_missing_ttl'],
+  ['set-intmax', 'intercept_log_max'],
 ];
 
 async function loadSettings() {
@@ -1348,7 +1349,7 @@ async function loadIntercept() {
   const d = await run(() => api('intercept'));
   if (!d) return;
   $('#int-enabled').checked = !!d.enabled;
-  $('#int-meta').textContent = d.logs.length ? `${d.logs.length} 条记录` : '';
+  $('#int-meta').textContent = d.logs.length ? `${d.logs.length} / ${d.cap || 100} 条` : '';
   const upRows = (await run(() => api('upstreams')))?.rows || [];
   const upName = new Map(upRows.map(u => [u.id, u.name]));
   const sel = $('#int-ups');
@@ -1373,8 +1374,8 @@ async function loadIntercept() {
     tr.append(
       (() => { const td = el('td'); td.appendChild(el('span', 'badge bg-secondary-subtle text-secondary', r.match_mode || '')); return td; })(),
       (() => { const td = el('td', 'small text-muted text-truncate', scopeTxt); td.style.maxWidth = '220px'; td.title = scopeTxt; return td; })(),
-      el('td', 'small key-mono', r.pattern || ''),
-      el('td', 'small text-truncate', r.reply || ''),
+      (() => { const td = el('td', 'small key-mono text-truncate'); td.style.maxWidth = '340px'; td.textContent = r.pattern || ''; td.title = r.pattern || ''; return td; })(),
+      (() => { const td = el('td', 'small text-truncate'); td.style.maxWidth = '280px'; td.textContent = String(r.reply || '').replace(/[\r\n]+/g, ' '); td.title = r.reply || ''; return td; })(),
     );
     const tdOp = el('td', 'text-end');
     const del = el('button', 'btn btn-sm btn-outline-danger', '删除');
@@ -1399,7 +1400,7 @@ async function loadIntercept() {
       el('td', 'small key-mono', x.tok || '-'),
       el('td', 'small', x.model || '-'),
       el('td', 'small', x.rule || x.pattern || ''),
-      el('td', 'small text-truncate', x.content || ''),
+      (() => { const td = el('td', 'small'); const box = el('div', ''); box.style.maxWidth = '460px'; box.style.overflowWrap = 'anywhere'; box.textContent = x.content || ''; td.title = x.content || ''; td.appendChild(box); return td; })(),
     );
     tb2.appendChild(tr);
   }

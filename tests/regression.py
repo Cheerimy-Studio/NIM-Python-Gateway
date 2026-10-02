@@ -1253,31 +1253,28 @@ try:
         all("tok" not in row for row in (pub.get("rows") or [])),
         "public rows=%d,含 tok 字段的=%d" % (len(pub.get("rows") or []), sum(1 for x in pub.get("rows") or [] if "tok" in x)))
 
-    # 排队条目携带令牌:hold4 占住并发,第二个请求在排队等待期间管理端可见其令牌
-    a.post("/api/settings", json={"config": {"acct_concurrency": 1}})
+    # 排队条目携带令牌:把账号冷却设长,第一个请求用掉唯一的账号后,第二个请求
+    # 在冷却期内必然排队(不再依赖 hold4 那种 4 秒保持的时序,那种判定会随
+    # 前面的用例改变账号集合而偶发失效)
+    a.post("/api/settings", json={"config": {"acct_concurrency": 1, "account_cooldown_ms": 8000}})
     _all_rows = a.get("/api/keys?page=1").json()["rows"]
     ids4 = [k["id"] for k in _all_rows]
-    # 只留主渠道(T,且启用)的**一个**账号:其余全停用。这样一个请求持号时,
-    # 第二个请求才必然排队(旧写法停用 ids4[1:],剩下的那个账号可能属于被停用的
-    # 渠道 → 现在会被正确地立刻 404,测不到排队)。
+    # 只留主渠道(T,且启用)的**一个**账号:其余全停用 —— 该账号一进冷却,后面
+    # 的请求就必须排队(旧写法停用 ids4[1:],剩下的账号可能属于被停用的渠道,
+    # 现在会被正确地立刻 404,测不到排队)
     _main_ids = [k["id"] for k in _all_rows if k.get("upstream_id") == uid]
     _keep = _main_ids[:1]
     a.post("/api/keys/batch", json={"op": "enable", "ids": _keep})
     a.post("/api/keys/batch", json={"op": "disable",
                                     "ids": [k["id"] for k in _all_rows if k["id"] not in _keep]})
     _hold = {}
-
-    def _hold_req():
-        try:
-            _hold["code"] = c.post(
-                "/v1/chat/completions", json={"model": "hold4", "messages": [{"role": "user", "content": "h"}]}
-            ).status_code
-        except Exception as e:
-            _hold["code"] = type(e).__name__
-
-    th = threading.Thread(target=_hold_req, daemon=True)
-    th.start()
-    time.sleep(0.8)  # 第一个请求已持号(hold4 占 4s)
+    try:
+        _hold["code"] = c.post(
+            "/v1/chat/completions", json={"model": "mock-model", "messages": [{"role": "user", "content": "h"}]}
+        ).status_code
+    except Exception as e:
+        _hold["code"] = type(e).__name__
+    time.sleep(0.3)  # 唯一账号已用掉,进入 8 秒冷却
     q_status = {}
 
     def _q_req():
@@ -1295,9 +1292,9 @@ try:
     q_tok_ok = any((x.get("tok") or "") == _tok_mask for x in q_rows)
     th2.join(20)
     add("令牌:排队条目携带令牌", q_tok_ok,
-        "排队可见令牌=%s(排队中 %d 条;持号请求=%s 排队请求=%s)"
+        "排队可见令牌=%s(排队中 %d 条;首次请求=%s 排队请求=%s)"
         % (q_tok_ok, len(q_rows), _hold.get("code"), q_status.get("code")))
-    a.post("/api/settings", json={"config": {"acct_concurrency": 0}})
+    a.post("/api/settings", json={"config": {"acct_concurrency": 0, "account_cooldown_ms": -1}})
     a.post("/api/keys/batch", json={"op": "enable", "ids": ids4})
 
     # in-flight 泄漏守护:重试 continue 路径曾泄漏账号并发计数(线上号池
@@ -1537,8 +1534,29 @@ try:
     r_i8 = a.post("/api/intercept/rules", json={"match_mode": "regex", "pattern": "(a+)+$", "reply": "x"})
     add("拦截:危险正则被拒(嵌套量词)", r_i8.status_code == 400, "st=%s" % r_i8.status_code)
     # 先截断再校验:超长正则截断后若已非法,必须直接拒(旧写法会存下一个非法模式,规则静默失效)
-    r_i9 = a.post("/api/intercept/rules", json={"match_mode": "regex", "pattern": "(" + "a" * 130 + ")", "reply": "x"})
+    r_i9 = a.post("/api/intercept/rules", json={"match_mode": "regex", "pattern": "(" * 1001, "reply": "x"})
     add("拦截:超长正则截断后校验", r_i9.status_code == 400, "st=%s" % r_i9.status_code)
+    # 上限 120 太小:线上一条 121 字符的合法正则被砍掉末尾的 `*`,接口回 200 但规则永不命中。
+    # 上限提到 1000,并用那条真实正则端到端验:命中拦截、错序不命中、入库未被截断。
+    _seed_pat = '^\\s*\\{\\s*"seed"\\s*:\\s*\\{[^{}]*"domain"\\s*:\\s*"[^"]*"[^{}]*"anchor"\\s*:\\s*"[^"]*"[^{}]*"license_basis"\\s*:\\s*"[^"]*"[^{}]*'
+    _seed_msg = ('{"seed": {"domain": "课程设计", "anchor": "学习目标、内容顺序、练习、评分标准",'
+                 ' "license_basis": "owned_seed"}, "index": 759000024}')
+    r_i9b = a.post("/api/intercept/rules", json={"match_mode": "regex", "pattern": _seed_pat,
+                                                 "reply": "SEED-BLOCKED\n\n"})
+    _seed_rules = [x for x in (a.get("/api/intercept").json().get("rules") or [])
+                   if x.get("pattern") == _seed_pat]
+    add("拦截:121 字符正则入库(不再被截断)",
+        r_i9b.status_code == 200 and len(_seed_pat) == 121 and bool(_seed_rules),
+        "st=%s len=%d 入库=%s" % (r_i9b.status_code, len(_seed_pat), bool(_seed_rules)))
+    _r_seed = c.post("/v1/chat/completions", json={"model": "mock-model",
+                     "messages": [{"role": "user", "content": _seed_msg}]}, timeout=30)
+    _seed_hit = ((_r_seed.json().get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    _r_seed2 = c.post("/v1/chat/completions", json={"model": "mock-model", "messages": [
+        {"role": "user", "content": '{"seed": {"domain": "x", "license_basis": "y"}}'}]}, timeout=30)
+    _seed_miss = ((_r_seed2.json().get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    add("拦截:长正则端到端命中且回复无多余换行",
+        _seed_hit == "SEED-BLOCKED" and _seed_miss == "ok",
+        "命中=%r 错序=%r" % (_seed_hit[:24], _seed_miss[:24]))
     # 正则模式的扫描窗口:窗口内命中,窗口外(超长输入尾部)不命中
     a.post("/api/intercept/rules", json={"match_mode": "regex", "pattern": "TAIL-MARK", "reply": "窗口内命中"})
     r_ia = c.post("/v1/chat/completions", json={"model": "mock-model",
@@ -1549,6 +1567,17 @@ try:
     _ib = ((r_ib.json().get("choices") or [{}])[0].get("message") or {}).get("content") or ""
     add("拦截:正则只扫描前 8000 字符", _ia == "ok" and _ib == "窗口内命中",
         "超长尾部=%r 短文本=%r" % (_ia[:12], _ib[:12]))
+    # 拦截记录上限:默认 100,可配;配置成 3 时入库列表立刻被截到 3(不是只影响读取)
+    _cap0 = a.get("/api/settings").json().get("intercept_log_max")
+    a.post("/api/settings", json={"config": {"intercept_log_max": 3}})
+    for _ci in range(5):
+        c.post("/v1/chat/completions", json={"model": "mock-model",
+               "messages": [{"role": "user", "content": "hi Reply and OK"}]}, timeout=30)
+    _capj = a.get("/api/intercept").json()
+    add("拦截:记录上限默认 100 且可配生效",
+        _cap0 == 100 and _capj.get("cap") == 3 and len(_capj.get("logs") or []) == 3,
+        "默认=%r cap=%r 条数=%d" % (_cap0, _capj.get("cap"), len(_capj.get("logs") or [])))
+    a.post("/api/settings", json={"config": {"intercept_log_max": 100}})
     # 规则作用域:限定模型 / 限定渠道。渠道判定用「只读预测当前会选中哪个渠道」,
     # 不消耗账号 —— 为了判定确定,这里先把候选渠道收敛成主渠道 T(账号页只有一页)。
     a.post("/api/intercept/rules", json={"match_mode": "contains", "pattern": "SCOPE-MODEL",
@@ -1933,8 +1962,37 @@ try:
     _br_txt = _srv._breaker_queue_reason({"fails": 3, "left": 42})
     add("熔断中的排队原因与公开提示",
         ("熔断" in _br_txt) and ("3" in _br_txt) and ("42" in _br_txt)
-        and _srv.queue.public_hint(_br_txt) == "该模型正在熔断恢复",
+        and _srv.queue.public_hint(_br_txt) == "模型熔断恢复中",
         "原因=%s;公开提示=%s" % (_br_txt[:34], _srv.queue.public_hint(_br_txt)))
+
+    # 排队原因的刷新不能把存储锁打满:等待者每轮询周期都会调 set_reason,
+    # 内容没变就必须直接返回、不落写(几百个等待者 × 每 400ms 一次的写非常可观)
+    class _CountingStore:
+        def __init__(self, db):
+            self.db = db
+            self.n = 0
+
+        def load(self):
+            return self.db
+
+        def update(self, fn):
+            self.n += 1
+            fn(self.db)
+
+    _q_orig_store = _srv.queue.STORE
+    try:
+        _fake = _CountingStore({"queue": [{"id": "q_t1", "t": time.time(), "reason": "冷却 3 / 共 6"}]})
+        _srv.queue.STORE = _fake
+        _srv.queue.set_reason("q_t1", "冷却 3 / 共 6")   # 内容相同 → 不该写
+        _n_same = _fake.n
+        _srv.queue.set_reason("q_t1", "账户并发 2 / 共 6")  # 变了 → 写一次
+        _n_diff = _fake.n
+        _kept = _fake.db["queue"][0]["reason"]
+    finally:
+        _srv.queue.STORE = _q_orig_store
+    add("排队原因:内容没变不写存储(避免打满存储锁)",
+        _n_same == 0 and _n_diff == 1 and _kept == "账户并发 2 / 共 6",
+        "相同内容写入=%d 变化后写入=%d 结果=%s" % (_n_same, _n_diff, _kept))
 
     first_bad = []
 

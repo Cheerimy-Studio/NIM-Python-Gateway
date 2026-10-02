@@ -602,6 +602,7 @@ INT_SETTINGS = {
     "pool_max_connections",
     "restart_interval_hours",
     "model_missing_ttl",
+    "intercept_log_max",
     "request_timeout",
     "connect_timeout",
     "log_max",
@@ -985,8 +986,12 @@ async def intercept_get(request: Request):
     db = STORE.load()
     cfg = db["config"]
     rules = [r for r in (cfg.get("custom_rules") or []) if isinstance(r, dict)]
-    logs = [x for x in (db.get("intercepted") or []) if isinstance(x, dict)][:100]
-    return {"enabled": bool(cfg.get("intercept_enabled")), "rules": rules, "logs": logs}
+    try:
+        cap = max(1, int(cfg.get("intercept_log_max") or 100))
+    except (TypeError, ValueError):
+        cap = 100
+    logs = [x for x in (db.get("intercepted") or []) if isinstance(x, dict)][:cap]
+    return {"enabled": bool(cfg.get("intercept_enabled")), "rules": rules, "logs": logs, "cap": cap}
 
 
 def _list_arg(v) -> list[str]:
@@ -1017,9 +1022,11 @@ async def intercept_rule_add(request: Request):
     if mode not in ("contains", "equals", "prefix", "suffix", "regex"):
         return JSONResponse({"error": {"message": "未知匹配模式"}}, status_code=400)
     # 先按存储上限截断、再校验:存进库的必须就是被校验过的那一份。
-    # 旧写法先校验全文再截断存入,超长正则会存成另一个可能非法的模式(规则静默失效)。
-    pattern = str(body.get("pattern") or "").strip()[:120]
-    reply = str(body.get("reply") or "")[:2000]
+    # 上限 1000 是给复杂正则留的空间(120 太小:实测一条 121 字符的正则被截掉末尾的
+    # `*`,规则照样 200 入库但静默不命中)。尾部换行去掉——textarea 里的回车看不见,
+    # 命中后会让回复多一个空行。
+    pattern = str(body.get("pattern") or "").strip()[:1000]
+    reply = str(body.get("reply") or "").rstrip("\r\n")[:2000]
     name = str(body.get("name") or "").strip()[:40]
     # 作用域(可选):限定模型 / 限定渠道,任一为空 = 不限。渠道可写 id 或名称,
     # 名称在这里折算成 id(前端下拉直接给 id)。

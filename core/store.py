@@ -51,6 +51,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "restart_interval_hours": 0,
     "model_missing_ttl": 3600,
     "intercept_enabled": False,
+    "intercept_log_max": 100,
     # 模型限制
     "model_whitelist": "",
     "model_blacklist": "",

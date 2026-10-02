@@ -207,8 +207,8 @@ def _pool_capacity_warn(pool_timeout: int, used: int, cap: int) -> None:
         return
     _pool_cap_warn_at = now
     print(
-        f"[pool] 连接池接近上限({used}/{cap},近 10 条日志 {pool_timeout} 条 PoolTimeout):"
-        f"当前并发已吃满池容量,建议把「上游连接池上限」调到 {max(cap, used) + 100} 以上(重启生效)",
+        f"[pool] 池接近上限 {used}/{cap},近 10 条日志 PoolTimeout {pool_timeout} 次,"
+        f"建议 pool_max_connections ≥ {max(cap, used) + 100}",
         file=sys.stderr,
         flush=True,
     )
@@ -416,8 +416,7 @@ def get_http(cfg: dict | None = None) -> httpx.AsyncClient:
             limits=httpx.Limits(max_connections=max_conn, max_keepalive_connections=min(100, max_conn)),
         )
         print(
-            f"[http] 上游连接池上限 {max_conn}（配置 {c.get('pool_max_connections')}"
-            f" / 当前账号 {accounts} 个 · 理论需求 {_pool_size(c, accounts)}）",
+            f"[http] 连接池上限 {max_conn}(配置 {c.get('pool_max_connections')} / 账号 {accounts})",
             file=sys.stderr,
             flush=True,
         )
@@ -610,7 +609,7 @@ async def _log_intercept(cfg: dict, ep: str, rule: dict, content: str, ip: str, 
                 "content": str_cut(content, 200),
             },
         )
-        del logs[max(0, _cfgint(cfg, "intercept_log_max", 200)):]
+        del logs[max(0, _cfgint(cfg, "intercept_log_max", 100)):]
 
     await STORE.aupdate(_fn)
 
@@ -820,7 +819,7 @@ def _breaker_queue_reason(br: dict) -> str:
     熔断期间取号整段被跳过，队列条目本来没有原因，面板上只能看到「排队中」——
     线上实测 kimi-k3 熔断时 19 条排队全无原因，看不出是模型在熔断。
     """
-    return "模型熔断中（连续失败 %s 次，约 %s 秒后恢复探测）" % (br.get("fails"), br.get("left"))
+    return "模型熔断 · 失败 %s 次 · %s 秒后重试" % (br.get("fails"), br.get("left"))
 
 
 async def take_account(request: Request, ep: str, model: str, est_tokens: int, cfg: dict, tok: str = "") -> dict:
@@ -1431,7 +1430,7 @@ def _remote_update() -> tuple[bool, str]:
         STORE.flush()
     except Exception:
         pass
-    print(f"[update] GitHub main 已覆盖 {copied} 个文件(已备份)→ 稍后 execv 重启", file=sys.stderr, flush=True)
+    print(f"[update] 覆盖 {copied} 文件,已备份,即将重启", file=sys.stderr, flush=True)
     _schedule_restart(2.0, "update")
     return True, ""
 
@@ -1499,7 +1498,7 @@ def _remote_rollback(base: str | None = None, restart: bool = True) -> tuple[boo
     tail = f"{restored} 个代码文件" + ("+ data/" if data_restored else "")
     if not restart:
         return True, f"已回滚({tail},未重启)"
-    print(f"[rollback] 已恢复 {tail} → 稍后 execv 重启", file=sys.stderr, flush=True)
+    print(f"[rollback] 已恢复 {tail},即将重启", file=sys.stderr, flush=True)
     _schedule_restart(2.0, "rollback")
     return True, ""
 

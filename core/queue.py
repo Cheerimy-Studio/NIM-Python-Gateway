@@ -48,8 +48,17 @@ def add(ep: str, model: str, ip: str, tok: str = "", reason: str = "") -> str:
 
 
 def set_reason(qid: str, reason: str) -> None:
-    """刷新某条等待的阻塞原因（等待期间原因会变：从冷却变成并发满等）。"""
+    """刷新某条等待的阻塞原因（等待期间原因会变：从冷却变成并发满等）。
+
+    只在**内容真的变了**才落一次存储：等待者每轮询周期都会调这个函数，几百个
+    等待者同时刷会把存储锁打满（队列本来就有抖动来避免这点）。
+    """
     r = str(reason)[:90]
+    for e in STORE.load().get("queue") or []:
+        if isinstance(e, dict) and e.get("id") == qid:
+            if str(e.get("reason") or "") == r:
+                return  # 没变，不写
+            break
 
     def _fn(db: dict):
         for e in db.get("queue") or []:
@@ -71,7 +80,7 @@ def public_hint(reason: str) -> str:
     if not r:
         return "排队等待中"
     if "熔断" in r:
-        return "该模型正在熔断恢复"
+        return "模型熔断恢复中"
     if any(k in r for k in ("封禁", "冷却", "RPM", "TPM", "日限", "上游RPM", "上游日限")):
         return "账号限流冷却中"
     if any(k in r for k in ("账户并发", "渠道并发")):
