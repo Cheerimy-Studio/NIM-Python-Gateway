@@ -919,6 +919,7 @@ def _remote_update() -> tuple[bool, str]:
 
     base = os.path.dirname(os.path.abspath(__file__))
     url = "https://codeload.github.com/Cheerimy-Studio/NIM-Python-Gateway/tar.gz/refs/heads/main"
+    data = b""
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "gateway-updater"})
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -926,18 +927,26 @@ def _remote_update() -> tuple[bool, str]:
     except Exception as e:
         return False, f"下载失败: {e}"
 
+    # 非 gzip 内容诊断:代理残留/劫持页会返回 HTML —— 带前 120 字节进错误消息
+    if not data.startswith(b"\x1f\x8b"):
+        head = data[:120]
+        try:
+            head_txt = head.decode("utf-8", "replace")
+        except Exception:
+            head_txt = head.hex()
+        return False, f"下载内容不是 gzip(前120字节: {head_txt})"
+
     # 解包到临时目录
     tmpdir = os.path.join(base, "_update_tmp")
-    shutil = None
     try:
         import shutil as _sh
-        shutil = _sh
         shutil.rmtree(tmpdir, ignore_errors=True)
         os.makedirs(tmpdir)
-        import gzip as _gz
-        raw = _gz.decompress(data)
+        # tarfile 直读 gzip(内部用 GzipFile 逐块解压)—— 不经过 gzip.decompress:
+        # Python 3.8 的 gzip.decompress 对部分 gzip 变体会抛 "Not a gzipped file",
+        # 服务器实测就是它;tarfile 的 r:gz 模式全版本兼容
         import tarfile as _tf
-        with _tf.open(fileobj=io.BytesIO(raw), mode="r:gz") as tf:
+        with _tf.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
             tf.extractall(tmpdir)  # noqa: S202 - 只解 GitHub 官方 tarball
         # 找到顶层目录
         entries = os.listdir(tmpdir)
@@ -947,6 +956,11 @@ def _remote_update() -> tuple[bool, str]:
         if not os.path.isdir(src):
             src = tmpdir
     except Exception as e:
+        try:
+            import shutil as _sh2
+            _sh2.rmtree(tmpdir, ignore_errors=True)
+        except Exception:
+            pass
         return False, f"解包失败: {e}"
 
     # 语法自检:py 文件全部通过才继续(防半成品/冲突代码上线)
