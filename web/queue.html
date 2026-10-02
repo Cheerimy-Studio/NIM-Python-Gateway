@@ -44,8 +44,6 @@ tr:last-child td{border-bottom:0}
   <p class="muted" style="margin-top:12px">当所有账号暂不可用时，请求进入排队等待；队首优先获得下一个可用账号。刷新本页查看排队最新状态。</p>
 </div>
 <script>
-// 排队条目里的模型名来自客户端请求，渲染前必须转义，
-// 否则一条带 <script> 的模型名会在打开本页的任何人浏览器里执行（公开页 XSS）。
 const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function refresh(){
   try{
