@@ -1,5 +1,5 @@
 @echo off
-rem 启动 NVIDIA NIM 网关（Windows）。依赖 Python 3.10+。
+rem Start NVIDIA NIM Gateway (Windows). Requires Python 3.10+.
 cd /d "%~dp0"
 
 if not exist data mkdir data

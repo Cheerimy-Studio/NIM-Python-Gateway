@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 启动 NVIDIA NIM 网关（Linux/macOS）。依赖 Python 3.10+。
+# Start NVIDIA NIM Gateway (Linux/macOS). Requires Python 3.10+.
 set -e
 cd "$(dirname "$0")"
 mkdir -p data
