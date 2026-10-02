@@ -26,7 +26,8 @@ const fmtAgo = ts => {
   if (s < 86400) return Math.floor(s / 3600) + 'h';
   return Math.floor(s / 86400) + 'd';
 };
-const statusText = st => st === 0 ? '网络' : String(st);
+const statusText = st => st === 0 ? '网络' : st === 499 ? '断开' : String(st);
+const errCls = st => st === 499 ? 'text-muted' : 'text-danger';
 
 const BAN_NAMES = {
   fail_ladder: '失败封禁', auth_fail: '鉴权失败', invalid_key: '密钥失效',
@@ -173,7 +174,7 @@ async function loadOverview() {
   for (const r of o.recent_errors) {
     const tr = el('tr');
     tr.append(el('td', 'small', fmtTime(r[0])), el('td', 'small text-truncate', r[2] || '-'),
-      el('td', 'small', statusText(r[4])), el('td', 'small text-danger err-cell text-truncate', r[6] || '-'));
+      el('td', 'small', statusText(r[4])), el('td', 'small err-cell text-truncate ' + errCls(r[4]), r[6] || '-'));
     te.appendChild(tr);
   }
 
@@ -494,9 +495,9 @@ async function refreshKeyPanel(id, panel) {
       el('td', 'small', fmtTime(r[0])),
       el('td', 'small', EP_NAMES[r[1]] || r[1]),
       el('td', 'small text-truncate', r[2] || '-'),
-      el('td', 'small ' + (ok ? 'text-success' : 'text-danger fw-bold'), statusText(r[3])),
+      el('td', 'small ' + (ok ? 'text-success' : (r[3] === 499 ? 'text-muted' : 'text-danger fw-bold')), statusText(r[3])),
       el('td', 'text-end small', r[4] + 'ms'),
-      el('td', 'small text-danger err-cell', r[5] || '-'),
+      el('td', 'small err-cell ' + errCls(r[3]), r[5] || '-'),
     );
     tbody.appendChild(tr);
   }

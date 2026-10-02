@@ -1804,6 +1804,25 @@ try:
         and isinstance(_cmd_py, list) and _cmd_py[0] == sys.executable,
         "-m=%s exe=%s py=%s" % (_cmd_m, _cmd_exe, "ok" if _cmd_py else None))
 
+    # 错误日志统一分类:失败行带 [分类] 标签,成功行上的提示不被打标
+    _tag_499 = _srv._err_tag(499, "客户端已断开")
+    _tag_500 = _srv._err_tag(500, "Upstream 500: internal error")
+    _tag_pool = _srv._err_tag(0, "httpx.PoolTimeout: pool timed out")
+    _note_tagged = _srv._should_tag(200, "思考退化已清理")
+    add("错误日志统一分类标签",
+        _tag_499 == "[客户端断开]" and _tag_500.startswith("[") and _tag_pool == "[网关连接池]"
+        and (not _note_tagged),
+        "499=%s 500=%s 连接池=%s 成功提示打标=%s" % (_tag_499, _tag_500, _tag_pool, _note_tagged))
+    c.post("/v1/chat/completions", json={"model": "chdown", "messages": [{"role": "user", "content": "hi"}]})
+    time.sleep(0.6)
+    _lrows = a.get("/api/logs?n=8").json().get("rows") or []
+    _tagged_rows = [
+        r for r in _lrows
+        if isinstance(r, list) and len(r) > 6 and str(r[4]) not in ("200", "") and str(r[6]).startswith("[")
+    ]
+    add("失败日志在接口里也带分类标签", bool(_tagged_rows),
+        "命中 %d 行,例:%s" % (len(_tagged_rows), str(_tagged_rows[0][6])[:48] if _tagged_rows else "无"))
+
     # 队列条目要带「为什么在等」:线上真出现过 29 个 kimi-k3 请求排队 50+ 秒却看不出
     # 原因(候选账号太少?冷却?并发满?)。后台给完整原因,公开页只给粗粒度结论。
     # 本块会临时改并发/冷却设置,结束前按原值还原,避免污染后面的用例。

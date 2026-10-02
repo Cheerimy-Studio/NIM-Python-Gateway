@@ -1536,6 +1536,50 @@ def gateway_model_ids() -> list[str]:
     return aliases or list(FALLBACK_MODELS)
 
 
+# 日志错误的统一分类标签。文案来自很多路径(上游原文、连接层翻译、看门狗/兜底释放…),
+# 标签在这里集中生成,后台看到的永远是「[限流] 渠道限流…」这种一致形态。
+_ERR_TAGS = {
+    "429": "限流",
+    "auth": "鉴权",
+    "payment": "余额",
+    "timeout": "超时",
+    "conn": "连接",
+    "5xx": "上游5xx",
+    "model": "模型",
+    "channel": "渠道",
+    "req": "请求",
+    "pool_exhausted": "网关连接池",
+}
+
+
+def _should_tag(status: int, msg: str) -> bool:
+    """是否给这条日志文案打分类标签。
+
+    失败行(>=400 / 0)一律打;200 行只有内容像问题时才打 —— 成功行上会带
+    「思考退化已清理」这类提示,不该被当成错误。
+    """
+    st = int(status or 0)
+    if st >= 400 or st == 0:
+        return True
+    return any(k in msg for k in ("中断", "超时", "失败", "异常", "PoolTimeout", "兜底", "错误"))
+
+
+def _err_tag(status: int, err: str) -> str:
+    """给日志文案生成统一分类标签(如 `[限流]`)。"""
+    msg = str(err or "").strip()
+    if not msg:
+        return ""
+    if int(status or 0) == 499 or "客户端已断开" in msg:
+        return "[客户端断开]"
+    if "兜底释放账号" in msg:
+        return "[网关异常]"
+    if "排队" in msg and "超时" in msg:
+        return "[排队超时]"
+    cls = pool._classify(int(status or 0), 0, msg)
+    tag = _ERR_TAGS.get(cls)
+    return f"[{tag}]" if tag else "[其他]"
+
+
 def _release_log(
     ep: str,
     model: str,
@@ -1552,6 +1596,11 @@ def _release_log(
     out_tok: int = 0,
     tok: str = "",
 ) -> dict:
+    msg = str(err or "")
+    if msg and _should_tag(status, msg):
+        tag = _err_tag(status, msg)
+        if tag and not msg.startswith("["):
+            msg = f"{tag} {msg}".strip()
     return {
         "t": int(time.time()),
         "ep": ep,
@@ -1559,7 +1608,7 @@ def _release_log(
         "key": mask_email(str(key.get("email"))) if key else "-",
         "st": status,
         "ms": ms,
-        "err": err[:140],
+        "err": msg[:140],
         "ip": ip,
         "att": attempt,
         "up_model": up_model,
