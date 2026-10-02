@@ -65,7 +65,7 @@ def public_hint(reason: str) -> str:
     r = str(reason or "")
     if not r:
         return ""
-    if any(k in r for k in ("渠道模型", "原名禁用")):
+    if any(k in r for k in ("渠道模型", "原名禁用", "模型不存在")):
         return "该模型当前不可用"
     if any(k in r for k in ("封禁", "冷却", "RPM", "TPM", "日限", "上游RPM", "上游日限")):
         return "账号限流冷却中"
