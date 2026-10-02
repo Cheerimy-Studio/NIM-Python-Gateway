@@ -379,6 +379,12 @@ def _tok_mask(t: str) -> str:
     return t[:10] + "…" + t[-4:]
 
 
+# 正则模式的扫描窗口:re 引擎没有超时,而消息内容来自客户端(可能极长)。
+# 限制扫描范围可把「坏正则 × 超长输入」的爆炸风险压住。其余模式是线性匹配,
+# 仍按全文处理,避免出现「明明包含却不命中」的意外。
+_REGEX_SCAN_MAX = 8000
+
+
 def _match_custom_rule(req: dict, cfg: dict, allow_prompt: bool = False) -> tuple[dict, str] | None:
     """自定义回复拦截:最后一条 user 消息按规则匹配(包含/等于/前缀/后缀/正则)。
 
@@ -421,7 +427,7 @@ def _match_custom_rule(req: dict, cfg: dict, allow_prompt: bool = False) -> tupl
                 or (mode == "equals" and last_user.strip() == pat)
                 or (mode == "prefix" and last_user.strip().startswith(pat))
                 or (mode == "suffix" and last_user.strip().endswith(pat))
-                or (mode == "regex" and re.search(pat, last_user))
+                or (mode == "regex" and re.search(pat, last_user[:_REGEX_SCAN_MAX]))
             )
         except re.error:
             continue

@@ -982,25 +982,35 @@ async def intercept_rule_add(request: Request):
     mode = str(body.get("match_mode") or "contains")
     if mode not in ("contains", "equals", "prefix", "suffix", "regex"):
         return JSONResponse({"error": {"message": "未知匹配模式"}}, status_code=400)
-    pattern = str(body.get("pattern") or "").strip()
-    reply = str(body.get("reply") or "")
+    # 先按存储上限截断、再校验:存进库的必须就是被校验过的那一份。
+    # 旧写法先校验全文再截断存入,超长正则会存成另一个可能非法的模式(规则静默失效)。
+    pattern = str(body.get("pattern") or "").strip()[:120]
+    reply = str(body.get("reply") or "")[:2000]
     name = str(body.get("name") or "").strip()[:40]
     if not pattern or not reply:
         return JSONResponse({"error": {"message": "匹配内容与回复内容不能为空"}}, status_code=400)
     if mode == "regex":
         import re as _re
+
         try:
             _re.compile(pattern)
         except Exception as e:
             return JSONResponse({"error": {"message": f"正则无效: {e}"}}, status_code=400)
+        # 嵌套量词((a+)+ / (.*)* / (a+){2,})在长输入上会灾难性回溯。网关是单进程
+        # 事件循环,一旦卡住就是全站无响应,所以在添加时就拒掉并给出改法。
+        if _re.search(r"\([^()]*[+*][^()]*\)\s*[+*{]", pattern):
+            return JSONResponse(
+                {"error": {"message": "正则含嵌套量词(如 (a+)+),长输入会灾难性回溯,请改写"}},
+                status_code=400,
+            )
 
     def _fn(db: dict):
         db["config"].setdefault("custom_rules", []).append({
             "id": "r_" + os.urandom(4).hex(),
             "name": name,
             "match_mode": mode,
-            "pattern": pattern[:120],
-            "reply": reply[:2000],
+            "pattern": pattern,
+            "reply": reply,
         })
 
     await STORE.aupdate(_fn)

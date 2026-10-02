@@ -1488,6 +1488,22 @@ try:
     _i5 = json.dumps(r_i5.json(), ensure_ascii=False) if r_i5.status_code == 200 else r_i5.text
     add("拦截:Responses 协议回复", r_i5.status_code == 200 and "傻子都没你蠢" in _i5,
         "st=%s 含内容=%s" % (r_i5.status_code, "傻子都没你蠢" in _i5))
+    # 协议流式拦截:Anthropic / Responses 走各自的事件状态机(不是原样透传 chat chunk)
+    with c.stream("POST", "/v1/messages",
+                  json={"model": "mock-model", "max_tokens": 64, "stream": True,
+                        "messages": [{"role": "user", "content": "hi Reply and OK"}]}) as r_s1:
+        st_s1 = r_s1.status_code
+        raw_s1 = r_s1.read().decode("utf-8", "replace")
+    add("拦截:Anthropic 流式回复",
+        st_s1 == 200 and "傻子都没你蠢" in raw_s1 and "message_stop" in raw_s1 and "[DONE]" not in raw_s1,
+        "st=%s 含内容=%s 事件收尾=%s" % (st_s1, "傻子都没你蠢" in raw_s1, "message_stop" in raw_s1))
+    with c.stream("POST", "/v1/responses",
+                  json={"model": "mock-model", "stream": True, "input": "hi Reply and OK"}) as r_s2:
+        st_s2 = r_s2.status_code
+        raw_s2 = r_s2.read().decode("utf-8", "replace")
+    add("拦截:Responses 流式回复",
+        st_s2 == 200 and "傻子都没你蠢" in raw_s2 and "response." in raw_s2,
+        "st=%s 含内容=%s 事件=%s" % (st_s2, "傻子都没你蠢" in raw_s2, "response." in raw_s2))
     # completions 协议:必须回 text_completion 形态(不是 chat 对象)
     r_i6 = c.post("/v1/completions", json={"model": "mock-model", "prompt": "hello Reply and OK"}, timeout=30)
     j_i6 = r_i6.json() if r_i6.status_code == 200 else {}
@@ -1498,6 +1514,22 @@ try:
     # embeddings 不参与拦截(input 不是对话文本,返回形态对不上)
     r_i7 = c.post("/v1/embeddings", json={"model": "mock-model", "input": "hello Reply and OK"}, timeout=30)
     add("拦截:embeddings 不参与", "傻子都没你蠢" not in r_i7.text, "st=%s" % r_i7.status_code)
+    # 危险正则(嵌套量词)在添加时就被拒:单进程事件循环上不允许灾难性回溯
+    r_i8 = a.post("/api/intercept/rules", json={"match_mode": "regex", "pattern": "(a+)+$", "reply": "x"})
+    add("拦截:危险正则被拒(嵌套量词)", r_i8.status_code == 400, "st=%s" % r_i8.status_code)
+    # 先截断再校验:超长正则截断后若已非法,必须直接拒(旧写法会存下一个非法模式,规则静默失效)
+    r_i9 = a.post("/api/intercept/rules", json={"match_mode": "regex", "pattern": "(" + "a" * 130 + ")", "reply": "x"})
+    add("拦截:超长正则截断后校验", r_i9.status_code == 400, "st=%s" % r_i9.status_code)
+    # 正则模式的扫描窗口:窗口内命中,窗口外(超长输入尾部)不命中
+    a.post("/api/intercept/rules", json={"match_mode": "regex", "pattern": "TAIL-MARK", "reply": "窗口内命中"})
+    r_ia = c.post("/v1/chat/completions", json={"model": "mock-model",
+                  "messages": [{"role": "user", "content": "x" * 9000 + "TAIL-MARK"}]}, timeout=30)
+    _ia = ((r_ia.json().get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    r_ib = c.post("/v1/chat/completions", json={"model": "mock-model",
+                  "messages": [{"role": "user", "content": "y" * 100 + "TAIL-MARK"}]}, timeout=30)
+    _ib = ((r_ib.json().get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    add("拦截:正则只扫描前 8000 字符", _ia == "ok" and _ib == "窗口内命中",
+        "超长尾部=%r 短文本=%r" % (_ia[:12], _ib[:12]))
     a.post("/api/intercept/toggle", json={"enabled": False})
     r_i4 = c.post(
         "/v1/chat/completions",
