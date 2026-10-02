@@ -263,7 +263,7 @@ location / {
 ```bash
 pip install -r requirements-dev.txt
 
-python tests/regression.py   # 149 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
+python tests/regression.py   # 150 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
 python tests/compat.py       # 19 项：全部接口 + 协议结构兼容性
 python tests/predeploy_check.py  # 部署前预检：拉更新源演练覆盖范围 + Python 3.8 语法/API 体检 + 前端零注释
 python tests/static_check.py     # 静态检查(pyflakes)：未定义名/别名误用这类只在运行时炸的缺陷

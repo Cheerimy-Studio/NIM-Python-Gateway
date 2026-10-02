@@ -336,6 +336,11 @@ def validate_save(data: dict) -> tuple[dict | None, str]:
         return None, "名称不能为空"
     if not re.match(r"^https?://", base):
         return None, "Base URL 必须以 http(s):// 开头"
+    # 常见配错:把完整端点粘进 Base URL。网关自己会拼 /chat/completions 等,于是请求打到
+    # .../chat/completions/chat/completions,该渠道全量 404(客户端只看到「渠道不支持该
+    # 请求或模型」,日志里是一串上游 404)。在保存时就挡住并说清正确写法。
+    if base.endswith(("/chat/completions", "/completions", "/embeddings", "/responses", "/messages")):
+        return None, "Base URL 只填到 /v1 这一层,不要带 /chat/completions 这类端点"
 
     def clamp(field: str, lo: int, hi: int, default: int) -> int:
         """-1 = 不限制（存为 -1），0 = 继承/默认，正数 = 覆盖值。
@@ -409,9 +414,16 @@ def save(data: dict) -> tuple[dict | None, str]:
     def _fn(db: dict):
         for i, u in enumerate(db["upstreams"]):
             if u["id"] == uid:
+                # row 是整行替换:渠道行上不在表单字段里的既有元数据必须带过来,
+                # 否则行上任何表外字段都会在每次保存时被静默抹掉(以前这里紧接着的
+                # 两个 row.pop 就是死代码 —— row 里根本没有这些键,想保留/清理的语义
+                # 一直没生效)。
+                for k, v in u.items():
+                    if k not in row:
+                        row[k] = v
                 row["id"] = uid
-                row["created_at"] = u.get("created_at")
                 if row["enabled"]:
+                    # 重新启用:清掉「自动停用」标记,免得面板继续显示旧原因
                     row.pop("auto_disabled_at", None)
                     row.pop("auto_reason", None)
                 db["upstreams"][i] = row

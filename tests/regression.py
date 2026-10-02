@@ -1394,13 +1394,63 @@ try:
         )
     finally:
         _st.DATA_DIR, _st.DB_PATH = _old_dir, _old_path
-    add("存储:损坏留备份+告警 / 落盘失败保持 dirty 并重试 / memo 指纹一致",
-        _st_res.get("corrupt") == (True, True, True)
+    add("存储:损坏留备份+告警 / 落盘失败保持 dirty 并重试 / memo 指纹一致",        _st_res.get("corrupt") == (True, True, True)
         and _st_res.get("flush") == (True, True, True, True)
         and (_st.DATA_DIR, _st.DB_PATH) == (_old_dir, _old_path),
         "损坏=%s 落盘=%s 路径已还原=%s"
         % (_st_res.get("corrupt"), _st_res.get("flush"),
            (_st.DATA_DIR, _st.DB_PATH) == (_old_dir, _old_path)))
+
+    # 渠道保存:① Base URL 粘成完整端点必须当场拒掉 —— 网关自己会拼 /chat/completions,
+    # 于是请求打到 .../chat/completions/chat/completions,该渠道全量 404(客户端只看到
+    # 「渠道不支持该请求或模型」);② save() 是整行替换,渠道行上的表外元数据必须带过来,
+    # 只有「保存为启用」时才清自动停用标记,否则每次保存都会静默抹掉这些字段。
+    import core.upstreams as _up
+
+    class _FakeStore:
+        def __init__(self, db):
+            self.db = db
+
+        def load(self):
+            return self.db
+
+        def update(self, fn):
+            fn(self.db)
+            return self.db
+
+        def flush(self):
+            pass
+
+    _up_bad_base = _up.validate_save({"name": "X", "base": "http://h/v1/chat/completions"})[1]
+    _up_good_base = _up.validate_save({"name": "X", "base": "https://integrate.api.nvidia.com/v1/"})[0]
+    _fdb2 = {"upstreams": [], "config": {}}
+    _fake2 = _FakeStore(_fdb2)
+    # save() 内部是 `from .store import STORE`(调用时读模块属性),所以 core.store.STORE
+    # 与 upstreams.STORE 两处都要临时换掉,才真正隔离到假 store(不碰实例的 db.json)
+    _real_store2, _real_store2b = _st.STORE, _up.STORE
+    try:
+        _st.STORE = _fake2
+        _up.STORE = _fake2
+        _row2, _ = _up.save({"name": "X", "base": "http://h/v1", "enabled": False})
+        _uid2 = _row2["id"]
+        _fdb2["upstreams"][0]["auto_disabled_at"] = 123
+        _fdb2["upstreams"][0]["auto_reason"] = "连败自动停用"
+        _fdb2["upstreams"][0]["future_field"] = "keep"
+        _up.save({"id": _uid2, "name": "X", "base": "http://h/v1", "enabled": False})
+        _kept_dis = dict(_fdb2["upstreams"][0])
+        _up.save({"id": _uid2, "name": "X", "base": "http://h/v1", "enabled": True})
+        _kept_en = dict(_fdb2["upstreams"][0])
+    finally:
+        _st.STORE, _up.STORE = _real_store2, _real_store2b
+    add("渠道保存:Base URL 带端点被拒 / 表外元数据不被整行替换抹掉",
+        bool(_up_bad_base) and "/v1" in _up_bad_base and _up_good_base is not None
+        and _kept_dis.get("future_field") == "keep" and _kept_dis.get("auto_reason") == "连败自动停用"
+        and "auto_reason" not in _kept_en and "auto_disabled_at" not in _kept_en
+        and _kept_en.get("future_field") == "keep" and _kept_en.get("id") == _uid2,
+        "带端点=%r 正常前缀=%s 停用时保留=%s 启用后清除=%s"
+        % (_up_bad_base, _up_good_base is not None,
+           (_kept_dis.get("auto_reason"), _kept_dis.get("future_field")),
+           "auto_reason" not in _kept_en))
 
     # 令牌追踪:日志记录调用令牌(遮罩)、令牌页显示最后调用 IP/时间、公开队列不泄漏
     r_trk = c.post(
