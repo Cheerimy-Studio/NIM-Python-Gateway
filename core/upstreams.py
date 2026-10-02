@@ -379,6 +379,9 @@ def validate_save(data: dict) -> tuple[dict | None, str]:
         "max_retries": clamp("max_retries", 0, 20, 0),
         "retry_backoff_base_ms": clamp("retry_backoff_base_ms", 0, 60_000, 0),
         "retry_backoff_max_ms": clamp("retry_backoff_max_ms", 0, 300_000, 0),
+        # 运行时按渠道读它(server._backoff_ms 的 eff("retry_min_wait_ms")),但保存路径
+        # 以前漏了这个字段 —— 渠道表单里填「失败重试最小等待」永远存不下来,静默回落到全局。
+        "retry_min_wait_ms": clamp("retry_min_wait_ms", 0, 60_000, 0),
         "ban_step_seconds": clamp("ban_step_seconds", 0, 3600, 0),
         "ban_max_seconds": clamp("ban_max_seconds", 0, 86_400, 0),
         "hard_fail_ban_seconds": clamp("hard_fail_ban_seconds", 0, 86_400, 0),

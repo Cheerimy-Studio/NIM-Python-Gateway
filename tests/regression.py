@@ -1452,6 +1452,30 @@ try:
            (_kept_dis.get("auto_reason"), _kept_dis.get("future_field")),
            "auto_reason" not in _kept_en))
 
+    # 渠道级「失败重试最小等待」以前只在运行时被读、保存路径漏字段 → 渠道表单填了永远存不下来,
+    # 静默回落到全局。两半一起验:①经真实 API 保存能落库;②_backoff_ms 真按渠道值抬高等待
+    # (用假 store 直测,避免跨进程读文件的时间差)。
+    _rmw = a.post("/api/upstreams", json={"name": "RMW", "base": "http://127.0.0.1:18212/v1",
+                                          "enabled": True, "retry_min_wait_ms": 1500}).json()
+    _rmw_id = ((_rmw.get("upstream") or {}).get("id") or "")
+    _rmw_row = next((r for r in a.get("/api/upstreams").json()["rows"] if r["id"] == _rmw_id), {})
+    _rmw_saved = int(_rmw_row.get("retry_min_wait_ms") or 0)
+    import server as _srv2
+    _cfg3 = {"retry_backoff_base_ms": 500, "retry_backoff_max_ms": 8000, "retry_min_wait_ms": 0}
+    _fdb3 = {"upstreams": [{"id": "u_rmw", "retry_min_wait_ms": 1500},
+                           {"id": "u_plain", "retry_min_wait_ms": 0}], "config": {}}
+    _real3 = _up.STORE
+    try:
+        _up.STORE = _FakeStore(_fdb3)
+        _wait_with = _srv2._backoff_ms(_cfg3, 1, {"upstream_id": "u_rmw"})
+        _wait_without = _srv2._backoff_ms(_cfg3, 1, {"upstream_id": "u_plain"})
+    finally:
+        _up.STORE = _real3
+    add("渠道级「重试最小等待」能保存且运行时生效",
+        _rmw_saved == 1500 and _wait_with >= 1500 and _wait_without < 1500,
+        "落库=%s 有该渠道=%dms 无该渠道=%dms" % (_rmw_saved, _wait_with, _wait_without))
+    a.post("/api/upstreams/delete", json={"id": _rmw_id})
+
     # 令牌追踪:日志记录调用令牌(遮罩)、令牌页显示最后调用 IP/时间、公开队列不泄漏
     r_trk = c.post(
         "/v1/chat/completions",
