@@ -61,7 +61,10 @@
 - `POST /api/rollback`：回到上次更新前的代码与数据；**只能回滚一次**（备份用完即删）
 - 演练与换源：`NGW_UPDATE_DRYRUN=1` 只做下载→解包→自检（不覆盖、不重启），`NGW_UPDATE_URL` 可指向自建镜像
 - 重启沿用原启动形态；`python -m uvicorn` 启动时会还原成 `-m` 形态 —— 直接执行 `uvicorn/__main__.py`
-  会把该目录放进 `sys.path[0]`，包内 `logging.py` 会遮蔽标准库导致重启后立刻崩溃
+  会把该目录放进 `sys.path[0]`，包内 `logging.py` 会遮蔽标准库导致重启后立刻崩溃；
+  控制台脚本（`uvicorn.exe`）形态下 execv 会「杀而不启」，此时放弃自助重启
+- 任何重启路径（更新 / 回滚 / 看门狗 / 定时）都会**先清空队列条目并落盘**：队列里的等待者会随进程
+  一起消亡，条目留下来就会在面板上虚报「排队中」（对外队列页也会显示幽灵等待）
 
 ### 协议兼容
 - `POST /v1/chat/completions`（流式 / 非流式）
@@ -226,7 +229,7 @@ location / {
 ```bash
 pip install -r requirements-dev.txt
 
-python tests/regression.py   # 116 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
+python tests/regression.py   # 123 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
 python tests/compat.py       # 19 项：全部接口 + 协议结构兼容性
 python tests/predeploy_check.py  # 部署前预检：拉更新源演练覆盖范围 + Python 3.8 语法/API 体检
 python tests/update_e2e.py   # 真实更新路径端到端：临时副本上真的覆盖 + execv 重启

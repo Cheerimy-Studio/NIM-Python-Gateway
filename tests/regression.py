@@ -1643,12 +1643,13 @@ try:
         "queue": [
             {"id": "q1", "t": time.time() - 10, "ip": "-", "ep": "chat", "model": "m"},     # 新鲜
             {"id": "q2", "t": time.time() - 30, "ip": "-", "ep": "chat", "model": "m"},     # 新鲜
-            {"id": "q3", "t": time.time() - 3000, "ip": "-", "ep": "chat", "model": "m"},   # 僵尸(>600s)
-            {"id": "q4", "t": time.time() - 9000, "ip": "-", "ep": "chat", "model": "m"},   # 僵尸
+            {"id": "q3", "t": time.time() - 400, "ip": "-", "ep": "chat", "model": "m"},    # 超过窗口+余量(360s)
+            {"id": "q4", "t": time.time() - 3000, "ip": "-", "ep": "chat", "model": "m"},   # 僵尸
         ],
     }
     _srv._prune_queue(_qdb, time.time())
-    add("僵尸队列条目被清理", len(_qdb["queue"]) == 2, "剩余 %d 条(应为 2)" % len(_qdb["queue"]))
+    add("僵尸队列条目被清理(窗口+余量)", len(_qdb["queue"]) == 2,
+        "剩余 %d 条(应为 2);窗口 300s+60s 余量,400s 前的条目应被清掉" % len(_qdb["queue"]))
 
     # 看门狗雪崩判定(纯函数直测)
     _db = {"keys": [
@@ -1730,6 +1731,24 @@ try:
         _srv.pool._classify(0, 0, "httpx.PoolTimeout: timed out"))
     _txt_pool = _srv._conn_reason(httpx.PoolTimeout("pool timed out"))
     add("连接池超时文案含池上限与在途", "连接池" in _txt_pool and "在途" in _txt_pool, _txt_pool[:70])
+
+    # 重启命令行:`python -m <pkg>` 形态必须还原成 -m —— 直接执行 __main__.py 会把
+    # 它所在目录放进 sys.path[0],包内 logging.py 遮蔽标准库,重启后进程立刻崩;
+    # 控制台脚本(exe)形态 execv 会「杀而不启」,必须放弃重启。
+    _save_argv = list(sys.argv)
+    try:
+        sys.argv = ["C:/x/site-packages/uvicorn/__main__.py", "server:app", "--port", "8080"]
+        _cmd_m = _srv._restart_argv()
+        sys.argv = ["C:/nonexistent/uvicorn.exe", "server:app"]
+        _cmd_exe = _srv._restart_argv()
+        sys.argv = [os.path.abspath(__file__)]
+        _cmd_py = _srv._restart_argv()
+    finally:
+        sys.argv = _save_argv
+    add("重启命令行:-m 还原 / exe 放弃 / .py 原样",
+        isinstance(_cmd_m, list) and _cmd_m[1:3] == ["-m", "uvicorn"] and _cmd_exe is None
+        and isinstance(_cmd_py, list) and _cmd_py[0] == sys.executable,
+        "-m=%s exe=%s py=%s" % (_cmd_m, _cmd_exe, "ok" if _cmd_py else None))
 
     first_bad = []
 

@@ -97,47 +97,85 @@ def _prune_queue(db: dict, now: float) -> None:
     except (TypeError, ValueError):
         mw = 15
     mw = 0 if mw == 0 else max(5, mw)
-    cutoff = now - mw * 2
+    # 允许的最长等待与 take_account 的规则一致：队列等待要覆盖 429 冷却，
+    # 否则会误删还活着的等待者条目。留 60s 余量。
+    try:
+        cool429 = int(cfg.get("cool_429_seconds") or 0)
+    except (TypeError, ValueError):
+        cool429 = 0
+    allowed = max(mw, min(cool429 + 2, 600) if (mw > 0 and cool429 > 0) else mw)
+    # 进程外的重启（宝塔/手动部署）不走 _prepare_restart，会留下僵尸条目；
+    # 原来按 2 倍窗口清理，会虚报「排队中」好几分钟（线上实测见过 498s）。
+    cutoff = now - (allowed + 60 if allowed > 0 else 900)
     db["queue"] = [
         e for e in (db.get("queue") or [])
         if isinstance(e, dict) and e.get("t", 0) >= cutoff
     ]
 
 
-def _self_restart(reason: str) -> None:
-    """以同 PID 自我重启(execv 替换进程镜像):
+def _restart_argv() -> list[str] | None:
+    """可复启的命令行；返回 None 表示当前启动形态不适合自助重启。
 
-    - `python -m uvicorn server:app ...` 下 sys.argv[0] 是 uvicorn 的 __main__.py,
-      原样拼接即可复启;要求 argv[0] 是 .py 文件 —— 控制台脚本(uvicorn.exe)或
-      进程管理器拉起时 execv 会「杀而不启」,宁可放弃重启也不能让网关死掉
-    - Python socket 默认不可继承,execv 后旧监听端口随之释放,无端口冲突
+    - `python -m <pkg>`：argv[0] 是 `<pkg>/__main__.py`。**必须还原成 -m 形态**：
+      直接执行它会把它所在目录放进 sys.path[0]，包内的 logging.py 之类会遮蔽
+      标准库，重启后的进程立刻 AttributeError 崩掉（本机实测 uvicorn：
+      `module 'logging' has no attribute 'Formatter'`）——等于「杀而不启」。
+    - `python 脚本.py`：argv[0] 是存在的 .py 文件，原样复启。
+    - 控制台脚本（uvicorn.exe 等）：execv 会「杀而不启」，放弃重启更安全。
     """
-    STORE.flush()
-    argv0 = sys.argv[0] if sys.argv and sys.argv[0] else ""
-    if not (argv0 and argv0.endswith(".py") and os.path.exists(argv0)):
-        print("[watchdog] 无法自助重启:argv[0] 不可复启 %r" % argv0, file=sys.stderr)
-        return
+    argv = [str(x) for x in (sys.argv or [])]
+    if argv and os.path.basename(argv[0]) == "__main__.py":
+        pkg = os.path.basename(os.path.dirname(os.path.abspath(argv[0])))
+        if pkg.isidentifier():
+            return [sys.executable, "-m", pkg] + argv[1:]
+        return None
+    if argv and argv[0].endswith(".py") and os.path.exists(argv[0]):
+        return [sys.executable] + argv
+    return None
+
+
+def _prepare_restart(reason: str, tag: str = "watch") -> None:
+    """重启前的收尾：落盘 + 清掉队列条目 + 记一条日志。
+
+    队列里的等待者会随本进程一起消亡，条目必然变成僵尸（线上实测过面板虚报
+    「排队中」，且能挂到 8 分钟以上）——所以任何重启路径都要清。
+    """
+    try:
+        STORE.flush()
+    except Exception:
+        pass
     try:
 
         def _fn(db: dict):
-            # 队列里的等待者随本进程一起消亡,条目必成僵尸 —— 清空
             db["queue"] = []
             if db.get("config", {}).get("log_enabled", True):
                 logs = db.setdefault("logs", [])
                 logs.insert(
                     0,
-                    [int(time.time()), "watch", "watchdog", "-", 200, 0,
-                     ("看门狗:%s;已自动重启网关(并发泄漏/雪崩自愈)" % reason)[:140], "-", 1, "", 0, 0, 0, 0],
+                    [int(time.time()), tag, "updater", "-", 200, 0,
+                     ("%s;已重启网关(队列条目已清)" % reason)[:140], "-", 1, "", 0, 0, 0, 0],
                 )
-                del logs[max(0, int(db["config"].get("log_max") or 200)) :]
+                del logs[max(0, int(db["config"].get("log_max") or 200)):]
 
         STORE.update(_fn)
         STORE.flush()
     except Exception:
         pass
-    print("[watchdog] %s → execv 重启" % reason, file=sys.stderr)
+
+
+def _self_restart(reason: str) -> None:
+    """立即以同 PID 自我重启（看门狗 / 定时重启）。
+
+    Python socket 默认不可继承，execv 后旧监听端口随之释放，无端口冲突。
+    """
+    cmd = _restart_argv()
+    if cmd is None:
+        print("[restart] 无法自助重启：argv 不可复启 %r" % (sys.argv[0] if sys.argv else ""), file=sys.stderr)
+        return
+    _prepare_restart(reason, "watch")
+    print("[restart] %s → execv 重启" % reason, file=sys.stderr)
     sys.stderr.flush()
-    os.execv(sys.executable, [sys.executable] + list(sys.argv))
+    os.execv(sys.executable, cmd)
 
 
 def pool_timeout_verdict(recent_logs: list, inflight: int, cap: int) -> tuple[bool, str]:
@@ -1221,38 +1259,26 @@ def _apply_update(src: str, base: str) -> int:
     return len(rels)
 
 
-def _restart_argv() -> list[str]:
-    """构造重启用的命令行。
-
-    坑:`python -m uvicorn` 启动时 sys.argv[0] 是 `<...>/uvicorn/__main__.py`,
-    直接 execv 它会把这个目录放进 sys.path[0],于是包内的 logging.py 遮蔽了
-    标准库 logging,重启后的进程立刻 AttributeError 崩掉(本机实测)。所以
-    遇到 __main__.py 一律还原成 `-m <包名>` 形态;其它启动方式(supervisor
-    拉起的 console script、python server.py 等)保持原样不动。
-    """
-    argv = [str(x) for x in (sys.argv or [])]
-    if argv and os.path.basename(argv[0]) == "__main__.py":
-        pkg_dir = os.path.dirname(os.path.abspath(argv[0]))
-        pkg = os.path.basename(pkg_dir)
-        if not pkg.isidentifier():
-            pkg = "uvicorn"
-        return [sys.executable, "-m", pkg] + argv[1:]
-    return [sys.executable] + argv
-
-
 def _schedule_restart(delay: float = 2.0, tag: str = "restart") -> None:
-    """延迟重启:把 execv 放到响应写回之后再执行。
+    """延迟重启：把 execv 放到响应写回之后再执行（更新/回滚用）。
 
-    execv 会立刻替换整个进程。若在请求处理过程中直接调用,调用方永远收不到
-    响应 —— 线上实测表现为 nginx 502(尽管更新其实成功了)。延迟一小段让响应
-    先落地,调用方就能正常看到 200 与说明。
+    execv 会立刻替换整个进程。若在请求处理过程中直接调用，调用方永远收不到
+    响应 —— 线上实测表现为 nginx 502（尽管更新其实成功了）。延迟一小段让响应
+    先落地，调用方就能正常看到 200 与说明。
+    重启命令与收尾复用 _restart_argv / _prepare_restart（清队列僵尸条目）。
     """
     import threading
 
     cmd = _restart_argv()
+    if cmd is None:
+        # 更新路径保持「原样复启」的历史行为（线上宝塔启动已验证可用），
+        # 只提示风险，不像看门狗那样直接放弃
+        cmd = [sys.executable] + [str(x) for x in (sys.argv or [])]
+        print(f"[{tag}] argv 不可安全复启，按原样重启: {cmd[1:]}", file=sys.stderr, flush=True)
 
     def _do() -> None:
         try:
+            _prepare_restart("远程更新/回滚完成", tag)
             os.execv(sys.executable, cmd)
         except Exception as e:
             print(f"[{tag}] execv 失败: {e}", file=sys.stderr, flush=True)
