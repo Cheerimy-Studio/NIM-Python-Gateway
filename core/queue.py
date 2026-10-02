@@ -21,11 +21,13 @@ def _cfg_max_wait() -> int:
     return 0 if v == 0 else max(5, v)
 
 
-def add(ep: str, model: str, ip: str, tok: str = "") -> str:
+def add(ep: str, model: str, ip: str, tok: str = "", reason: str = "") -> str:
     """入队（FIFO）。
 
     每次入队都全表过滤一遍是没必要的开销（而且是在存储锁里做）：过期条目
     stats() 本就会跳过，这里只在超过上限时裁剪，保持 O(1)。
+    reason = 当前的阻塞原因（如「冷却 12 · 账户并发 3 / 共 202」），供后台与
+    队列页回答「为什么在排队」。
     """
     qid = "q_" + os.urandom(6).hex()
 
@@ -34,12 +36,42 @@ def add(ep: str, model: str, ip: str, tok: str = "") -> str:
         if not isinstance(q, list):
             q = []
             db["queue"] = q
-        q.append({"id": qid, "t": time.time(), "ip": ip, "ep": ep[:8], "model": model[:60], "tok": tok[:20]})
+        q.append({
+            "id": qid, "t": time.time(), "ip": ip, "ep": ep[:8],
+            "model": model[:60], "tok": tok[:20], "reason": str(reason)[:90],
+        })
         if len(q) > QUEUE_MAX_ENTRIES:
             del q[:-QUEUE_MAX_ENTRIES]  # 只保留最新，防无限增长
 
     STORE.update(_fn)
     return qid
+
+
+def set_reason(qid: str, reason: str) -> None:
+    """刷新某条等待的阻塞原因（等待期间原因会变：从冷却变成并发满等）。"""
+    r = str(reason)[:90]
+
+    def _fn(db: dict):
+        for e in db.get("queue") or []:
+            if isinstance(e, dict) and e.get("id") == qid:
+                e["reason"] = r
+                return
+
+    STORE.update(_fn)
+
+
+def public_hint(reason: str) -> str:
+    """把阻塞原因归类成对外可说的粗粒度结论（公开队列页用，不暴露号池细节）。"""
+    r = str(reason or "")
+    if not r:
+        return ""
+    if any(k in r for k in ("渠道模型", "原名禁用")):
+        return "该模型当前不可用"
+    if any(k in r for k in ("封禁", "冷却", "RPM", "TPM", "日限", "上游RPM", "上游日限")):
+        return "账号限流冷却中"
+    if any(k in r for k in ("账户并发", "渠道并发")):
+        return "账号繁忙"
+    return "等待可用账号"
 
 
 def remove(qid: str) -> None:
@@ -71,9 +103,13 @@ def stats(public: bool = False) -> dict:
             "ep": e.get("ep", ""),
             "model": e.get("model", ""),
         }
-        if not public:
+        if public:
+            # 公开页只给粗粒度结论，不暴露「多少个账号在冷却」这类号池细节
+            row["hint"] = public_hint(e.get("reason", ""))
+        else:
             row["ip"] = e.get("ip", "-")  # IP 只给后台，公开页不需要、也不该泄漏
             row["tok"] = e.get("tok", "")  # 令牌遮罩同样仅后台
+            row["reason"] = e.get("reason", "")
         rows.append(row)
     return {
         "length": len(rows),

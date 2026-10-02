@@ -1065,7 +1065,7 @@ async function loadQueue() {
   const tb = $('#queue-rows'); tb.innerHTML = '';
   if (!d.rows.length) {
     const tr = el('tr'); const td = el('td', 'text-muted text-center py-4', '—');
-    td.colSpan = 7; tr.appendChild(td); tb.appendChild(tr);
+    td.colSpan = 8; tr.appendChild(td); tb.appendChild(tr);
     return;
   }
   d.rows.forEach((q, i) => {
@@ -1078,6 +1078,7 @@ async function loadQueue() {
       el('td', 'small key-mono', q.tok || '-'),
       el('td', 'small', EP_NAMES[q.ep] || q.ep),
       el('td', 'small text-truncate', q.model || '-'),
+      el('td', 'small text-muted text-truncate', q.reason || '—'),
     );
     tb.appendChild(tr);
   });

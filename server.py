@@ -840,7 +840,7 @@ async def take_account(request: Request, ep: str, model: str, est_tokens: int, c
             "status": 503,
             "message": f"排队已满（{_waiting.get(model, 0)} 个请求在等账号），请稍后重试",
         }
-    qid = queue.add(ep, model, _client_ip(request), _tok_mask(tok))
+    qid = queue.add(ep, model, _client_ip(request), _tok_mask(tok), acq.get("reason", ""))
     deadline = time.time() + max_wait
     poll = max(0.05, _cfgint(cfg, "queue_poll_ms", 400) / 1000)
     # 熔断打开时先不取号，排队等恢复；非熔断则正常取号+排队
@@ -863,6 +863,8 @@ async def take_account(request: Request, ep: str, model: str, est_tokens: int, c
                 await STORE.aupdate(lambda db: holder.update(pool.acquire(db, est_tokens, model)))
                 if holder.get("result") == "ok":
                     return {"ok": True, "key": holder["key"], "status": 0, "message": ""}
+                # 原因会随等待变化(冷却→并发满等),刷新给后台/队列页看
+                queue.set_reason(qid, holder.get("reason", ""))
                 hint = float(holder.get("wait_hint") or 0)
                 # 只在「排队的请求多」时才拉长退避：人多时几百个等待者一起重试会把
                 # 存储锁打满；人少时保持最小间隔，账号一释放就能立刻抢到（否则明明

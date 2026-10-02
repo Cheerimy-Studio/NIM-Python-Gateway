@@ -1750,6 +1750,46 @@ try:
         and isinstance(_cmd_py, list) and _cmd_py[0] == sys.executable,
         "-m=%s exe=%s py=%s" % (_cmd_m, _cmd_exe, "ok" if _cmd_py else None))
 
+    # 队列条目要带「为什么在等」:线上真出现过 29 个 kimi-k3 请求排队 50+ 秒却看不出
+    # 原因(候选账号太少?冷却?并发满?)。后台给完整原因,公开页只给粗粒度结论。
+    a.post("/api/settings", json={"config": {"acct_concurrency": 1, "account_cooldown_ms": 8000,
+                                            "queue_max_wait": 20, "queue_poll_ms": 200}})
+
+    async def _four_streams_probe():
+        async def _one(_i):
+            async with httpx.AsyncClient(
+                base_url="http://127.0.0.1:18213", timeout=60,
+                headers={"Authorization": "Bearer " + toks[0]["t"]},
+            ) as cl:
+                async with cl.stream(
+                    "POST", "/v1/chat/completions",
+                    json={"model": "mock-model", "stream": True,
+                          "messages": [{"role": "user", "content": "hi"}]},
+                ) as rr:
+                    cnt = 0
+                    async for _ in rr.aiter_lines():
+                        cnt += 1
+                    return rr.status_code, cnt
+
+        task = asyncio.gather(*[_one(i) for i in range(4)])
+        await asyncio.sleep(1.2)  # 三个流占满账号,第四个应在排队
+        adm = a.get("/api/queue").json()
+        pub = httpx.get("http://127.0.0.1:18213/api/queue/public", timeout=10).json()
+        return (await task), adm, pub
+
+    _codes4, _adm_q, _pub_q = asyncio.run(_four_streams_probe())
+    _adm_rows = _adm_q.get("rows") or []
+    _pub_rows = _pub_q.get("rows") or []
+    add("排队原因对后台可见(不再只显示「等待中」)",
+        bool(_adm_rows) and all(r.get("reason") for r in _adm_rows),
+        "后台队列 %d 条,原因=%s" % (len(_adm_rows), (_adm_rows[0].get("reason") if _adm_rows else "无")[:40]))
+    add("公开队列给粗粒度结论且不泄漏 IP/令牌",
+        (not _pub_rows or all(r.get("hint") and "ip" not in r and "tok" not in r for r in _pub_rows)),
+        "公开 %d 条,hint=%s" % (len(_pub_rows), (_pub_rows[0].get("hint") if _pub_rows else "无")))
+    add("排队期间 4 个流式请求全部成功", all(c == 200 for c, _n in _codes4),
+        "状态=%s" % [c for c, _n in _codes4])
+    a.post("/api/settings", json={"config": {"acct_concurrency": 0, "account_cooldown_ms": 0}})
+
     first_bad = []
 
     async def w(_):

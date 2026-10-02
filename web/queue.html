@@ -38,7 +38,7 @@ tr:last-child td{border-bottom:0}
 <div class="wrap">
   <div class="stat" id="stats"></div>
   <table>
-    <thead><tr><th>#</th><th>等待时间</th><th>模型</th></tr></thead>
+    <thead><tr><th>#</th><th>等待时间</th><th>模型</th><th>状态</th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
   <p class="muted" style="margin-top:12px">当所有账号暂不可用时，请求进入排队等待；队首优先获得下一个可用账号。刷新本页查看排队最新状态。</p>
@@ -58,10 +58,10 @@ async function refresh(){
       <div class="stat-card"><div class="num ok">✓</div><div class="lbl">服务正常</div></div>`;
     const tb = document.getElementById('rows');
     tb.innerHTML = '';
-    if(!n){ tb.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#94a3b8;padding:20px">队列为空</td></tr>'; return; }
+    if(!n){ tb.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:20px">队列为空</td></tr>'; return; }
     d.rows.forEach((q,i)=>{
       const cls = q.wait > d.max_wait/2 ? 'y' : 'g';
-      tb.innerHTML += `<tr><td>${i+1}</td><td><span class="dot ${cls}"></span>${esc(q.wait)}s</td><td>${esc(q.model||'-')}</td></tr>`;
+      tb.innerHTML += `<tr><td>${i+1}</td><td><span class="dot ${cls}"></span>${esc(q.wait)}s</td><td>${esc(q.model||'-')}</td><td>${esc(q.hint||'-')}</td></tr>`;
     });
   }catch(e){ console.error(e); }
 }
