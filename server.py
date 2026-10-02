@@ -140,6 +140,42 @@ def _self_restart(reason: str) -> None:
     os.execv(sys.executable, [sys.executable] + list(sys.argv))
 
 
+def pool_timeout_verdict(recent_logs: list, inflight: int, cap: int) -> tuple[bool, str]:
+    """形态3 判定:近 10 条日志里的 PoolTimeout 是否值得「重启」处置。
+
+    必须是「连接泄漏」特征才重启:池被占满,但在途请求远小于池上限。
+    若在途已接近池上限,那是容量不足 —— 重启不增加容量,只提示调大池。
+    返回 (是否重启, 原因)。
+    """
+    n = 0
+    for x in (recent_logs or [])[:10]:
+        if isinstance(x, list) and len(x) > 6 and "PoolTimeout" in str(x[6]):
+            n += 1
+    if n < 5:
+        return False, ""
+    cap = int(cap or 0)
+    inflight = int(inflight or 0)
+    if cap and inflight >= cap * 0.8:
+        return False, ""
+    return True, "近 10 条日志中 %d 条 PoolTimeout,而在途仅 %d(池上限 %s)→ 疑似连接泄漏" % (
+        n, inflight, cap or "未知")
+
+
+def _pool_capacity_warn(pool_timeout: int, used: int, cap: int) -> None:
+    """池容量不足:只记一次提示(5 分钟一次),不触发重启 —— 重启并不增加容量。"""
+    global _pool_cap_warn_at
+    now = time.time()
+    if now - _pool_cap_warn_at < 300:
+        return
+    _pool_cap_warn_at = now
+    print(
+        f"[pool] 连接池接近上限({used}/{cap},近 10 条日志 {pool_timeout} 条 PoolTimeout):"
+        f"当前并发已吃满池容量,建议把「上游连接池上限」调到 {max(cap, used) + 100} 以上(重启生效)",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 async def _watchdog_loop() -> None:
     """雪崩看门狗(三种形态):
 
@@ -164,7 +200,7 @@ async def _watchdog_loop() -> None:
             _hit = False
             _why = ""
             # 形态1:账号层全池不可用
-            dead, info = watchdog_dead(STORE.load(), pool._inflight, int(time.time()), cfg)
+            dead, info = watchdog_dead(STORE.load(), pool.inflight_snapshot(), int(time.time()), cfg)
             if dead and (info.get("queue") or 0) > 0:
                 _hit = True
                 _why = "全池不可用(%s/%s)且队列 %s 个等待" % (
@@ -173,16 +209,23 @@ async def _watchdog_loop() -> None:
             if lag > 10.0:
                 _hit = True
                 _why = "事件循环滞后 %.1f 秒(锁竞争/同步阻塞)" % lag
-            # 形态3:连接池满(最近日志里持续出现 PoolTimeout)
+            # 形态3:连接池持续满。必须区分两种成因,否则会「重启治百病」:
+            #   a) 容量不足:在途请求已接近池上限 —— 重启不增加容量,该做的是把池调大;
+            #   b) 连接泄漏:在途请求远小于池上限,池却仍被占满 —— 只有这种值得重启。
             db = STORE.load()
-            if db.get("logs"):
-                pool_timeout = sum(
+            used = pool.inflight_total()
+            cap = int(_pool_max_conn or 0)
+            restart_pool, why_pool = pool_timeout_verdict(db.get("logs") or [], used, cap)
+            if restart_pool:
+                _hit = True
+                _why = why_pool
+            else:
+                _n_pt = sum(
                     1 for x in (db.get("logs") or [])[:10]
                     if isinstance(x, list) and len(x) > 6 and "PoolTimeout" in str(x[6])
                 )
-                if pool_timeout >= 5:
-                    _hit = True
-                    _why = "近 10 条日志中 %d 条 PoolTimeout(连接池持续满)" % pool_timeout
+                if _n_pt >= 5:
+                    _pool_capacity_warn(_n_pt, used, cap)
             if _hit:
                 dead_streak += 30
                 if dead_streak >= minutes:
@@ -277,28 +320,68 @@ async def http_error_handler(request: Request, exc: httpx.HTTPError):
 
 # 进程级共享 HTTP 客户端（连接池复用 TLS 连接，避免每请求新建握手）
 _shared_http: httpx.AsyncClient | None = None
+_pool_max_conn = 0  # 实际生效的上游连接池上限（看门狗/概览/报错文案使用）
+_pool_cap_warn_at = 0.0
+
+
+def _pool_size(cfg: dict, accounts: int) -> int:
+    """实际生效的上游连接池上限 = max(配置值, 理论并发需求)。
+
+    配置值只是下限：池小于号池并发能力时，满负荷必然出现 PoolTimeout，
+    而那会被误读成「连接池故障」，还会触发看门狗重启（重启并不增加容量）。
+    """
+    try:
+        configured = max(50, int(cfg.get("pool_max_connections") or 400))
+    except (TypeError, ValueError):
+        configured = 400
+    try:
+        acct_conc = int(cfg.get("acct_concurrency") or 0)
+    except (TypeError, ValueError):
+        acct_conc = 0
+    if acct_conc <= 0:
+        acct_conc = 4  # 账号并发未限制：按每账号 4 条在途粗估
+    need = max(0, int(accounts)) * acct_conc + 50
+    return max(configured, need)
+
+
+def _needed_conns(cfg: dict) -> int:
+    """当前配置下的理论连接需求（启用账号数 × 账号并发 + 队列余量）。"""
+    try:
+        n = sum(1 for k in (STORE.load().get("keys") or []) if k.get("enabled"))
+    except Exception:
+        n = 0
+    return _pool_size(cfg, n)
 
 
 def get_http(cfg: dict | None = None) -> httpx.AsyncClient:
     """返回共享 AsyncClient；timeout/verify 由每次请求自行覆盖。
 
-    连接池大小可配置(pool_max_connections,默认 400):长流式(推理模型单流可达
-    数分钟)+ 高并发下,100 连接会被长期占用,PoolTimeout 的本质是容量不足
-    而不是泄漏 —— 宁可排队等待(pool=15s)也不要快速失败。
-    配置在首个上游请求时读取,修改后需重启生效。
+    连接池上限取「配置值」与「理论并发需求」的较大者（pool_max_connections
+    只是下限）：长流式（推理模型单流可达数分钟）下 100~400 连接会被长期占用，
+    池小于号池并发能力时，满负荷必然撞 PoolTimeout —— 宁可排队等待(pool=15s)
+    也不要快速失败。实际生效值会打到日志，概览接口也会显示。
+    配置在首个上游请求时读取，修改后需重启生效。
     """
-    global _shared_http
+    global _shared_http, _pool_max_conn
     if _shared_http is None:
         c = cfg or STORE.load()["config"]
         verify = bool(c.get("verify_tls", True))
         try:
-            max_conn = max(50, int(c.get("pool_max_connections") or 400))
-        except (TypeError, ValueError):
-            max_conn = 400
+            accounts = sum(1 for k in (STORE.load().get("keys") or []) if k.get("enabled"))
+        except Exception:
+            accounts = 0
+        max_conn = _pool_size(c, accounts)
+        _pool_max_conn = max_conn
         _shared_http = httpx.AsyncClient(
             verify=verify,
             timeout=httpx.Timeout(connect=10, read=120, write=30, pool=15),
             limits=httpx.Limits(max_connections=max_conn, max_keepalive_connections=min(100, max_conn)),
+        )
+        print(
+            f"[http] 上游连接池上限 {max_conn}（配置 {c.get('pool_max_connections')}"
+            f" / 当前账号 {accounts} 个 · 理论需求 {_pool_size(c, accounts)}）",
+            file=sys.stderr,
+            flush=True,
         )
     return _shared_http
 
@@ -1007,7 +1090,10 @@ def _conn_reason(e: Exception) -> str:
     ):
         hint = "（DNS 解析失败：无法解析上游域名）"
     elif isinstance(e, httpx.PoolTimeout):
-        hint = "（连接池满：并发超过 pool_max_connections 或存在连接泄漏；请求会自动重试）"
+        hint = (
+            f"（网关连接池等待超时:池上限 {_pool_max_conn or '未知'},当前在途 {pool.inflight_total()};"
+            "属网关侧容量问题,不是账号故障,会自动重试）"
+        )
     elif any(k in low for k in ("ssl", "certificate", "tls", "handshake")):
         hint = "（TLS 握手失败：证书/时间/出网被拦）"
     elif isinstance(e, httpx.ConnectTimeout):

@@ -1670,6 +1670,67 @@ try:
 
     import asyncio
 
+    # 在途计数:并发请求全部结束后必须回到并发前的水平。
+    # 释放走线程池(arelease)且原本不持锁,「读-改-写」会丢更新 → 计数只增不减,
+    # 账号永久显示「繁忙」被排除出调度(线上「只有一个账号在干活」的成因之一)。
+    _before_total = _srv.pool.inflight_total()
+    _before_odd = _srv.pool.inflight_odd_releases()
+
+    async def _burst(n):
+        async def _one(_i):
+            async with httpx.AsyncClient(
+                base_url="http://127.0.0.1:18213", timeout=60,
+                headers={"Authorization": "Bearer " + toks[0]["t"]},
+            ) as cl:
+                rr = await cl.post(
+                    "/v1/chat/completions",
+                    json={"model": "mock-model", "messages": [{"role": "user", "content": "hi"}]},
+                )
+                return rr.status_code
+        return await asyncio.gather(*[_one(i) for i in range(n)])
+
+    _b_codes = asyncio.run(_burst(12))
+    time.sleep(0.8)
+    _after_total = _srv.pool.inflight_total()
+    _rows_now = a.get("/api/keys?page=1").json().get("rows") or []
+    _max_inflight = max([int(r.get("inflight") or 0) for r in _rows_now] or [0])
+    add("在途计数:并发结束后回落(不泄漏)且不超账号并发上限",
+        all(c == 200 for c in _b_codes) and _after_total <= _before_total and _max_inflight <= 2,
+        "12 并发成功 %d;在途 %d→%d;单账号峰值 %d" % (
+            sum(1 for c in _b_codes if c == 200), _before_total, _after_total, _max_inflight))
+
+    _srv.pool._inc_inflight("k_dup_test")
+    _d1 = _srv.pool._dec_inflight("k_dup_test")
+    _d2 = _srv.pool._dec_inflight("k_dup_test")
+    add("在途计数:重复释放被钳制(不会越减越负)",
+        _d1 == 0 and _d2 == 0 and _srv.pool.inflight_of("k_dup_test") == 0
+        and _srv.pool.inflight_odd_releases() >= _before_odd + 1,
+        "剩余 %s/%s;异常释放 %d→%d" % (_d1, _d2, _before_odd, _srv.pool.inflight_odd_releases()))
+
+    # 连接池容量:池上限 = max(配置值, 号池理论并发)。池小于理论并发时满负荷必然
+    # PoolTimeout,而它会被误读成「连接池故障」甚至触发看门狗重启(重启不增加容量)。
+    _sz_small = _srv._pool_size({"pool_max_connections": 10, "acct_concurrency": 2}, 30)
+    _sz_big = _srv._pool_size({"pool_max_connections": 400, "acct_concurrency": 2}, 30)
+    _sz_empty = _srv._pool_size({"pool_max_connections": 10}, 0)
+    add("连接池:上限不低于号池理论并发",
+        _sz_small == 110 and _sz_big == 400 and _sz_empty == 50,
+        "10/并发2/30账号=%d;400/并发2=%d;空池=%d" % (_sz_small, _sz_big, _sz_empty))
+
+    # 看门狗形态3:容量型 PoolTimeout 不重启(该做的是调大池),泄漏特征才重启
+    _pt = [[i, "chat", "m", "-", 0, 0, "httpx.PoolTimeout: timed out"] for i in range(6)]
+    _v_cap = _srv.pool_timeout_verdict(_pt, 100, 100)
+    _v_leak = _srv.pool_timeout_verdict(_pt, 3, 1000)
+    _v_few = _srv.pool_timeout_verdict(_pt[:2], 3, 1000)
+    add("看门狗:容量型池超时不重启 / 泄漏特征才重启",
+        (not _v_cap[0]) and _v_leak[0] and (not _v_few[0]),
+        "容量型=%s 泄漏=%s 少量=%s" % (_v_cap[0], _v_leak[0], _v_few[0]))
+
+    add("连接池耗尽不按账号故障分类",
+        _srv.pool._classify(0, 0, "httpx.PoolTimeout: timed out") == "pool_exhausted",
+        _srv.pool._classify(0, 0, "httpx.PoolTimeout: timed out"))
+    _txt_pool = _srv._conn_reason(httpx.PoolTimeout("pool timed out"))
+    add("连接池超时文案含池上限与在途", "连接池" in _txt_pool and "在途" in _txt_pool, _txt_pool[:70])
+
     first_bad = []
 
     async def w(_):

@@ -145,6 +145,9 @@ async function loadOverview() {
     ['今日成功率', o.today.rate == null ? '—' : o.today.rate + '%', '账号计 ' + o.daily.requests + ' 次', 'accent', 'bi-graph-up'],
     ['当前 RPM', o.rpm + ' / ' + (o.rpm_limit_total === -1 ? '不限' : o.rpm_limit_total), '今日 tokens ' + o.daily.tokens, 'amber', 'bi-speedometer'],
     ['排队中', o.queue, o.queue ? '等待可用账号' : '无等待', o.queue ? 'red' : 'accent', 'bi-hourglass-split'],
+    ['在途 / 连接池', (o.pool ? o.pool.inflight : 0) + ' / ' + (o.pool ? o.pool.max_connections : 0),
+      o.pool && o.pool.inflight >= o.pool.max_connections * 0.8 ? '已吃满池容量' : '池余量充足',
+      o.pool && o.pool.inflight >= o.pool.max_connections * 0.8 ? 'amber' : 'accent', 'bi-diagram-3'],
   ];
   const box = $('#dash-cards'); box.innerHTML = '';
   for (const [label, val, sub, tone, icon] of cards) {
@@ -285,7 +288,7 @@ async function loadKeys() {
   const tb = $('#keys-rows'); tb.innerHTML = '';
   if (!d.rows.length) {
     const tr = el('tr'); const td = el('td', 'text-muted text-center py-4', '—');
-    td.colSpan = 15; tr.appendChild(td); tb.appendChild(tr);
+    td.colSpan = 16; tr.appendChild(td); tb.appendChild(tr);
   }
   
   const groups = new Map();
@@ -297,7 +300,7 @@ async function loadKeys() {
   for (const [gName, rows] of groups) {
     const grpTr = el('tr', 'grp-row');
     const grpTd = el('td', '', '');
-    grpTd.colSpan = 15;
+    grpTd.colSpan = 16;
     grpTd.append(
       el('i', 'bi bi-hdd-network me-1 text-muted'),
       document.createTextNode(gName + ' '),
@@ -346,6 +349,7 @@ async function loadKeys() {
       el('td', 'text-end text-success', String(k.total_success)),
       el('td', 'text-end' + (k.total_fail ? ' text-danger' : ''), String(k.total_fail)),
       el('td', 'text-end' + (k.consecutive_failures ? ' text-danger fw-bold' : ''), String(k.consecutive_failures)),
+      el('td', 'text-end' + (k.inflight ? ' text-primary fw-semibold' : ' text-muted'), String(k.inflight || 0)),
       el('td', 'text-end', `${k.rpm_used}/${d.rate_limit}`),
       el('td', 'text-end small', `${k.prompt_tokens}/${k.completion_tokens}`),
       el('td', 'small text-muted', fmtAgo(k.last_used_at)),

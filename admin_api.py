@@ -192,7 +192,23 @@ async def overview(request: Request):
         "models": [{"model": m, "count": c} for m, c in models],
         "recent_errors": recent_errors,
         "risky": risky[:10],
+        "pool": _pool_state(),
         "server_time": now,
+    }
+
+
+def _pool_state() -> dict:
+    """上游连接池与号池并发的实时状态(概览用)。
+
+    在途 = 正在跑的上游请求数;若在途长期贴着池上限,就是容量问题(调大池),
+    而若池上限远大于在途却仍出现 PoolTimeout,才是连接泄漏。
+    """
+    import server as _srv
+
+    return {
+        "max_connections": int(getattr(_srv, "_pool_max_conn", 0) or 0),
+        "inflight": pool.inflight_total(),
+        "odd_releases": pool.inflight_odd_releases(),
     }
 
 
@@ -235,7 +251,10 @@ async def keys(request: Request):
         k["fail_ratio"] = round(k["total_fail"] * 100 / k["total_requests"]) if k.get("total_requests") else 0
         k["today"] = (k.get("daily") or {}).get(day) or {"requests": 0, "tokens": 0}
         k["upstream_name"] = up_names.get(k.get("upstream_id"), "-")
-        rows.append(k)
+        row = dict(k)
+        # 在途是瞬时值,给响应副本即可,不要写回存储
+        row["inflight"] = pool.inflight_of(k["id"])
+        rows.append(row)
     total = len(rows)
     return {
         "total": total,

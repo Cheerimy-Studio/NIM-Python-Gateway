@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 
 from . import upstreams
@@ -14,6 +15,58 @@ from .util import mask_email, str_cut, upstream_snippet
 
 # 进程内在途请求计数：key_id -> 数量（账户/渠道并发限制用，重启归零）
 _inflight: dict[str, int] = {}
+# 读写必须互斥：取号在 STORE 锁内 +1，而释放走线程池（arelease）且不持锁 ——
+# 之前的「读-改-写」在并发释放时会丢更新，计数只增不减，账号就永久显示「繁忙」
+# 并被排除出调度（要重启才恢复）。给计数一个专用锁。
+_inflight_lock = threading.Lock()
+_odd_release = 0  # 「释放了但没有在途」的观察计数（重复释放/漏记探测器）
+
+
+def _inc_inflight(key_id: str) -> None:
+    with _inflight_lock:
+        _inflight[key_id] = _inflight.get(key_id, 0) + 1
+
+
+def _dec_inflight(key_id: str) -> int:
+    """在途 -1，返回剩余在途。计数不允许为负。
+
+    出现「没有在途的释放」意味着某个请求被重复释放：直接归零并计数，否则
+    计数会被越减越负，账号并发上限形同失效（可无限并发打同一个 Key）。
+    """
+    global _odd_release
+    with _inflight_lock:
+        c = int(_inflight.get(key_id, 0))
+        if c <= 0:
+            _inflight.pop(key_id, None)
+            _odd_release += 1
+            return 0
+        c -= 1
+        if c:
+            _inflight[key_id] = c
+        else:
+            _inflight.pop(key_id, None)
+        return c
+
+
+def inflight_of(key_id: str) -> int:
+    with _inflight_lock:
+        return int(_inflight.get(key_id, 0))
+
+
+def inflight_total() -> int:
+    with _inflight_lock:
+        return sum(_inflight.values())
+
+
+def inflight_snapshot() -> dict[str, int]:
+    """在途计数的原子快照（看门狗/概览用，避免边读边被别的线程改）。"""
+    with _inflight_lock:
+        return dict(_inflight)
+
+
+def inflight_odd_releases() -> int:
+    """被重复释放（或漏记在途）的次数；持续增长说明存在重复释放的真实 BUG。"""
+    return int(_odd_release)
 
 # 可靠性按「渠道 + 模型」统计时的最小样本数；不足则退回渠道整体成功率
 _MODEL_RECENT_MIN = 3
@@ -352,7 +405,7 @@ def _acquire_fn(db: dict, out: dict, est_tokens: int, model: str) -> None:
     # 渠道在途总量（进程内计数，release 时递减）
     chan_inflight: dict[str, int] = {}
     for k2 in db["keys"]:
-        c = _inflight.get(str(k2.get("id") or ""), 0)
+        c = inflight_of(str(k2.get("id") or ""))
         if c > 0:
             u2 = str(k2.get("upstream_id") or "")
             chan_inflight[u2] = chan_inflight.get(u2, 0) + c
@@ -432,7 +485,7 @@ def _acquire_fn(db: dict, out: dict, est_tokens: int, model: str) -> None:
             reason["cooldown"] += 1
             continue
         # 并发数：0 或 -1 = 不限
-        if acct_conc > 0 and _inflight.get(k["id"], 0) >= acct_conc:
+        if acct_conc > 0 and inflight_of(k["id"]) >= acct_conc:
             reason["acct_conc"] += 1
             continue
         if chan_conc > 0 and chan_inflight.get(uid, 0) >= chan_conc:
@@ -543,7 +596,7 @@ def _acquire_fn(db: dict, out: dict, est_tokens: int, model: str) -> None:
     k = items[0]
     k["last_used_at"] = now_f
     k["total_requests"] = k.get("total_requests", 0) + 1
-    _inflight[k["id"]] = _inflight.get(k["id"], 0) + 1
+    _inc_inflight(k["id"])
     # 只给「真正被使用的账号」打 RPM 时间戳。曾经是给所有候选账号都打点，
     # 于是每个账号的 60 秒窗口被无谓塞满，很快整池一起撞上单账号 RPM 上限
     # → 号池假性枯竭（不论多少账号，吞吐都被压到约等于单账号 RPM）。
@@ -610,11 +663,7 @@ def release(
     errno: int = 0,
 ) -> None:
     # 释放并发占用（take_account 成功时在 _acquire_fn 中 +1）
-    c = _inflight.get(key_id, 0)
-    if c > 1:
-        _inflight[key_id] = c - 1
-    else:
-        _inflight.pop(key_id, None)
+    _dec_inflight(key_id)
 
     def _fn(db: dict):
         now = int(time.time())
