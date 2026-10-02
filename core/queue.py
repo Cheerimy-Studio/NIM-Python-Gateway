@@ -61,16 +61,21 @@ def set_reason(qid: str, reason: str) -> None:
 
 
 def public_hint(reason: str) -> str:
-    """把阻塞原因归类成对外可说的粗粒度结论（公开队列页用，不暴露号池细节）。"""
+    """把阻塞原因归类成对外可说的粗粒度结论（公开队列页用，不暴露号池细节）。
+
+    优先级按「真正卡住它的东西」来：账号在冷却/限流 → 说限流冷却，账号并发满 →
+    说账号繁忙；只有原因里**只剩**模型类问题时才说「该模型当前不可用」。
+    （能进入排队的请求按定义就不是模型永久不可用 —— 那种会直接 404。）
+    """
     r = str(reason or "")
     if not r:
-        return ""
-    if any(k in r for k in ("渠道模型", "原名禁用", "模型不存在")):
-        return "该模型当前不可用"
+        return "排队等待中"
     if any(k in r for k in ("封禁", "冷却", "RPM", "TPM", "日限", "上游RPM", "上游日限")):
         return "账号限流冷却中"
     if any(k in r for k in ("账户并发", "渠道并发")):
         return "账号繁忙"
+    if any(k in r for k in ("渠道模型", "原名禁用", "模型不存在")):
+        return "该模型当前不可用"
     return "等待可用账号"
 
 
