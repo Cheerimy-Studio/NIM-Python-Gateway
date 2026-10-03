@@ -1,3 +1,7 @@
+**本 Python 网关停止维护。新版请移步 NIM-Rust-Gateway。**
+
+---
+
 # NIM Python Gateway
 
 **免费 · 极速 · 免注册的 OpenAI 兼容 AI 网关**
