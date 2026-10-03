@@ -2039,6 +2039,52 @@ try:
         and _srv.pool.inflight_odd_releases() >= _before_odd + 1,
         "剩余 %s/%s;异常释放 %d→%d" % (_d1, _d2, _before_odd, _srv.pool.inflight_odd_releases()))
 
+    # 「取不到账号」时网关会用 release("", ...) 写一条失败日志(空 id 不做释放)。
+    # 它绝不能被计进「重复释放」探测器:本机复现过 2 账号跑 100 并发 → 该计数涨 100,
+    # 一个泄漏都没有,却足以把排查引向「连接/账号泄漏」这个错误方向。
+    _odd_before = _srv.pool.inflight_odd_releases()
+    _empty_dec = _srv.pool._dec_inflight("")
+    add("空 id 释放不计入「重复释放」探测器(那是写日志的路径)",
+        _empty_dec == 0 and _srv.pool.inflight_odd_releases() == _odd_before,
+        "空 id 释放返回=%s 计数 %d→%d" % (_empty_dec, _odd_before, _srv.pool.inflight_odd_releases()))
+
+    # 连接池按需扩容:池上限只在建 client 时算过一次,导入账号 / 调大账号并发之后
+    # 不会自己变大 → 满负荷必然 PoolTimeout(「明明修过又出问题」的成因)。
+    # 这里把 server.STORE 换成假 store,验「账号变多 → 池上限跟着长 + 旧池进退役名单」,
+    # 并验账号没变时不会反复换池(否则每 30s 白扔一批 keepalive 连接)。
+    import server as _srv3
+    _real_store3 = _srv3.STORE
+    _old_http, _old_cap = _srv3._shared_http, _srv3._pool_max_conn
+    _old_retired = list(_srv3._retired_http)
+    _made = []
+    try:
+        _fdb4 = {"config": {"pool_max_connections": 50, "acct_concurrency": 2},
+                 "keys": [{"id": "k%d" % i, "enabled": True} for i in range(40)],
+                 "upstreams": [], "logs": []}
+        _srv3.STORE = _FakeStore(_fdb4)
+        _srv3._shared_http = _srv3._new_http(50, True)
+        _srv3._pool_max_conn = 50
+        _srv3._retired_http = []
+        asyncio.run(_srv3._resize_pool_if_needed())
+        _grew_cap = _srv3._pool_max_conn
+        _kept_old = len(_srv3._retired_http)
+        _made = [c for _, c in _srv3._retired_http] + [_srv3._shared_http]
+        asyncio.run(_srv3._resize_pool_if_needed())
+        _stable = _srv3._pool_max_conn == _grew_cap and len(_srv3._retired_http) == _kept_old
+    finally:
+        _srv3.STORE = _real_store3
+        _srv3._shared_http, _srv3._pool_max_conn = _old_http, _old_cap
+        _srv3._retired_http = _old_retired
+    for _c in _made:
+        try:
+            asyncio.run(_c.aclose())
+        except Exception:
+            pass
+    add("连接池按需扩容:账号变多后池上限跟着长(账号没变时不换池)",
+        _grew_cap == 40 * 2 + 50 and _kept_old == 1 and _stable,
+        "40 账号×并发2 → 池 %d(应 130);旧池退役 %d 个;二次调用保持=%s"
+        % (_grew_cap, _kept_old, _stable))
+
     # 取号分散性(纯函数直测,不依赖测试实例当前号池状态):同一渠道内连续取号必须跨账号
     # 轮换(LRU),而不是一直压着同一个号 —— 号池「只有一个账号在干活、其余全闲」的检查点。
     # 6 个号 × 单号并发 2 = 12 个槽位:取 12 次应正好铺满 6 个号、每个号 2 个在途。

@@ -252,6 +252,11 @@ async def _watchdog_loop() -> None:
             #   b) 连接泄漏:在途请求远小于池上限,池却仍被占满 —— 只有这种值得重启。
             db = STORE.load()
             used = pool.inflight_total()
+            # 号池/配置变化后池上限可能算小了(见 _resize_pool_if_needed):先扩容再判定
+            try:
+                await _resize_pool_if_needed()
+            except Exception:
+                pass
             cap = int(_pool_max_conn or 0)
             restart_pool, why_pool = pool_timeout_verdict(db.get("logs") or [], used, cap)
             if restart_pool:
@@ -319,6 +324,9 @@ async def _start_flush():
     # 否则导入的账号会因没有归属渠道而永远无法被调度
     try:
         upstreams.ensure_default()
+        # 启动就把池建好:否则概览里的「连接池上限」在首个上游请求之前一直是 0,
+        # 面板显示「0 / 0」像是池挂了(而且首个请求要现算,号池大时白等一次)
+        _init_http(STORE.load()["config"])
         STORE.flush()
     except Exception:
         pass
@@ -360,6 +368,73 @@ async def http_error_handler(request: Request, exc: httpx.HTTPError):
 _shared_http: httpx.AsyncClient | None = None
 _pool_max_conn = 0  # 实际生效的上游连接池上限（看门狗/概览/报错文案使用）
 _pool_cap_warn_at = 0.0
+_retired_http: list = []  # [(退役时刻, 旧 client)]：扩容后旧池留给在途长流，grace 后关
+_POOL_GRACE = 900.0  # 退役池保留秒数：必须大于最长请求(request_timeout + 长流余量)
+
+
+def _new_http(max_conn: int, verify: bool) -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        verify=verify,
+        timeout=httpx.Timeout(connect=10, read=120, write=30, pool=15),
+        limits=httpx.Limits(max_connections=max_conn, max_keepalive_connections=min(100, max_conn)),
+    )
+
+
+def _enabled_accounts() -> int:
+    try:
+        return sum(1 for k in (STORE.load().get("keys") or []) if k.get("enabled"))
+    except Exception:
+        return 0
+
+
+def _init_http(cfg: dict) -> None:
+    """建共享 client 并记录实际生效的池上限（启动时与首个上游请求都走这里）。"""
+    global _shared_http, _pool_max_conn
+    accounts = _enabled_accounts()
+    max_conn = _pool_size(cfg, accounts)
+    _shared_http = _new_http(max_conn, bool(cfg.get("verify_tls", True)))
+    _pool_max_conn = max_conn
+    print(
+        f"[http] 连接池上限 {max_conn}(配置 {cfg.get('pool_max_connections')} / 账号 {accounts})",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+async def _resize_pool_if_needed() -> None:
+    """按需扩容连接池。
+
+    池上限只在建 client 那一刻算过一次（导出配置里改 pool_max_connections 或
+    账号并发、导入新账号都不会让它变大）：号池从几十个涨到几百个之后，池仍是老数字，
+    满负荷必然 PoolTimeout —— 这种「明明修过又出问题」的现象就是这个原因。
+    这里每轮看门狗(30s)重算一次：需要更大就换新 client 接班，旧 client 进退役名单、
+    过 grace 期再关（不打断正在跑的长流；在途请求持有的是旧 client 引用，换池无感）。
+    """
+    global _shared_http, _pool_max_conn
+    if _shared_http is None:
+        return
+    now = time.time()
+    for ts, cli in list(_retired_http):
+        if now - ts >= _POOL_GRACE:
+            _retired_http.remove((ts, cli))
+            try:
+                await cli.aclose()
+            except Exception:
+                pass
+    cfg = STORE.load()["config"]
+    accounts = _enabled_accounts()
+    need = _pool_size(cfg, accounts)
+    if need <= int(_pool_max_conn or 0):
+        return
+    old = _shared_http
+    _shared_http = _new_http(need, bool(cfg.get("verify_tls", True)))
+    _pool_max_conn = need
+    _retired_http.append((now, old))
+    print(
+        f"[http] 连接池扩容到 {need}(账号 {accounts});旧池保留 {int(_POOL_GRACE)}s 让在途长流跑完",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def _pool_size(cfg: dict, accounts: int) -> int:
@@ -398,28 +473,11 @@ def get_http(cfg: dict | None = None) -> httpx.AsyncClient:
     只是下限）：长流式（推理模型单流可达数分钟）下 100~400 连接会被长期占用，
     池小于号池并发能力时，满负荷必然撞 PoolTimeout —— 宁可排队等待(pool=15s)
     也不要快速失败。实际生效值会打到日志，概览接口也会显示。
-    配置在首个上游请求时读取，修改后需重启生效。
+    启动时已建好（见 _start_flush）；号池/配置后来变大由 _resize_pool_if_needed
+    每 30s 自动扩容，不需要重启。
     """
-    global _shared_http, _pool_max_conn
     if _shared_http is None:
-        c = cfg or STORE.load()["config"]
-        verify = bool(c.get("verify_tls", True))
-        try:
-            accounts = sum(1 for k in (STORE.load().get("keys") or []) if k.get("enabled"))
-        except Exception:
-            accounts = 0
-        max_conn = _pool_size(c, accounts)
-        _pool_max_conn = max_conn
-        _shared_http = httpx.AsyncClient(
-            verify=verify,
-            timeout=httpx.Timeout(connect=10, read=120, write=30, pool=15),
-            limits=httpx.Limits(max_connections=max_conn, max_keepalive_connections=min(100, max_conn)),
-        )
-        print(
-            f"[http] 连接池上限 {max_conn}(配置 {c.get('pool_max_connections')} / 账号 {accounts})",
-            file=sys.stderr,
-            flush=True,
-        )
+        _init_http(cfg or STORE.load()["config"])
     return _shared_http
 
 
@@ -1694,6 +1752,8 @@ async def _proxy(request: Request, endpoint: str, ep_tag: str) -> JSONResponse |
             else:
                 taken = await take_account(request, ep_tag, model, est, cfg, tok)
             if not taken["ok"]:
+                # 没有账号可取:这里调 release 只为写一条失败日志(空 id 不做释放动作,
+                # 也不会被计进「重复释放」探测器)
                 await pool.arelease(
                     "",
                     False,
@@ -2770,6 +2830,8 @@ async def _convert(request: Request, protocol: str, anthropic: bool):
             else:
                 taken = await take_account(request, ep, model, est, cfg, tok)
             if not taken["ok"]:
+                # 没有账号可取:这里调 release 只为写一条失败日志(空 id 不做释放动作,
+                # 也不会被计进「重复释放」探测器)
                 await pool.arelease(
                     "",
                     False,

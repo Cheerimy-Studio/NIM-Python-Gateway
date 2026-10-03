@@ -35,6 +35,12 @@ def _dec_inflight(key_id: str) -> int:
     计数会被越减越负，账号并发上限形同失效（可无限并发打同一个 Key）。
     """
     global _odd_release
+    if not key_id:
+        # 「取不到账号」的路径也会调 release("", ...) —— 它的唯一目的是写一条失败日志
+        # (见 server._proxy / _proxy_convert)。那不是释放，绝不能计进「重复释放」探测器：
+        # 否则每次排队失败 / 号池枯竭都让这个数字涨，排查时会被当成连接/账号泄漏
+        # (本机复现过：2 账号跑 100 个并发请求，数字涨 100，实际一个泄漏都没有)。
+        return 0
     with _inflight_lock:
         c = int(_inflight.get(key_id, 0))
         if c <= 0:
