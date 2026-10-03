@@ -2,15 +2,26 @@
 import json, os, shutil, subprocess, sys, threading, time
 import httpx
 
+# 输出强制 UTF-8:用例详情里会出现上游原文/替换字符(\ufffd)等任意文本,
+# 而 Windows 下重定向到文件时默认是 GBK —— 打印结果那一步会直接抛 UnicodeEncodeError,
+# 让「所有用例都跑完了」变成「一行结果都看不到」(还可能卡在收尾 wait 上)。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 # 允许从任意目录运行：定位到项目根
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TMP = os.path.join(os.environ.get("TEMP", "."), "ngw-reg4")
+TMP = os.path.join(os.environ.get("TEMP", "."), "ngw-reg4-%d" % os.getpid())
 
 # 测试实例的管理员凭据：通过 NGW_ADMIN_PASSWORD 注入，避免依赖首次运行随机生成的密码
 ADMIN_USER = "admin"
 ADMIN_PW = "ngw-test-pass"
 shutil.rmtree(TMP, ignore_errors=True)
-os.makedirs(TMP)
+# 每轮用独立目录(带 pid):上一轮进程没退干净时旧目录删不掉,而「复用旧目录」会让
+# 整套用例读到脏 db（曾经因此崩在 437 行）。删不掉就换一个目录,而不是硬崩。
+os.makedirs(TMP, exist_ok=True)
 
 mock = """
 from fastapi import FastAPI, Request
@@ -2126,6 +2137,60 @@ try:
         "40 账号×并发2 → 池 %d(应 130);旧池退役 %d 个;二次调用保持=%s"
         % (_grew_cap, _kept_old, _stable))
 
+    # 后台登录进不去(提示「账号或密码错误」)的两条自救路径,都必须真能work:
+    #   ① 命令行重置:python server.py --reset-password 新密码
+    #   ② NGW_ADMIN_PASSWORD 作为权威值(以前只在哈希缺失时才生效,所以设了也没用)
+    from core.store import _hash_password as _hp, verify_password as _vp
+
+    add("密码哈希自洽(pbkdf2 往返)", _vp("abc123", _hp("abc123")) and not _vp("abc124", _hp("abc123")),
+        "往返=%s 错口令=%s" % (_vp("abc123", _hp("abc123")), not _vp("abc124", _hp("abc123"))))
+
+    _cli_dir = os.path.join(TMP, "clipw")
+    shutil.rmtree(_cli_dir, ignore_errors=True)
+    os.makedirs(_cli_dir, exist_ok=True)
+    _cli_env = {k: v for k, v in os.environ.items() if k.lower() not in ("http_proxy", "https_proxy")}
+    _cli_env["NGW_DATA_DIR"] = _cli_dir
+    _cli_env.pop("NGW_ADMIN_PASSWORD", None)  # 只验命令行这条路径
+    _cli_env["no_proxy"] = "*"
+    _cp = subprocess.run([sys.executable, "server.py", "--reset-password", "cli-pass-123456"],
+                         cwd=ROOT, env=_cli_env, capture_output=True, timeout=120)
+    _cli_db = {}
+    try:
+        _cli_db = json.loads(open(os.path.join(_cli_dir, "db.json"), encoding="utf-8").read())
+    except Exception:
+        pass
+    _cli_hash = str(((_cli_db.get("config") or {}).get("admin_password_hash") or ""))
+    add("忘了后台密码:命令行 --reset-password 能重置",
+        _cp.returncode == 0 and _vp("cli-pass-123456", _cli_hash) and not _vp("wrong-pass", _cli_hash),
+        "exit=%s 新密码可用=%s 旧密码不可用=%s 输出=%r"
+        % (_cp.returncode, _vp("cli-pass-123456", _cli_hash), not _vp("wrong-pass", _cli_hash),
+           _cp.stdout.decode("utf-8", "replace").strip()[:40]))
+
+    # 环境变量权威值:库里换一个哈希,设 NGW_ADMIN_PASSWORD 后新建 Store 必须把它覆盖过来
+    _env_dir = os.path.join(TMP, "envpw")
+    shutil.rmtree(_env_dir, ignore_errors=True)
+    os.makedirs(_env_dir, exist_ok=True)
+    _old_dir2, _old_path2 = _st.DATA_DIR, _st.DB_PATH
+    _old_env_pw = os.environ.get("NGW_ADMIN_PASSWORD")
+    _env_ok = False
+    try:
+        _st.DATA_DIR, _st.DB_PATH = _env_dir, os.path.join(_env_dir, "db.json")
+        _s3 = _st.Store()
+        _s3.update(lambda db: db.setdefault("config", {}).__setitem__("admin_password_hash", _hp("someone-elses")))
+        _s3.flush()
+        os.environ["NGW_ADMIN_PASSWORD"] = "env-forced-pass"
+        _s4 = _st.Store()  # 启动时按环境变量重置
+        _h4 = str(json.loads(open(_st.DB_PATH, encoding="utf-8").read())["config"]["admin_password_hash"])
+        _env_ok = _vp("env-forced-pass", _h4) and not _vp("someone-elses", _h4)
+    finally:
+        _st.DATA_DIR, _st.DB_PATH = _old_dir2, _old_path2
+        if _old_env_pw is None:
+            os.environ.pop("NGW_ADMIN_PASSWORD", None)
+        else:
+            os.environ["NGW_ADMIN_PASSWORD"] = _old_env_pw
+    add("忘了后台密码:NGW_ADMIN_PASSWORD 能覆盖已有哈希",
+        _env_ok, "环境变量口令可用且旧口令失效=%s" % _env_ok)
+
     # 取号分散性(纯函数直测,不依赖测试实例当前号池状态):同一渠道内连续取号必须跨账号
     # 轮换(LRU),而不是一直压着同一个号 —— 号池「只有一个账号在干活、其余全闲」的检查点。
     # 6 个号 × 单号并发 2 = 12 个槽位:取 12 次应正好铺满 6 个号、每个号 2 个在途。
@@ -2597,8 +2662,16 @@ try:
             all_ok = False
     print("ALL PASS" if all_ok else "FAILURES")
 finally:
-    gw.terminate()
-    gw.wait()
-    mk.terminate()
-    mk.wait()
+    # 收尾不能无限等:子进程若卡住(或 TerminateProcess 没生效),整个套件就永远挂着,
+    # 外面只会看到超时,连一行结果都没有。terminate → 限时等 → kill 兜底。
+    for _proc in (gw, mk):
+        try:
+            _proc.terminate()
+            _proc.wait(timeout=10)
+        except Exception:
+            try:
+                _proc.kill()
+                _proc.wait(timeout=5)
+            except Exception:
+                pass
     shutil.rmtree(TMP, ignore_errors=True)

@@ -3622,3 +3622,37 @@ async def admin_js():
         media_type="application/javascript",
         headers=_NOCACHE,
     )
+
+
+def _cli_reset_password(new_pw: str) -> int:
+    """命令行自救：进不去后台（提示「账号或密码错误」）时在服务器上执行一次即可。
+
+    用法：python server.py --reset-password 新密码
+    """
+    from core.store import _hash_password
+
+    pw = str(new_pw or "")
+    if len(pw) < 6 or not pw.strip():
+        print("新密码至少 6 位且不能全为空白", file=sys.stderr)
+        return 2
+
+    def _fn(db: dict):
+        db.setdefault("config", {})["admin_password_hash"] = _hash_password(pw)
+
+    STORE.update(_fn)
+    STORE.flush()
+    user = str((STORE.load().get("config") or {}).get("admin_username") or "admin")
+    print(f"已重置管理员密码（用户名 {user}）。请用新密码登录后台。")
+    return 0
+
+
+if __name__ == "__main__":
+    _argv = sys.argv[1:]
+    if _argv and _argv[0] in ("--reset-password", "-p"):
+        if len(_argv) < 2:
+            print("用法：python server.py --reset-password 新密码", file=sys.stderr)
+            raise SystemExit(2)
+        raise SystemExit(_cli_reset_password(_argv[1]))
+    print("启动网关：uvicorn server:app --host 0.0.0.0 --port 8100   （或 run.bat / run.sh）")
+    print("忘记后台密码：python server.py --reset-password 新密码", file=sys.stderr)
+    raise SystemExit(0)

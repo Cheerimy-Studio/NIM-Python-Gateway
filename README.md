@@ -158,12 +158,27 @@ NGW_ADMIN_PASSWORD='your-strong-password' ./run.sh
 
 登录后到「后台设置 → 修改密码」改掉即可。
 
+**忘记后台密码（登录提示「账号或密码错误」时）**，两条自救通道，都不需要先能进后台：
+
+```bash
+# ① 在服务器上直接重置（宝塔/SSH 都可以，最直接）
+python server.py --reset-password '新密码'
+
+# ② 让环境变量成为权威值：设上它再重启，启动时会把密码重置成它
+#    （删掉该变量后不再覆盖）
+NGW_ADMIN_PASSWORD='新密码' ./run.sh
+```
+
+两条路径都有回归覆盖（`--reset-password` 真起子进程验证新旧口令、环境变量能覆盖已有哈希）。
+注意：如果登录时看到的是「尝试过于频繁，请 5 分钟后重试」，那是暴力尝试限流（同来源 5 分钟
+10 次），等 5 分钟即可，不是密码错。
+
 ### 环境变量
 
 | 变量 | 说明 | 默认 |
 |---|---|---|
 | `NGW_DATA_DIR` | 数据目录（`db.json` 所在位置） | 项目根 `data/` |
-| `NGW_ADMIN_PASSWORD` | 仅首次初始化时使用的管理员密码 | 随机生成 |
+| `NGW_ADMIN_PASSWORD` | 管理员密码**权威值**：设了就按它重置（启动时生效，用完请删除该变量） | 随机生成（首次）/ 不覆盖 |
 | `NGW_UPDATE_URL` | 远程更新源（tarball 地址，便于自建镜像/内网源） | GitHub `main` |
 | `NGW_UPDATE_DRYRUN` | 置 `1` 时远程更新只做下载→解包→语法自检，不覆盖文件也不重启 | 关 |
 | `PORT` | 监听端口（仅 `run.sh`） | `8080` |
@@ -272,7 +287,7 @@ location / {
 ```bash
 pip install -r requirements-dev.txt
 
-python tests/regression.py   # 155 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
+python tests/regression.py   # 158 项：调度、限速、重试、保活、并发、断连、拦截、更新/回滚、协议守护
 python tests/compat.py       # 19 项：全部接口 + 协议结构兼容性
 python tests/predeploy_check.py  # 部署前预检：拉更新源演练覆盖范围 + Python 3.8 语法/API 体检 + 前端零注释
 python tests/static_check.py     # 静态检查(pyflakes)：未定义名/别名误用这类只在运行时炸的缺陷

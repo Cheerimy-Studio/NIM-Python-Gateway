@@ -154,6 +154,36 @@ class Store:
         if not os.path.isfile(guard):
             with open(guard, "w") as f:
                 f.write("Require all denied\n")
+        self._bootstrap_env_admin_pw()
+
+    def _bootstrap_env_admin_pw(self) -> None:
+        """NGW_ADMIN_PASSWORD 是「权威值」:设了就按它重置管理员密码(进程启动时一次)。
+
+        以前它只在「哈希缺失/格式不兼容」时才生效 —— 于是密码忘了、或哈希丢过一次
+        导致后台提示「账号或密码错误」时,设这个环境变量也没用(它不会覆盖已存在的哈希)。
+        现在:只要环境变量存在且与当前哈希不符,就重写成它,并打一行日志说明;
+        用完删掉该环境变量即可,删掉后密码不再被覆盖。
+        只在 __init__ 里做一次 —— 放进 _migrate 会在每次冷读时重算哈希(新盐),
+        导致已登录会话反复失效、db.json 被反复改写。
+        """
+        env_pw = os.environ.get("NGW_ADMIN_PASSWORD") or ""
+        if not env_pw:
+            return
+        try:
+            db = self.load()
+            cfg = db.setdefault("config", {})
+            if verify_password(env_pw, str(cfg.get("admin_password_hash") or "")):
+                return
+            cfg["admin_password_hash"] = _hash_password(env_pw)
+            self._write(db)
+            print(
+                f"[admin] 已按 NGW_ADMIN_PASSWORD 重置管理员密码（用户名 "
+                f"{cfg.get('admin_username') or 'admin'}）；删掉该环境变量后不再覆盖",
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception as e:
+            print(f"[admin] 应用 NGW_ADMIN_PASSWORD 失败: {e}", file=sys.stderr, flush=True)
 
     @property
     def _alock(self) -> asyncio.Lock:
