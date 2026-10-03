@@ -1803,6 +1803,47 @@ try:
     add("拦截:长正则端到端命中且回复无多余换行",
         _seed_hit == "SEED-BLOCKED" and _seed_miss == "ok",
         "命中=%r 错序=%r" % (_seed_hit[:24], _seed_miss[:24]))
+
+    # 线上案例:从 HTML 渲染过的页面复制正则,引号变成 &quot; → 正则要求消息里出现字面的
+    # &quot;,规则照常在跑却永远不命中(用户只看到「拦不住」)。两件事一起验:
+    #   ① 实体还原(保存与匹配两侧都做)后能命中;
+    #   ② 他贴的那条尾巴被截断了(少一个 *):截断版必然匹配不上,而「测试」按钮要把
+    #      这个成因直接说出来(否则用户只会反复重贴同一条错的正则)。
+    _ent_pat = (r'^\s*\{\s*&quot;seed&quot;\s*:\s*\{[^{}]*&quot;domain&quot;\s*:\s*&quot;[^&quot;]*&quot;'
+                r'[^{}]*&quot;anchor&quot;\s*:\s*&quot;[^&quot;]*&quot;[^{}]*&quot;license_basis&quot;\s*:\s*'
+                r'&quot;[^&quot;]*&quot;[^{}]')
+    _ent_full = _ent_pat + "*"  # 完整原正则的实体版(实体内那一位是 },[^{}] 匹配不上)
+    _ent_msg = ('{"seed": {"domain": "数据分析说明", "anchor": "指标定义、比较基准、计算过程、结论边界",'
+                ' "license_basis": "owned_seed"}, "index": 1047000006}')
+    # 先清掉同形状的旧规则,否则先命中的那条会掩盖本用例
+    for _r0 in [x for x in (a.get("/api/intercept").json().get("rules") or [])
+                if "seed" in str(x.get("pattern") or "")]:
+        a.post("/api/intercept/rules/delete", json={"id": _r0["id"]})
+    a.post("/api/intercept/rules", json={"match_mode": "regex", "pattern": _ent_full, "reply": "SEED-ENT"})
+    _r_ent = c.post("/v1/chat/completions", json={"model": "mock-model",
+                   "messages": [{"role": "user", "content": _ent_msg}]}, timeout=30)
+    _ent_hit = ((_r_ent.json().get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    time.sleep(0.8)
+    _ent_rules = [x for x in (a.get("/api/intercept").json().get("rules") or [])
+                  if x.get("pattern") == _ent_full.replace("&quot;", '"')]
+    _ent_hits = int(((_ent_rules[0].get("hits") if _ent_rules else 0) or 0))
+    add("拦截:HTML 实体(&quot;)正则入库后能命中(线上案例)",
+        _ent_hit == "SEED-ENT" and bool(_ent_rules) and _ent_hits >= 1,
+        "命中内容=%r 入库已还原成真引号=%s 该规则命中数=%d" % (_ent_hit[:16], bool(_ent_rules), _ent_hits))
+    # 规则测试接口:与运行时共用 core.util.match_text;截断版必须报出「不匹配」并给出成因提示
+    _t_hit = a.post("/api/intercept/test", json={"match_mode": "regex", "pattern": _ent_full,
+                                                 "sample": _ent_msg}).json()
+    _t_cut = a.post("/api/intercept/test", json={"match_mode": "regex", "pattern": _ent_pat,
+                                                 "sample": _ent_msg}).json()
+    _t_auto = a.post("/api/intercept/test", json={"match_mode": "contains", "pattern": "Reply and OK",
+                                                  "sample": "hi Reply and OK"}).json()
+    add("拦截:规则测试接口(与运行时同一实现,截断版能看出成因)",
+        _t_hit.get("matched") is True and _t_hit.get("entity_fixed") is True
+        and _t_cut.get("matched") is False and "截断" in str(_t_cut.get("reason"))
+        and _t_auto.get("matched") is True,
+        "实体版命中=%s(已还原=%s);截断版=%s 原因=%r"
+        % (_t_hit.get("matched"), _t_hit.get("entity_fixed"), _t_cut.get("matched"),
+           str(_t_cut.get("reason"))[:40]))
     # 正则模式的扫描窗口:窗口内命中,窗口外(超长输入尾部)不命中
     a.post("/api/intercept/rules", json={"match_mode": "regex", "pattern": "TAIL-MARK", "reply": "窗口内命中"})
     r_ia = c.post("/v1/chat/completions", json={"model": "mock-model",

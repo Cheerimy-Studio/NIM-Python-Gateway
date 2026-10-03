@@ -1364,15 +1364,17 @@ async function loadIntercept() {
   const tb = $('#int-rules'); tb.innerHTML = '';
   if (!d.rules.length) {
     const tr = el('tr'); const td = el('td', 'text-muted text-center py-3', '—');
-    td.colSpan = 5; tr.appendChild(td); tb.appendChild(tr);
+    td.colSpan = 6; tr.appendChild(td); tb.appendChild(tr);
   }
   for (const r of d.rules) {
     const tr = el('tr');
     const upNames = (r.upstreams || []).map(x => upName.get(x) || x);
     const scopeTxt = [(r.models || []).length ? '模型 ' + (r.models || []).join(',') : '',
                       upNames.length ? '渠道 ' + upNames.join(',') : ''].filter(Boolean).join(' · ') || '全部';
+    const hits = Number(r.hits || 0);
     tr.append(
       (() => { const td = el('td'); td.appendChild(el('span', 'badge bg-secondary-subtle text-secondary', r.match_mode || '')); return td; })(),
+      (() => { const td = el('td', 'small text-end' + (hits ? '' : ' text-muted')); td.textContent = String(hits); td.title = hits ? fmtTime(r.last_hit_at) : '还没命中过'; return td; })(),
       (() => { const td = el('td', 'small text-muted text-truncate', scopeTxt); td.style.maxWidth = '220px'; td.title = scopeTxt; return td; })(),
       (() => { const td = el('td', 'small key-mono text-truncate'); td.style.maxWidth = '340px'; td.textContent = r.pattern || ''; td.title = r.pattern || ''; return td; })(),
       (() => { const td = el('td', 'small text-truncate'); td.style.maxWidth = '280px'; td.textContent = String(r.reply || '').replace(/[\r\n]+/g, ' '); td.title = r.reply || ''; return td; })(),
@@ -1426,6 +1428,17 @@ $('#int-add').onclick = guard(async () => {
   }});
   $('#int-pattern').value = ''; $('#int-reply').value = ''; $('#int-models').value = '';
   toast('规则已添加'); loadIntercept();
+});
+$('#int-test').onclick = guard(async () => {
+  const d = await api('intercept/test', {method: 'POST', json: {
+    match_mode: $('#int-mode').value,
+    pattern: $('#int-pattern').value.trim(),
+    sample: $('#int-sample').value,
+  }});
+  if (!d) return;
+  $('#int-meta').textContent = d.matched ? '命中' : ('不命中：' + (d.reason || '样本里没有这段内容'));
+  if (d.entity_fixed) $('#int-pattern').value = d.pattern;
+  toast(d.matched ? '命中' : '不命中', d.matched ? 'success' : 'warning');
 });
 
 let testToken = null;   

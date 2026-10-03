@@ -593,6 +593,11 @@ details.upgrp[open]{background:#fff}
           <input id="int-models" class="form-control form-control-sm" placeholder="留空=全部，多个用逗号分隔"></div>
         <div class="col-md-5"><label class="form-label" for="int-ups">限定渠道</label>
           <select id="int-ups" class="form-select form-select-sm" multiple size="3"></select></div>
+        <div class="col-md-7"><label class="form-label" for="int-sample">样本消息（粘一条触发不了的消息，试规则）</label>
+          <div class="d-flex gap-2">
+            <input id="int-sample" class="form-control form-control-sm" placeholder="把真实消息粘进来">
+            <button id="int-test" class="btn btn-sm btn-outline-secondary text-nowrap">测试</button>
+          </div></div>
       </div>
     </div>
   </div>
@@ -600,7 +605,7 @@ details.upgrp[open]{background:#fff}
     <div class="card-header">规则</div>
     <div class="table-responsive">
     <table class="table table-hover align-middle">
-      <thead><tr><th style="width:80px">模式</th><th>作用范围</th><th>匹配</th><th>回复</th><th class="text-end" style="width:76px">操作</th></tr></thead>
+      <thead><tr><th style="width:80px">模式</th><th class="text-end" style="width:64px">命中</th><th>作用范围</th><th>匹配</th><th>回复</th><th class="text-end" style="width:76px">操作</th></tr></thead>
       <tbody id="int-rules"></tbody>
     </table>
     </div>

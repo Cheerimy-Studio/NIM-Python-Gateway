@@ -167,3 +167,52 @@ def mask_email(email: str) -> str:
     if at < 0:
         return email[:2] + "***"
     return email[: min(2, at)] + "***" + email[at:]
+
+
+# 只还原「引号类」HTML 实体：粘贴来源经过 HTML 渲染时会变成 &quot;，正则里就要求
+# 消息里出现字面的 &quot;，于是规则永远不命中（线上实测用户贴的正则带 &quot;，拦截完全不生效）。
+# 不碰 &amp;/&lt;/&gt; —— 那些可能是用户真想去匹配的字面内容（例如截取 HTML 正文）。
+_QUOTE_ENTS = (("&quot;", '"'), ("&#34;", '"'), ("&#x22;", '"'),
+               ("&apos;", "'"), ("&#39;", "'"), ("&#x27;", "'"))
+
+
+def unescape_quote_entities(s: str) -> str:
+    """把引号类 HTML 实体还原成真正的引号（只含 `&` 时才动手，常见路径零开销）。"""
+    if not s or "&" not in s:
+        return s
+    out = str(s)
+    # 双层转义的情况（&amp;quot;）：先把 &amp; 还原出来再处理一次
+    if any(x in out for x in ("&amp;quot;", "&amp;#34;", "&amp;apos;", "&amp;#39;")):
+        out = out.replace("&amp;", "&")
+    for a, b in _QUOTE_ENTS:
+        if a in out:
+            out = out.replace(a, b)
+    return out
+
+
+def match_text(mode: str, pattern: str, text: str, scan_max: int = 0) -> bool:
+    """拦截规则的匹配实现（网关运行时与后台「测试」按钮共用同一份）。
+
+    两处若各写一份，就会出现「后台测试说有命中、线上却不拦」这类最难查的偏差。
+    语义：contains 按全文；equals/prefix/suffix 先 strip；regex 只扫描前 scan_max
+    字符（0=全文），正则无效返回 False。
+    """
+    pat = unescape_quote_entities(str(pattern or ""))
+    s = str(text or "")
+    m = str(mode or "contains")
+    try:
+        if m == "contains":
+            return bool(pat) and pat in s
+        if m == "equals":
+            return bool(pat) and s.strip() == pat
+        if m == "prefix":
+            return bool(pat) and s.strip().startswith(pat)
+        if m == "suffix":
+            return bool(pat) and s.strip().endswith(pat)
+        if m == "regex":
+            if not pat:
+                return False
+            return re.search(pat, s[:scan_max] if scan_max > 0 else s) is not None
+    except re.error:
+        return False
+    return False

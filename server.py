@@ -22,7 +22,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from core import convert, pool, queue, upstreams
+from core import convert, pool, queue, upstreams, util
 from core.convert import flatten_content
 from core.streams import AnthropicStream, ResponsesStream
 from core.store import STORE, csrf_token as _csrf_token, session_cookie as _session_cookie
@@ -634,17 +634,10 @@ def _match_custom_rule(req: dict, cfg: dict, allow_prompt: bool = False, model: 
         # 作用域(限定模型/渠道)先判:范围外直接跳过,连正则都不用跑
         if not _rule_scope_hit(r, model):
             continue
-        try:
-            hit = (
-                (mode == "contains" and pat in last_user)
-                or (mode == "equals" and last_user.strip() == pat)
-                or (mode == "prefix" and last_user.strip().startswith(pat))
-                or (mode == "suffix" and last_user.strip().endswith(pat))
-                or (mode == "regex" and re.search(pat, last_user[:_REGEX_SCAN_MAX]))
-            )
-        except re.error:
-            continue
-        if hit:
+        # 匹配统一走 core.util.match_text:后台「测试」按钮用同一份实现,避免
+        # 「后台说有命中、线上却不拦」。它同时会把粘贴来的 &quot; 还原成引号
+        # (HTML 转义过的正则否则永远匹配不上真实 JSON)。
+        if util.match_text(mode, pat, last_user, _REGEX_SCAN_MAX):
             return r, last_user
     return None
 
@@ -668,6 +661,14 @@ async def _log_intercept(cfg: dict, ep: str, rule: dict, content: str, ip: str, 
             },
         )
         del logs[max(0, _cfgint(cfg, "intercept_log_max", 100)):]
+        # 命中计数:面板上「命中 0」的规则一眼可见 —— 规则写错(HTML 转义 / 被截断)或
+        # 作用范围配错时不用靠猜(线上出现过:贴了带 &quot; 的正则,规则一直在跑但永不命中)
+        _rid = str(rule.get("id") or "")
+        for _r in (db.get("config") or {}).get("custom_rules") or []:
+            if isinstance(_r, dict) and str(_r.get("id") or "") == _rid:
+                _r["hits"] = int(_r.get("hits") or 0) + 1
+                _r["last_hit_at"] = int(time.time())
+                break
 
     await STORE.aupdate(_fn)
 

@@ -1026,6 +1026,14 @@ async def intercept_rule_add(request: Request):
     # `*`,规则照样 200 入库但静默不命中)。尾部换行去掉——textarea 里的回车看不见,
     # 命中后会让回复多一个空行。
     pattern = str(body.get("pattern") or "").strip()[:1000]
+    # 粘贴来源经过 HTML 渲染时引号会变成 &quot;,正则里就成了「必须匹配字面 &quot;」,
+    # 规则永远不命中(线上实测)。保存时先还原引号类实体,面板上显示的就是能用的正则。
+    try:
+        from core.util import unescape_quote_entities as _unq
+
+        pattern = _unq(pattern)
+    except Exception:
+        pass
     reply = str(body.get("reply") or "").rstrip("\r\n")[:2000]
     name = str(body.get("name") or "").strip()[:40]
     # 作用域(可选):限定模型 / 限定渠道,任一为空 = 不限。渠道可写 id 或名称,
@@ -1091,6 +1099,53 @@ async def intercept_rule_delete(request: Request):
     await STORE.aupdate(_fn)
     STORE.flush()
     return {"ok": removed[0]}
+
+
+@router.post("/intercept/test")
+async def intercept_test(request: Request):
+    """规则测试:拿一条真实样本消息试当前填的规则,直接回答「为什么拦不住」。
+
+    与网关运行时共用 core.util.match_text —— 两边各写一份就会出现
+    「后台测着有命中、线上却不拦」这种最难查的偏差。
+    """
+    bad = _require(request)
+    if bad:
+        return bad
+    body = await _json_dict(request)
+    if body is None:
+        return JSONResponse({"error": {"message": "请求体格式错误"}}, status_code=400)
+    mode = str(body.get("match_mode") or "contains")
+    if mode not in ("contains", "equals", "prefix", "suffix", "regex"):
+        return JSONResponse({"error": {"message": "未知匹配模式"}}, status_code=400)
+    from core.util import match_text, unescape_quote_entities
+
+    raw = str(body.get("pattern") or "")
+    sample = str(body.get("sample") or "")
+    fixed = unescape_quote_entities(raw)
+    reason = ""
+    if not raw.strip():
+        reason = "匹配内容为空"
+    elif not sample.strip():
+        reason = "样本为空"
+    elif mode == "regex":
+        import re as _re
+
+        try:
+            _re.compile(fixed)
+        except Exception as e:
+            reason = f"正则无效:{e}"
+    matched = (not reason) and match_text(mode, fixed, sample)
+    if not matched and not reason:
+        # 正则不匹配时给出可操作的方向:这两条是线上真实踩到过的成因
+        reason = ("正则不匹配（常见原因：粘贴时正则被截断；或引号被 HTML 转义成 &quot;）"
+                  if mode == "regex" else "样本里没有这段内容")
+    return {
+        "ok": True,
+        "matched": bool(matched),
+        "pattern": fixed,
+        "entity_fixed": fixed != raw,
+        "reason": "" if matched else reason,
+    }
 
 
 @router.post("/intercept/toggle")
